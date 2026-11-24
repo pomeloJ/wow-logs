@@ -233,6 +233,7 @@ def register(app, world: World, db, can_read) -> None:
                min_level: Optional[int] = None, max_level: Optional[int] = None,
                include_hidden: bool = False, limit: int = Query(50, ge=1, le=500),
                offset: int = Query(0, ge=0)):
+        """Search the quest database by name (`q`), zone (`map_id`) or level. Static game data, not a character's progress."""
         extra, args = [], []
         if not include_hidden:
             extra.append("hidden=0")
@@ -250,6 +251,9 @@ def register(app, world: World, db, can_read) -> None:
 
     @app.get("/api/v1/world/quests/{quest_id}")
     def quest(quest_id: int, character_id: Optional[str] = None, scope: Optional[str] = Depends(can_read)):
+        """One quest: objectives, where it starts and ends, experience, rewards, what it leads to.
+
+        With `character_id` the answer also says where that character stands with it (`status`)."""
         if scope is not None and character_id not in (None, scope):
             raise HTTPException(403, "this link only covers one character")
         with world.conn() as c:
@@ -538,6 +542,7 @@ def register(app, world: World, db, can_read) -> None:
     @app.get("/api/v1/world/npcs", dependencies=dep)
     def npcs(q: Optional[str] = None, map_id: Optional[int] = None,
              limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0)):
+        """Search NPCs and monsters by name (`q`) or by the zone they appear in (`map_id`)."""
         extra, args = [], []
         if map_id is not None:
             extra.append("npc_id IN (SELECT entity_id FROM world_spawns WHERE kind='npc' AND ui_map_id=?)")
@@ -552,6 +557,7 @@ def register(app, world: World, db, can_read) -> None:
 
     @app.get("/api/v1/world/npcs/{npc_id}", dependencies=dep)
     def npc(npc_id: int, drop_limit: int = Query(30, ge=0, le=500)):
+        """One NPC or monster: level, rank, where it spawns, what it drops and sells, which quests it starts and ends."""
         with world.conn() as c:
             e = _entity(c, "npc", npc_id)
             if not e:
@@ -586,6 +592,7 @@ def register(app, world: World, db, can_read) -> None:
     @app.get("/api/v1/world/items", dependencies=dep)
     def items(q: Optional[str] = None, limit: int = Query(50, ge=1, le=500),
               offset: int = Query(0, ge=0)):
+        """Search items by name (`q`)."""
         with world.conn() as c:
             total, rows = search(c, "world_items", "item_id", q, [], [], limit, offset, "item_id")
         return {"total": total, "items": [
@@ -594,6 +601,7 @@ def register(app, world: World, db, can_read) -> None:
 
     @app.get("/api/v1/world/items/{item_id}", dependencies=dep)
     def item(item_id: int, limit: int = Query(20, ge=1, le=200)):
+        """One item: kind, level, who drops or sells it, which quests need it, what it is crafted from and into."""
         with world.conn() as c:
             r = c.execute("SELECT * FROM world_items WHERE item_id=?", (item_id,)).fetchone()
             if not r:

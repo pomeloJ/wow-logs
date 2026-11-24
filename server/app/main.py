@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -99,6 +100,51 @@ class SnapshotIn(BaseModel):
     data: Dict[str, Any]
 
     _tz = field_validator("captured_at")(_aware)
+
+
+API_INTRO = """
+A personal adventure log for World of Warcraft: Forever. Everything here is about characters
+whose data their owner's sync program uploaded to this server.
+
+**Tokens.** Send `Authorization: Bearer <token>` with every request. A read token sees every
+character; a personal token sees the characters of the person it belongs to. Neither kind of
+limited token ever shows chat messages. `GET /api/v1/token` says what a token is.
+
+**Where to start.** `GET /api/v1/characters` lists the characters; their `id` is the
+`character_id` everything else asks for. For a tool that answers questions:
+
+* how the character is doing now: `/characters/{id}/snapshot`, `/items`, `/quests`
+* what happened lately: `/stats/activity`, `/events`
+* group play: `/characters/{id}/groups`, then `/groups/{group_id}` (or `latest`) and its `/skills` and `/analysis`
+* combat outside a group: `/characters/{id}/combat/skills` and `/combat/analysis`
+* the game world (quests, monsters, items): everything under `/world`
+
+Times are UTC in ISO 8601. Positions are `map_id` with `x`, `y` in percent of that map.
+Damage figures exist only where the game's combat log was switched on while playing.
+"""
+SECTIONS = [
+    ("角色 Characters", "Who the characters are and what they carry, wear and have to do."),
+    ("組隊 Groups", "Party and raid sessions: who was there, what was killed and looted, how the fights went."),
+    ("戰鬥分析 Combat", "Ability statistics and the deeper questions, from the game's combat log."),
+    ("事件與統計 Events", "What happened and when, and totals over a stretch of time."),
+    ("世界資料 World", "Static game data: quests, monsters, items, where things are."),
+    ("圖片 Images", "Screenshots and map backgrounds."),
+    ("系統 System", "Health, tokens, downloads."),
+    ("上傳 Uploads", "Used by the sync program and the owner to put data on the server. Not for reading."),
+]
+
+
+def section_of(path: str, method: str) -> str:
+    """Which part of the description an endpoint belongs in."""
+    names = {name.split()[1]: name for name, _ in SECTIONS}
+    if method.lower() != "get":
+        return names["Uploads"]
+    for piece, name in (("/groups", "Groups"), ("/shared/party", "Groups"), ("/combat", "Combat"), ("/world", "World"),
+                        ("/screenshots", "Images"), ("/maps", "Images"), ("/characters", "Characters"),
+                        ("/events", "Events"), ("/locations", "Events"), ("/stats", "Events")):
+        if piece in path:
+            return names[name]
+    return names["System"]
 
 
 class Scope(str):
@@ -228,7 +274,20 @@ def create_app(
         if scope is not None and character_id != scope:
             raise HTTPException(403, "this link only covers one character")
 
-    app = FastAPI(title="WoW Adventure Hub", version=VERSION)
+    app = FastAPI(title="WoW Adventure Hub", version=VERSION, description=API_INTRO)
+
+    def described() -> Dict[str, Any]:
+        """The API description, with every endpoint filed under what it is for."""
+        if not app.openapi_schema:
+            schema = get_openapi(title=app.title, version=app.version, description=app.description, routes=app.routes)
+            for path, operations in schema.get("paths", {}).items():
+                for method, operation in operations.items():
+                    if isinstance(operation, dict):
+                        operation["tags"] = [section_of(path, method)]
+            schema["tags"] = [{"name": name, "description": text} for name, text in SECTIONS]
+            app.openapi_schema = schema
+        return app.openapi_schema
+    app.openapi = described
 
     @app.middleware("http")
     async def guard_headers(request: Request, call_next):
@@ -253,6 +312,7 @@ def create_app(
 
     @app.get("/api/v1/health")
     def health():
+        """Whether the server is up, and its version. Needs no token."""
         return {"status": "ok", "version": VERSION}
 
     def touch_device(conn, device_id: str) -> None:
@@ -322,12 +382,16 @@ def create_app(
 
     @app.get("/api/v1/characters")
     def list_characters(scope: Optional[str] = Depends(can_read)):
+        """The characters this token may see: id, name, class, race, level, when last updated.
+
+        Start here: the `id` of a character is what every other endpoint asks for as `character_id`."""
         with db() as conn:
             rows = conn.execute("SELECT * FROM characters ORDER BY id").fetchall()
         return {"items": [dict(r) for r in rows if scope is None or r["id"] in scope.all]}
 
     @app.get("/api/v1/characters/{character_id}")
     def get_character(character_id: str, scope: Optional[str] = Depends(can_read)):
+        """One character's basic facts: name, class, race, faction, level."""
         allow(scope, character_id)
         with db() as conn:
             row = conn.execute("SELECT * FROM characters WHERE id=?", (character_id,)).fetchone()
@@ -337,6 +401,8 @@ def create_app(
 
     @app.get("/api/v1/characters/{character_id}/snapshot")
     def get_snapshot(character_id: str, scope: Optional[str] = Depends(can_read)):
+        """The character as the addon last saw it: position, money, experience, gear, bags, quest log,
+        professions, reputations, stats, flight points and completed quests. `captured_at` says how old it is."""
         allow(scope, character_id)
         with db() as conn:
             row = conn.execute(
@@ -413,6 +479,10 @@ def create_app(
         cursor: Optional[str] = None, exclude_type: Optional[str] = None,
         scope: Optional[str] = Depends(can_read),
     ):
+        """What happened, newest first: kills, loot, experience, quests, level-ups, deaths, group events and more.
+
+        Filter by `character_id`, `event_type`, time (`start_time`, `end_time`) and `map_id`; `exclude_type` drops
+        the noisy kinds (comma separated, e.g. `LOCATION_SAMPLE,PARTY_POSITIONS`). `next_cursor` continues the list."""
         return query_events(character_id, event_type, start_time, end_time, map_id, limit, cursor,
                             exclude_type, scope)
 
@@ -423,6 +493,7 @@ def create_app(
         map_id: Optional[int] = None, limit: int = Query(100, ge=1, le=1000),
         cursor: Optional[str] = None, scope: Optional[str] = Depends(can_read),
     ):
+        """Where the character has been: position samples (`map_id`, `x`, `y` in percent of that map), newest first."""
         return query_events(character_id, "LOCATION_SAMPLE", start_time, end_time,
                             map_id, limit, cursor, None, scope)
 
@@ -451,12 +522,14 @@ def create_app(
 
     @app.get("/api/v1/maps", dependencies=[Depends(can_read)])
     def list_maps():
+        """The maps that have a background image on this server."""
         with db() as conn:
             rows = conn.execute("SELECT * FROM map_images ORDER BY map_id").fetchall()
         return {"items": [dict(r) for r in rows]}
 
     @app.get("/api/v1/maps/{map_id}/image", dependencies=[Depends(can_read)])
     def get_map_image(map_id: int):
+        """The background image of one map, as JPEG."""
         path = os.path.join(maps_dir, f"{map_id}.jpg")
         if not os.path.isfile(path):
             raise HTTPException(404, "no image for this map")
@@ -465,6 +538,8 @@ def create_app(
     @app.get("/api/v1/stats/activity")
     def activity_api(character_id: Optional[str] = None, start_time: Optional[datetime] = None,
                      end_time: Optional[datetime] = None, scope: Optional[str] = Depends(can_read)):
+        """Totals for a stretch of time: kills, experience, loot and its vendor value, money in and out, fights and
+        time in combat, the monsters killed most and the items looted most. Without times it covers everything."""
         return activity(scope if scope is not None else character_id, start_time, end_time)
 
     def activity(character_id: Optional[str] = None, start_time: Optional[datetime] = None,
@@ -551,6 +626,7 @@ def create_app(
 
     @app.get("/api/v1/stats/summary")
     def stats(scope: Optional[str] = Depends(can_read)):
+        """How much is stored: characters, events, when the newest arrived."""
         w, a = ("", []) if scope is None else \
             (" WHERE character_id=? AND event_type<>'CHAT_MESSAGE'", [scope])
         with db() as conn:

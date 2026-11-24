@@ -9,10 +9,10 @@ import json
 import os
 import secrets
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 
 from . import combat
@@ -319,6 +319,183 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
             items = [brief(conn, s) for s in sessions(conn, character_id)]
         return {"items": items[::-1]}
 
+    # ------------------------------------------------ for tools: the same data, asked for by character
+    # The share pages above are addressed by a session's own token. These are addressed by
+    # character and need a read token, and answer in pieces small enough for a program (an MCP
+    # server, a script) to hand to a language model.
+    HEAVY = {"route": ("maps", "marks"), "timeline": ("timeline",),
+             "charts": ("xp_points", "damage_minutes", "kill_times"), "screenshots": ("screenshots",)}
+    PARTS = ("defence", "level_gaps", "dots", "guard", "buffs", "heals", "activity", "pets", "autoshot", "casts")
+
+    def mine(scope: Optional[str], character_id: str) -> None:
+        if scope is not None and character_id != scope:
+            raise HTTPException(403, "this token does not cover that character")
+
+    def find(conn, character_id: str, group_id: str) -> Dict[str, Any]:
+        found = sessions(conn, character_id)
+        if group_id == "latest" and found:
+            return found[-1]
+        for s in found:
+            if s["group_id"] == group_id:
+                return s
+        raise HTTPException(404, "no such group session")
+
+    def owner(conn, character_id: str) -> Any:
+        return conn.execute("SELECT name, level FROM characters WHERE id=?", (character_id,)).fetchone()
+
+    def analysis(conn, character_id: str, a: int, b: int, levels: Dict[str, int], parts: Optional[str],
+                 limit: int) -> Dict[str, Any]:
+        who = owner(conn, character_id)
+        me = (who["name"] if who else None) or "我"
+        if who and who["level"]:
+            levels = {**levels, me: who["level"]}
+        wanted = [p.strip() for p in parts.split(",") if p.strip()] if parts else list(PARTS)
+        unknown = [p for p in wanted if p not in PARTS]
+        if unknown:
+            raise HTTPException(400, f"unknown part {unknown[0]!r}; the parts are: {', '.join(PARTS)}")
+        make = {"defence": lambda: combat.defence(conn, character_id, a, b, me, world.npc_info if world else None),
+                "level_gaps": lambda: combat.level_gaps(conn, character_id, a, b, me, levels),
+                "autoshot": lambda: [{k: v for k, v in x.items() if k != "gaps"}
+                                     for x in combat.autoshot(conn, character_id, a, b, me)]}
+        out: Dict[str, Any] = {}
+        for part in wanted:
+            rows = make[part]() if part in make else getattr(combat, part)(conn, character_id, a, b, me)
+            out[part] = rows[:limit]
+        return out
+
+    def chosen(rows: List[Dict[str, Any]], member: Optional[str], spell: Optional[str], limit: int) -> List[Dict[str, Any]]:
+        return [k for k in rows if (not member or k["who"] == member) and (not spell or k["spell"] == spell)][:limit]
+
+    @app.get("/api/v1/characters/{character_id}/groups")
+    def character_groups(character_id: str, limit: int = Query(20, ge=1, le=200), scope: Optional[str] = Depends(can_read)):
+        """The character's group (party or raid) sessions, newest first.
+
+        Each has its `group_id`, when it ran, who was in it, where, and totals for kills, the
+        recorder's experience and loot. `page` is the address of the session's public page,
+        which anyone can open without a token. Use `group_id` (or the word `latest`) with the
+        other `/groups/...` endpoints."""
+        mine(scope, character_id)
+        with db() as conn:
+            items = [brief(conn, s) for s in sessions(conn, character_id)][::-1][:limit]
+        for item in items:
+            item["page"] = f"/party/{item['token']}"
+        return {"items": items}
+
+    @app.get("/api/v1/characters/{character_id}/groups/{group_id}")
+    def character_group(character_id: str, group_id: str, include: Optional[str] = None,
+                        scope: Optional[str] = Depends(can_read)):
+        """One group session in full. `group_id` may be `latest`.
+
+        Members; totals and pace; who landed the killing blows and on what; monsters fought with
+        level and rank; loot per member; quests and skill-ups of the recorder; highlights (deaths,
+        level-ups, dungeons, boss fights); and, when the game's combat log was on, `meter` (damage,
+        healing, damage taken, crit rate, top abilities and hardest hit per member) and
+        `encounters` (each boss fight with its length and per-member damage).
+
+        The bulky parts are left out unless named in `include` (comma separated): `route` (map
+        positions and marks), `timeline` (event by event), `charts` (per-minute series),
+        `screenshots`; `all` for everything. What was left out is listed in `omitted`."""
+        mine(scope, character_id)
+        with db() as conn:
+            s = find(conn, character_id, group_id)
+            d = detail(conn, s)
+            d["token"] = token_for(conn, s)
+        d["page"] = f"/party/{d['token']}"
+        want = {x.strip() for x in (include or "").split(",") if x.strip()}
+        unknown = want - set(HEAVY) - {"all"}
+        if unknown:
+            raise HTTPException(400, f"unknown part {sorted(unknown)[0]!r}; the parts are: {', '.join(HEAVY)}, all")
+        d["omitted"] = [name for name in HEAVY if name not in want and "all" not in want]
+        for name in d["omitted"]:
+            for key in HEAVY[name]:
+                d.pop(key, None)
+        return d
+
+    @app.get("/api/v1/characters/{character_id}/groups/{group_id}/skills")
+    def character_group_skills(character_id: str, group_id: str, member: Optional[str] = None, spell: Optional[str] = None,
+                               enemy: Optional[str] = None, limit: int = Query(30, ge=1, le=500),
+                               scope: Optional[str] = Depends(can_read)):
+        """Ability by ability, what each member did in a group session (needs the combat log).
+
+        Per member and ability: attempts, hits, misses by reason, total, smallest, largest, average,
+        median, spread, normal and critical hits measured apart, and how much of the hit the
+        target's armour and resistances took off (`reduced`). Largest total first.
+
+        Narrow it with `member` (a character name), `spell` (an ability name) or `enemy` (a monster
+        name: only attacks on that kind). `enemies` lists what was fought, to pick from."""
+        mine(scope, character_id)
+        with db() as conn:
+            s = find(conn, character_id, group_id)
+            a, b = _ms(s["started_at"]), _ms(s["ended_at"]) + 999
+            who = owner(conn, character_id)
+            me = (who["name"] if who else None) or "我"
+            return {"group_id": s["group_id"],
+                    "skills": chosen(combat.skills(conn, character_id, a, b, me, enemy), member, spell, limit),
+                    "enemies": combat.enemies(conn, character_id, a, b)[:limit]}
+
+    @app.get("/api/v1/characters/{character_id}/groups/{group_id}/analysis")
+    def character_group_analysis(character_id: str, group_id: str, parts: Optional[str] = None,
+                                 limit: int = Query(20, ge=1, le=500), scope: Optional[str] = Depends(can_read)):
+        """The deeper combat questions about a group session (needs the combat log).
+
+        `parts` picks what to answer (comma separated; all when left out), each a list cut to `limit`:
+        `defence` how each kind of enemy took the group's attacks, its armour, mitigation and time to kill;
+        `level_gaps` hit and miss rates by how many levels the target was above the attacker;
+        `dots` effects put on enemies, how much of the time they were up and what they ticked for;
+        `guard` what happened to attacks aimed at each member (hit, missed, dodged, parried);
+        `buffs` effects on each member and their uptime; `heals` each healing ability with overhealing;
+        `activity` how much of the fighting time each member was attacking;
+        `pets` each pet as a fighter; `autoshot` the rhythm of hunters' automatic shots;
+        `casts` casts, cost and damage per point of mana, rage or energy.
+        Shares come as `{n, of, pct, ci}`: n out of `of` tries, with a 95% interval."""
+        mine(scope, character_id)
+        with db() as conn:
+            s = find(conn, character_id, group_id)
+            levels = {m["name"]: m["level"] for m in s["members"] if m.get("level")}
+            return {"group_id": s["group_id"],
+                    **analysis(conn, character_id, _ms(s["started_at"]), _ms(s["ended_at"]) + 999, levels, parts, limit)}
+
+    def stretch(hours: float, start_time: Optional[datetime], end_time: Optional[datetime]):
+        """A stretch of time in ms: the given start and end, or the last `hours` up to now."""
+        for t in (start_time, end_time):
+            if t is not None and t.tzinfo is None:
+                raise HTTPException(400, "times must include a timezone, like 2026-11-24T20:00:00+08:00")
+        end = end_time or datetime.now(timezone.utc)
+        start = start_time or end - timedelta(hours=hours)
+        return int(start.timestamp() * 1000), int(end.timestamp() * 1000)
+
+    @app.get("/api/v1/characters/{character_id}/combat/skills")
+    def character_combat_skills(character_id: str, hours: float = Query(24, gt=0, le=24 * 366),
+                                start_time: Optional[datetime] = None, end_time: Optional[datetime] = None,
+                                member: Optional[str] = None, spell: Optional[str] = None, enemy: Optional[str] = None,
+                                limit: int = Query(30, ge=1, le=500), scope: Optional[str] = Depends(can_read)):
+        """Ability statistics over any stretch of time, in a group or alone (needs the combat log).
+
+        The same numbers as `/groups/{group_id}/skills`, for the last `hours` (24 unless given) or
+        between `start_time` and `end_time`. Everyone near the character whose attacks the log
+        recorded as the player's own or the group's is included; `member` narrows to one name."""
+        mine(scope, character_id)
+        a, b = stretch(hours, start_time, end_time)
+        with db() as conn:
+            who = owner(conn, character_id)
+            me = (who["name"] if who else None) or "我"
+            return {"skills": chosen(combat.skills(conn, character_id, a, b, me, enemy), member, spell, limit),
+                    "enemies": combat.enemies(conn, character_id, a, b)[:limit]}
+
+    @app.get("/api/v1/characters/{character_id}/combat/analysis")
+    def character_combat_analysis(character_id: str, parts: Optional[str] = None, hours: float = Query(24, gt=0, le=24 * 366),
+                                  start_time: Optional[datetime] = None, end_time: Optional[datetime] = None,
+                                  limit: int = Query(20, ge=1, le=500), scope: Optional[str] = Depends(can_read)):
+        """The deeper combat questions over any stretch of time (needs the combat log).
+
+        The same `parts` as `/groups/{group_id}/analysis`, for the last `hours` (24 unless given)
+        or between `start_time` and `end_time`. For `level_gaps` only the character's own level is
+        known outside a group session."""
+        mine(scope, character_id)
+        a, b = stretch(hours, start_time, end_time)
+        with db() as conn:
+            return analysis(conn, character_id, a, b, {}, parts, limit)
+
     def by_token(conn, token: str) -> Dict[str, Any]:
         row = conn.execute("SELECT group_id, character_id FROM group_shares WHERE token=?", (token,)).fetchone()
         if row:
@@ -366,6 +543,7 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
 
     @app.get("/api/v1/shared/party/{token}/across")
     def shared_across(token: str, who: str, spell: str, pet: bool = False):
+        """For the session's page: one member's ability against each kind of enemy."""
         with db() as conn:
             cid, a, b, me = window(conn, token, None, None)
             return {"targets": combat.across(conn, cid, a, b, me, who, spell, pet)}
@@ -383,18 +561,21 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
     @app.get("/api/v1/shared/party/{token}/amounts")
     def shared_amounts(token: str, spell: str, pet: bool = False, enemy: Optional[str] = None,
                        start: Optional[int] = None, end: Optional[int] = None):
+        """For the session's page: every landed hit of one ability, per member, to draw its spread."""
         with db() as conn:
             cid, a, b, me = window(conn, token, start, end)
             return {"members": combat.amounts(conn, cid, a, b, me, spell, pet, enemy)}
 
     @app.get("/api/v1/shared/party/{token}/dps")
     def shared_dps(token: str, start: Optional[int] = None, end: Optional[int] = None, step: int = 5):
+        """For the session's page: damage per member in time slices, own and pet apart."""
         with db() as conn:
             cid, a, b, me = window(conn, token, start, end)
             return combat.dps(conn, cid, a, b, me, step)
 
     @app.get("/api/v1/shared/party/{token}/hits")
     def shared_hits(token: str, start: Optional[int] = None, end: Optional[int] = None, limit: int = 600):
+        """For the session's page: hits, misses, heals, auras and deaths of a stretch of time, oldest first."""
         with db() as conn:
             cid, a, b, me = window(conn, token, start, end)
             return {"items": combat.events(conn, cid, a, b, me, max(1, min(limit, 2000)))}
@@ -422,6 +603,7 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
 
     @app.get("/api/v1/shared/party/{token}/map/{map_id}")
     def shared_map(token: str, map_id: int):
+        """For the session's page: the background image of a map the session visited."""
         with db() as conn:
             s = by_token(conn, token)
             seen = conn.execute("SELECT 1 FROM events WHERE character_id=? AND map_id=? AND timestamp>=? "

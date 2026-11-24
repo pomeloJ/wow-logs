@@ -172,10 +172,12 @@ def register(app, db, can_read, can_write, claim, folder: str) -> Shots:
 
     @app.get("/api/v1/screenshots/{shot_id}/image")
     def get_image(shot_id: str, scope: Optional[str] = Depends(can_read)):
+        """A screenshot at full size, as JPEG."""
         return serve(shot_id, False, scope)
 
     @app.get("/api/v1/screenshots/{shot_id}/thumb")
     def get_thumb(shot_id: str, scope: Optional[str] = Depends(can_read)):
+        """A screenshot's small preview, as JPEG."""
         return serve(shot_id, True, scope)
 
     return shots

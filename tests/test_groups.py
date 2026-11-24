@@ -181,6 +181,51 @@ def test_party_page_data_from_members(client):
     assert "999" not in sheet.text                                # nothing from outside the session
     assert client.get("/api/v1/shared/party/nope/skills").status_code == 404
 
+    # ---- the same session for a tool: asked for by character, with a read token, in small pieces
+    mine = "/api/v1/characters/c1/groups"
+    assert client.get(mine).status_code == 401
+    listed = client.get(mine, headers=READ).json()["items"]
+    gid = listed[0]["group_id"]
+    assert listed[0]["page"] == f"/party/{tok}" and listed[0]["kills"] == d["stats"]["kills"]
+    assert client.get(mine, params={"limit": 1}, headers=READ).json()["items"] == listed[:1]
+    one = client.get(f"{mine}/{gid}", headers=READ).json()
+    assert one["meter"] == d["meter"] and one["encounters"] == d["encounters"] and one["kills_by"] == d["kills_by"]
+    assert one["omitted"] == ["route", "timeline", "charts", "screenshots"]
+    assert not {"maps", "marks", "timeline", "xp_points", "damage_minutes", "kill_times", "screenshots"} & set(one)
+    assert client.get(f"{mine}/latest", headers=READ).json()["group_id"] == gid          # "latest" stands for the newest
+    more = client.get(f"{mine}/{gid}", params={"include": "route,timeline"}, headers=READ).json()
+    assert more["maps"] == d["maps"] and more["timeline"] == d["timeline"] and more["omitted"] == ["charts", "screenshots"]
+    assert client.get(f"{mine}/{gid}", params={"include": "all"}, headers=READ).json()["omitted"] == []
+    assert client.get(f"{mine}/{gid}", params={"include": "nonsense"}, headers=READ).status_code == 400
+    assert client.get(f"{mine}/nope", headers=READ).status_code == 404
+    sk = client.get(f"{mine}/{gid}/skills", headers=READ).json()
+    assert [(k["who"], k["spell"]) for k in sk["skills"]][:3] == [("小德", "月火術"), ("波波", "射擊"), ("波波", "爪擊")]
+    assert [e["name"] for e in sk["enemies"]] == ["迪菲亞盜賊", "迪菲亞法師"]
+    assert [k["spell"] for k in client.get(f"{mine}/{gid}/skills", params={"member": "波波"}, headers=READ).json()["skills"]] == ["射擊", "爪擊"]
+    assert len(client.get(f"{mine}/{gid}/skills", params={"spell": "月火術", "enemy": "迪菲亞法師"}, headers=READ).json()["skills"]) == 1
+    assert len(client.get(f"{mine}/{gid}/skills", params={"limit": 1}, headers=READ).json()["skills"]) == 1
+    an = client.get(f"{mine}/{gid}/analysis", headers=READ).json()
+    assert set(an) == {"group_id", "defence", "level_gaps", "dots", "guard", "buffs", "heals", "activity", "pets", "autoshot", "casts"}
+    assert an["defence"][0]["name"] == "迪菲亞盜賊"
+    part = client.get(f"{mine}/{gid}/analysis", params={"parts": "defence,activity", "limit": 1}, headers=READ).json()
+    assert set(part) == {"group_id", "defence", "activity"} and len(part["defence"]) == 1
+    assert client.get(f"{mine}/{gid}/analysis", params={"parts": "magic"}, headers=READ).status_code == 400
+    # combat outside a session: any stretch of time
+    when = {"start_time": T0.isoformat(), "end_time": (T0 + timedelta(hours=3)).isoformat()}
+    wide = client.get("/api/v1/characters/c1/combat/skills", params=when, headers=READ).json()["skills"]
+    assert wide[0]["total"] == 999 + 600 and wide[0]["spell"] == "月火術"             # includes the hit after the group ended
+    assert client.get("/api/v1/characters/c1/combat/skills", headers=READ).json()["skills"] == []   # nothing in the last day
+    assert client.get("/api/v1/characters/c1/combat/skills", params={"start_time": "2026-11-22T12:00:00"}, headers=READ).status_code == 400
+    assert client.get("/api/v1/characters/c1/combat/analysis", params={**when, "parts": "defence"}, headers=READ).json()["defence"][0]["hits"] >= 6
+    # the description a tool reads: every endpoint filed and explained
+    api = client.get("/openapi.json").json()
+    assert "character_id" in api["info"]["description"] and [t["name"] for t in api["tags"]][1] == "組隊 Groups"
+    ops = {(m, p): o for p, methods in api["paths"].items() for m, o in methods.items()}
+    assert ops[("get", "/api/v1/characters/{character_id}/groups/{group_id}/analysis")]["tags"] == ["組隊 Groups"]
+    assert ops[("get", "/api/v1/characters/{character_id}/combat/skills")]["tags"] == ["戰鬥分析 Combat"]
+    assert ops[("post", "/api/v1/events/batch")]["tags"] == ["上傳 Uploads"] and ops[("get", "/api/v1/world/items")]["tags"] == ["世界資料 World"]
+    assert not [key for key, o in ops.items() if key[0] == "get" and not o.get("description")]      # nothing left unexplained
+
     loot = d["member_loot"]
     assert [(m["name"], m["count"], m["value"]) for m in loot] == [("波波", 5, 552)]
     assert [i["name"] for i in loot[0]["items"]] == ["綠色法杖", "亞麻布"]            # most valuable first
