@@ -310,3 +310,70 @@ def test_a_new_version_with_an_odd_name_is_not_taken(tmp_path, monkeypatch):
         update.target({**good, "version": "../9"}, tmp_path)
     found = update.check("http://hub", Web([good]), current="0.1")
     assert found["name"] == good["name"] and update.target(found, tmp_path).parent == tmp_path
+
+
+def test_the_addon_in_the_game_is_updated_from_the_server(tmp_path):
+    """The server has a newer addon than the game: it is offered, fetched and swapped in, in
+    every game version that has an older copy, and nowhere else."""
+    import io
+    import sys
+    import zipfile
+    from pathlib import Path
+    import pytest
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
+    from fastapi.testclient import TestClient
+    from app.main import create_app
+    from adventuresync import update
+    web = TestClient(create_app(db_path=str(tmp_path / "s.db"), write_token="w", read_token="r"))
+    offered = web.get("/api/v1/setup").json()["addon_version"]
+    assert update.as_numbers(offered)
+
+    def install(flavor, version):
+        folder = tmp_path / "game" / flavor / "Interface" / "AddOns"
+        (folder / "AdventureCollector").mkdir(parents=True)
+        (folder / "AdventureCollector" / "AdventureCollector.toc").write_text(f"## Interface: 1\n## Version: {version}\n")
+        (folder / "AdventureCollector" / "Old.lua").write_text("-- from the old version")
+        return folder
+
+    old, same = install("_forever_", "0.0.9"), install("_ptr_", offered)
+    empty = tmp_path / "game" / "_classic_" / "Interface" / "AddOns"
+    empty.mkdir(parents=True)
+    dirs = [old, same, empty]
+    assert [(Path(a["folder"]).parent.parent.name, a["version"]) for a in update.installed_addons(dirs)] == \
+        [("_forever_", "0.0.9"), ("_ptr_", offered)]
+    found = update.check_addon("http://hub", dirs, web)
+    assert (found["version"], found["installed"], found["folders"]) == (offered, "0.0.9", [str(old)])
+    assert update.check_addon("http://hub", [same, empty], web) is None           # up to date, or not installed: nothing to offer
+    done = update.fetch_addon(found, web)
+    assert done == [old / "AdventureCollector"] and update.toc_version(done[0]) == offered
+    assert (done[0] / "Core.lua").is_file() and not (done[0] / "Old.lua").exists()   # replaced whole, not mixed with the old
+    assert not (old / ".AdventureCollector.new").exists() and not (empty / "AdventureCollector").exists()
+    assert update.check_addon("http://hub", dirs, web) is None
+    assert update.toc_version(tmp_path) is None
+
+    # a download that is not the addon is refused before anything in the game is touched
+    def zipped(names):
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as z:
+            for name in names:
+                z.writestr(name, "x")
+        return out.getvalue()
+    good = ["AdventureCollector/AdventureCollector.toc", "AdventureCollector/Core.lua"]
+    assert sorted(update.addon_files(zipped(good + ["AdventureCollector/Bindings.xml", "AdventureCollector/sub/x.lua"]))) == \
+        ["AdventureCollector.toc", "Bindings.xml", "Core.lua", "sub/x.lua"]
+    for bad in (["AdventureCollector/../evil.lua"], ["../AdventureCollector/Core.lua"], ["Other/Core.lua"], ["AdventureCollector/run.exe"],
+                ["AdventureCollector/C:/x.lua"], ["AdventureCollector\\\\evil.lua"], ["/AdventureCollector/Core.lua"]):
+        with pytest.raises(RuntimeError):
+            update.addon_files(zipped(good + bad))
+    with pytest.raises(RuntimeError):
+        update.addon_files(zipped(["AdventureCollector/Core.lua"]))                # no .toc: not the addon
+
+    class Broken:
+        def get(self, path):
+            import httpx
+            return httpx.Response(200, content=b"<html>not a zip</html>")
+    install("_broken_", "0.0.1")
+    target = tmp_path / "game" / "_broken_" / "Interface" / "AddOns"
+    with pytest.raises(RuntimeError):
+        update.fetch_addon({"version": offered, "folders": [str(target)], "url": "x"}, Broken())
+    assert (target / "AdventureCollector" / "Old.lua").is_file()                  # the old addon is still there

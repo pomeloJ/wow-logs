@@ -45,7 +45,7 @@ a { color: var(--accent); }
     <div class="sys" style="margin-top:10px"><b>原始碼版（Windows／macOS 通用）</b>
       <small>需要先裝 Python 3.11 以上（<a href="https://www.python.org/downloads/" rel="noreferrer">python.org</a>），解壓後見裡面的 README.txt</small>
       <a class="btn" id="source" href="/download/client-source.zip">下載</a></div>
-    <p class="hint">只要遊戲插件：<a href="/download/addon.zip">AdventureCollector.zip</a>，解壓後放進遊戲的 <code>_forever_/Interface/AddOns</code>。程式裡也有一鍵安裝。</p>
+    <p class="hint">只要遊戲插件：<a href="/download/addon.zip">AdventureCollector.zip</a><span id="addon-version"></span>，解壓後放進遊戲的 <code>_forever_/Interface/AddOns</code>。程式裡也有一鍵安裝；插件有新版本時，程式會提示並可以只更新插件。</p>
   </section>
 
   <section>
@@ -84,6 +84,7 @@ fetch("/api/v1/setup").then(r => r.json()).then(r => {
     el("b", { text: (kind(b.name) || "程式") + (mine(b) ? "（這台電腦）" : "") }), el("small", { text: `${b.name}　${b.version ? "版本 " + b.version + "　" : ""}${size(b.size)}　${new Date(b.updated).toLocaleDateString("zh-TW")}，不需要另外裝 Python` }),
     el("a", { class: "btn", href: "/download/builds/" + encodeURIComponent(b.name), text: "下載" }))))]
     : [el("p", { class: "hint", text: "這台伺服器還沒有放上編譯好的程式，請用下面的原始碼版。" })]));
+  if (r.addon_version) $("addon-version").textContent = `（版本 ${r.addon_version}）`;
   if (!r.source) { $("source").replaceWith(el("span", { class: "say bad", text: "這台伺服器上沒有原始碼可下載，請從程式庫取得。" })); }
 }).catch(() => {});
 </script>

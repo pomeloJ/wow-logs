@@ -52,6 +52,16 @@ def source_version(src: Optional[Dict[str, str]]) -> Optional[str]:
     return found.group(1) if found and VERSION.match(found.group(1)) else None
 
 
+def addon_version(src: Optional[Dict[str, str]]) -> Optional[str]:
+    """The version in the addon's .toc file: what the game itself shows in its addon list."""
+    try:
+        with open(os.path.join(src["addon"], "AdventureCollector", "AdventureCollector.toc"), encoding="utf-8") as f:
+            found = re.search(r"^##\s*Version:\s*(\S+)", f.read(), re.M)
+    except (OSError, TypeError):
+        return None
+    return found.group(1) if found and VERSION.match(found.group(1)) else None
+
+
 def _add_tree(z: zipfile.ZipFile, folder: str, inside: str) -> None:
     for base, dirs, files in os.walk(folder):
         dirs[:] = sorted(d for d in dirs if not d.startswith((".", "__")))
@@ -128,7 +138,8 @@ def register(app, can_write, builds_dir: str, client_dir: Optional[str] = None) 
     def setup_info():
         """What this server can hand out. No secrets."""
         src = sources(client_dir)
-        return {"source": src is not None, "source_version": source_version(src), "builds": builds()}
+        return {"source": src is not None, "source_version": source_version(src), "addon_version": addon_version(src),
+                "builds": builds()}
 
     @app.get("/download/addon.zip", include_in_schema=False)
     def addon_zip():

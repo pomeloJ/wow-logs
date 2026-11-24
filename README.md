@@ -36,6 +36,10 @@ cd agent && ../.venv/bin/python AdventureSync.pyw
 測試連線，並顯示等待上傳與已上傳的筆數。設定存在使用者資料夾的 `.adventuresync/config.toml`。
 不想開視窗也可以用指令：`./scripts/run-agent-macos.sh run`（或 `python -m adventuresync run`）。
 
+**插件單獨更新**：遊戲插件比同步程式更常改，所以可以單獨更新。同步程式會比對伺服器上的插件版本與遊戲裡安裝的版本
+（插件 `.toc` 檔的 `## Version`），伺服器的比較新就在視窗上方提示，按「更新插件」會下載並換掉遊戲裡的插件，
+Windows 與 macOS 相同，不需要換新的同步程式。更新後在遊戲裡輸入 `/reload` 生效。發布新版插件時記得把 `.toc` 與 `Core.lua` 裡的版本號一起調高。
+
 **給別台電腦用**：伺服器的 `/setup` 頁面可以下載同步程式。原始碼版需要對方自己裝 Python 3.11 以上。
 **對方沒有 Python 時**給單一檔案版：在那種系統上執行 `python scripts/build-client.py --upload`
 （需要 `python -m pip install pyinstaller httpx pillow`），編好的檔案（Windows 是約 22 MB 的 `.exe`，裡面已包含

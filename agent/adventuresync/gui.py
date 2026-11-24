@@ -103,6 +103,7 @@ class Worker(threading.Thread):
         self.auto = False
         self._cfg: Optional[Config] = None
         self._url = ""                                # the server to ask about newer versions
+        self._wow = ""                                # the chosen game folder, to look for the installed addon
 
     def ask(self, what: str, cfg: Optional[Config] = None) -> None:
         self.requests.put((what, cfg))
@@ -126,15 +127,28 @@ class Worker(threading.Thread):
                 what, cfg = "tick", None
             if what == "quit":
                 return
+            if isinstance(cfg, Config):
+                self._wow = cfg.wow_path
             if isinstance(cfg, Config) and cfg.url.startswith(("http://", "https://")) and cfg.url != self._url:
                 self._url, next_check = cfg.url, 0.0            # another server: ask it right away
             if self._url and (what == "update" or (what == "tick" and time.monotonic() >= next_check)):
                 next_check = time.monotonic() + CHECK_EVERY
                 try:
                     self._say(update=update.check(self._url))
+                    self._say(addon=update.check_addon(self._url, game_folders(self._wow)))
                 except Exception as e:                          # no answer now: nothing to offer, ask again later
                     log.debug("could not ask for a newer version: %s", e)
+            if what in ("update", "addon"):
+                self._say(addons=update.installed_addons(game_folders(self._wow)))
             if what == "update":
+                continue
+            if what == "addon":                                 # cfg is what update.check_addon found
+                try:
+                    done = update.fetch_addon(cfg)
+                    self._say(addon_done=cfg["version"], addon=None, addons=update.installed_addons(game_folders(self._wow)),
+                              message=f"遊戲插件已更新到 {cfg['version']}（{len(done)} 處）。遊戲開著的話，在遊戲裡輸入 /reload 才會生效。", ok=True)
+                except Exception as e:
+                    self._say(message=f"插件更新失敗：{e}", ok=False, addon_failed=True)
                 continue
             if what == "fetch":                                 # cfg is what update.check found
                 try:
@@ -286,6 +300,30 @@ def main(config: Optional[str] = None) -> int:
     bar_button = ttk.Button(bar, command=get_update)
     bar_button.pack(side="left", padx=(10, 0))
 
+    # the same for the addon in the game, which can be brought up to date without a new program
+    addon_bar = ttk.Frame(root, padding=(14, 10, 14, 0))
+    addon_text = ttk.Label(addon_bar, foreground="#b26a00")
+    addon_text.pack(side="left")
+    addon_newer: Dict[str, Any] = {}
+
+    def offer_addon(found: Optional[Dict[str, Any]]) -> None:
+        addon_newer.clear()
+        if not found:
+            addon_bar.pack_forget()
+            return
+        addon_newer.update(found)
+        addon_text.configure(text=f"遊戲插件有新版本 {found['version']}（遊戲裡的是 {found['installed']}）")
+        addon_button.configure(text="更新插件", state="normal")
+        addon_bar.pack(fill="x", before=frame)
+
+    def get_addon() -> None:
+        if addon_newer:
+            addon_button.configure(text="更新中…", state="disabled")
+            worker.ask("addon", dict(addon_newer))
+
+    addon_button = ttk.Button(addon_bar, command=get_addon)
+    addon_button.pack(side="left", padx=(10, 0))
+
     fields = {"url": tk.StringVar(value=cfg.url), "token": tk.StringVar(value=cfg.api_token),
               "wow": tk.StringVar(value=cfg.wow_path), "device": tk.StringVar(value=cfg.device_id)}
     labels = (("url", "伺服器網址"), ("token", "權杖（這台電腦的角色都用它）"), ("wow", "遊戲資料夾（留空自動尋找）"),
@@ -360,6 +398,7 @@ def main(config: Optional[str] = None) -> int:
     def addon() -> None:
         try:
             note("插件已安裝到：" + "、".join(str(p) for p in install_addon(fields["wow"].get().strip())), True)
+            worker.ask("update", current())
         except (OSError, RuntimeError) as e:
             note(f"插件安裝失敗：{e}", False)
 
@@ -385,7 +424,7 @@ def main(config: Optional[str] = None) -> int:
     status.grid(row=7, column=0, columnspan=3, sticky="ew")
     status.columnconfigure(1, weight=1)
     shown = {}
-    for row, (key, text) in enumerate((("connected", "伺服器"), ("auto", "自動同步"), ("files", "遊戲存檔"), ("pending", "等待上傳"),
+    for row, (key, text) in enumerate((("connected", "伺服器"), ("auto", "自動同步"), ("addon", "遊戲插件"), ("files", "遊戲存檔"), ("pending", "等待上傳"),
                                        ("uploaded", "已上傳"), ("rejected", "被拒絕"), ("waiting", "傳不上去的角色"), ("synced", "上次同步"))):
         ttk.Label(status, text=text).grid(row=row, column=0, sticky="w", padx=(0, 14), pady=1)
         shown[key] = ttk.Label(status, text="—", wraplength=px(380), justify="left")
@@ -417,6 +456,13 @@ def main(config: Optional[str] = None) -> int:
                     list_people(r["characters"])
                 if "update" in r:
                     offer(r["update"])
+                if "addon" in r:
+                    offer_addon(r["addon"])
+                if r.get("addon_failed"):
+                    addon_button.configure(text="再試一次", state="normal")
+                if "addons" in r:
+                    shown["addon"].configure(text="、".join(sorted({a["version"] or "版本不明" for a in r["addons"]}))
+                                             if r["addons"] else "還沒安裝（按「安裝插件到遊戲」）")
                 if "fetching" in r:
                     got, size = r["fetching"]
                     bar_button.configure(text=f"下載中… {got * 100 // size}%" if size else f"下載中… {got / 1048576:.0f} MB")
@@ -458,6 +504,7 @@ def main(config: Optional[str] = None) -> int:
     hook = getattr(main, "_started", None)              # lets a test drive the window
     if hook:
         hook(root, fields, worker, {"save": save, "send": send, "shown": shown, "message": message, "own": own,
-                                    "people": people, "bar": bar, "bar_text": bar_text, "bar_button": bar_button})
+                                    "people": people, "bar": bar, "bar_text": bar_text, "bar_button": bar_button,
+                                    "addon_bar": addon_bar, "addon_text": addon_text, "addon_button": addon_button})
     root.mainloop()
     return 0

@@ -5,13 +5,16 @@ ready-made programs its owner uploaded, each with a version, and the version of 
 Nothing is installed: a ready-made program is one file, so updating is downloading the new
 file next to the old one and opening it.
 """
+import io
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -131,3 +134,104 @@ def launch(path: Path) -> None:
     if sys.platform.startswith("win"):
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
     subprocess.Popen([str(path)], cwd=os.getcwd(), env=env, close_fds=True, creationflags=flags)
+
+
+# ------------------------------------------------------------ the addon in the game
+# The addon changes more often than this program and is a handful of text files, so it can be
+# brought up to date by itself: fetched from the server and put into the game's AddOns folder.
+ADDON = "AdventureCollector"
+ADDON_FILES = (".lua", ".toc", ".xml", ".txt")
+ADDON_MAX = 5 * 1024 * 1024
+
+
+def toc_version(folder: Path) -> Optional[str]:
+    """The version an installed copy of the addon says it is, or None."""
+    try:
+        text = (folder / f"{ADDON}.toc").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    found = re.search(r"^##\s*Version:\s*(\S+)", text, re.M)
+    return found.group(1) if found and as_numbers(found.group(1)) else None
+
+
+def installed_addons(addon_dirs: List[Path]) -> List[Dict[str, Any]]:
+    """Where the addon is installed (one entry per game version) and which version each is."""
+    return [{"folder": str(d), "version": toc_version(d / ADDON)} for d in addon_dirs if (d / ADDON).is_dir()]
+
+
+def check_addon(url: str, addon_dirs: List[Path], client: Optional[Any] = None) -> Optional[Dict[str, Any]]:
+    """The server's addon, when it is newer than a copy installed here, or None. Nothing is
+    offered where the addon is not installed at all: that is what "install" is for."""
+    base = url.rstrip("/")
+    if client is None:
+        r = httpx.get(f"{base}/api/v1/setup", timeout=10, follow_redirects=True, headers={"User-Agent": USER_AGENT})
+    else:
+        r = client.get("/api/v1/setup")
+    if r.status_code != 200:
+        raise RuntimeError(f"HTTP {r.status_code}")
+    try:
+        offered = r.json().get("addon_version")
+    except (ValueError, AttributeError):
+        raise RuntimeError("the answer did not come from the Adventure Hub server")
+    if not as_numbers(offered):
+        return None
+    old = [a for a in installed_addons(addon_dirs) if as_numbers(a["version"]) < as_numbers(offered)]
+    if not old:
+        return None
+    return {"version": offered, "installed": min((a["version"] or "?" for a in old), key=as_numbers),
+            "folders": [a["folder"] for a in old], "url": f"{base}/download/addon.zip"}
+
+
+def addon_files(data: bytes) -> Dict[str, bytes]:
+    """The files of a downloaded addon zip, by their path inside the addon's folder. Only what
+    an addon is made of is taken, and nothing that would land outside its folder."""
+    files: Dict[str, bytes] = {}
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        total = 0
+        for info in z.infolist():
+            name = info.filename
+            if name.endswith("/"):
+                continue
+            parts = name.split("/")
+            if parts[0] != ADDON or len(parts) < 2 or "\\" in name or any(p in ("", ".", "..") or ":" in p for p in parts) \
+                    or not name.lower().endswith(ADDON_FILES):
+                raise RuntimeError(f"the addon download holds something unexpected: {name}")
+            total += info.file_size
+            if total > ADDON_MAX:
+                raise RuntimeError("the addon download is too large to be the addon")
+            files["/".join(parts[1:])] = z.read(info)
+    if f"{ADDON}.toc" not in files or "Core.lua" not in files:
+        raise RuntimeError("the addon download is not the addon")
+    return files
+
+
+def fetch_addon(found: Dict[str, Any], client: Optional[Any] = None) -> List[Path]:
+    """Download the addon and replace each out-of-date copy. The new files are written beside
+    the old folder first and swapped in whole, so a failure leaves the old addon as it was."""
+    if client is None:
+        r = httpx.get(found["url"], timeout=60, follow_redirects=True, headers={"User-Agent": USER_AGENT})
+    else:
+        r = client.get("/download/addon.zip")
+    if r.status_code != 200:
+        raise RuntimeError(f"HTTP {r.status_code}")
+    if len(r.content) > ADDON_MAX:
+        raise RuntimeError("the addon download is too large to be the addon")
+    try:
+        files = addon_files(r.content)
+    except zipfile.BadZipFile:
+        raise RuntimeError("the addon download is not a zip file")
+    done = []
+    for folder in found["folders"]:
+        addons = Path(folder)
+        fresh, dest = addons / f".{ADDON}.new", addons / ADDON
+        if fresh.exists():
+            shutil.rmtree(fresh)
+        for rel, data in files.items():
+            path = fresh.joinpath(*rel.split("/"))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        if dest.exists():
+            shutil.rmtree(dest)
+        fresh.rename(dest)
+        done.append(dest)
+    return done
