@@ -250,9 +250,19 @@ const TABS = [["home", "總覽"], ["map", "地圖"], ["quests", "任務"], ["ite
 const TAB_KEY = "adventure-hub-tab";
 
 let token = "";
+// The token arrives after the "#": written out as #token=abc, or just #abc. Either replaces
+// the one this browser remembered, so a link always shows what that link is for.
+function takeToken() {
+  const m = location.hash.match(/token=([^&]+)/) || location.hash.match(/^#([A-Za-z0-9_-]{8,})$/);
+  if (!m) return false;
+  localStorage.setItem(KEY, decodeURIComponent(m[1]));
+  history.replaceState(null, "", location.pathname);
+  return true;
+}
+// Opening a link in a tab that already shows the page changes only the "#": start over with it.
+window.addEventListener("hashchange", () => { try { if (takeToken()) location.reload(); } catch (e) { /* storage unavailable */ } });
 try {
-  const m = location.hash.match(/token=([^&]+)/);
-  if (m) { localStorage.setItem(KEY, decodeURIComponent(m[1])); history.replaceState(null, "", location.pathname); }
+  takeToken();
   token = localStorage.getItem(KEY) || "";
 } catch (e) { /* storage unavailable: fall through to the token form */ }
 
