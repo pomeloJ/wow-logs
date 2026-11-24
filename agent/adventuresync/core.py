@@ -1,7 +1,6 @@
 """AdventureSync core: config, discovery, local queue, ingest, upload."""
 import json
 import logging
-import os
 import sqlite3
 import sys
 import time
@@ -139,7 +138,9 @@ def wow_roots(wow_path: str = "") -> List[Path]:
             log.debug("could not look for the game beyond the usual folders: %s", e)
     roots, seen = [], set()
     for place in places:
-        key = os.path.normcase(os.path.normpath(place))
+        # The same folder written two ways (D:\Games\x from the registry, D:/Games/x from the list)
+        # is one place. Compared as text, so it gives the same answer on every system.
+        key = place.replace("\\", "/").rstrip("/").lower()
         if key not in seen:
             seen.add(key)
             roots.append(Path(place))
