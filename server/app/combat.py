@@ -170,6 +170,14 @@ def skills(conn, character_id: str, start_ms: int, end_ms: int, me: str, enemy: 
             # what armour and resistances took off, where the log gives the amount before them
             "reduced": round(1 - g["raw_of"] / g["raw"], 3) if g["raw"] > 0 else None,
         })
+    by_member: Dict[str, float] = {}
+    for k in out:
+        by_member[k["who"]] = by_member.get(k["who"], 0) + k["total"]
+    for k in out:                                     # the same facts as ready-made percentages
+        k["hit_pct"] = round(k["hits"] / k["attempts"] * 100, 1) if k["attempts"] else None
+        k["crit_pct"] = round(k["crit"]["n"] / k["hits"] * 100, 1) if k["can_crit"] and k["hits"] else None
+        k["per_attempt"] = round(k["total"] / k["attempts"], 1) if k["attempts"] else None
+        k["pct_of_member"] = round(k["total"] / by_member[k["who"]] * 100, 1) if by_member[k["who"]] else None
     out.sort(key=lambda s: -s["total"])
     return out
 

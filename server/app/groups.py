@@ -323,8 +323,27 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
     # The share pages above are addressed by a session's own token. These are addressed by
     # character and need a read token, and answer in pieces small enough for a program (an MCP
     # server, a script) to hand to a language model.
-    HEAVY = {"route": ("maps", "marks"), "timeline": ("timeline",),
+    HEAVY = {"route": ("maps", "marks"), "timeline": ("timeline",), "skills": ("skills",),
              "charts": ("xp_points", "damage_minutes", "kill_times"), "screenshots": ("screenshots",)}
+
+    def with_rates(d: Dict[str, Any]) -> Dict[str, Any]:
+        """Per-second figures and shares worked out, so a reader does not have to divide."""
+        meter = d.get("meter") or {}
+        fight = max(1, meter.get("fight_seconds") or 0)
+        total = sum(m["damage"] for m in meter.get("members", [])) or 0
+        if meter.get("members"):
+            meter["group_dps"] = round(total / fight, 1)
+        for m in meter.get("members", []):
+            m.update(dps=round(m["damage"] / fight, 1), hps=round(m["healing"] / fight, 1), dtps=round(m["taken"] / fight, 1),
+                     damage_pct=round(m["damage"] / total * 100, 1) if total else None,
+                     crit_pct=round(m["crits"] / m["hits"] * 100, 1) if m["hits"] else None)
+        for e in d.get("encounters", []):
+            seconds = max(1, e.get("duration") or 0)
+            dealt = sum(r["amount"] for r in e["damage"])
+            e["group_dps"] = round(dealt / seconds, 1)
+            for r in e["damage"]:
+                r.update(dps=round(r["amount"] / seconds, 1), pct=round(r["amount"] / dealt * 100, 1) if dealt else None)
+        return d
     PARTS = ("defence", "level_gaps", "dots", "guard", "buffs", "heals", "activity", "pets", "autoshot", "casts")
 
     def mine(scope: Optional[str], character_id: str) -> None:
@@ -392,9 +411,13 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
         healing, damage taken, crit rate, top abilities and hardest hit per member) and
         `encounters` (each boss fight with its length and per-member damage).
 
+        Per-second figures are worked out: `dps`, `hps`, `dtps`, `damage_pct` and `crit_pct` per
+        member (over `meter.fight_seconds`, the time the group was actually fighting), and
+        `group_dps` with each member's `dps` and `pct` per boss fight.
+
         The bulky parts are left out unless named in `include` (comma separated): `route` (map
-        positions and marks), `timeline` (event by event), `charts` (per-minute series),
-        `screenshots`; `all` for everything. What was left out is listed in `omitted`."""
+        positions and marks), `timeline` (event by event), `skills` (see `/skills`), `charts`
+        (per-minute series), `screenshots`; `all` for everything. What was left out is in `omitted`."""
         mine(scope, character_id)
         with db() as conn:
             s = find(conn, character_id, group_id)
@@ -409,7 +432,64 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
         for name in d["omitted"]:
             for key in HEAVY[name]:
                 d.pop(key, None)
-        return d
+        return with_rates(d)
+
+    @app.get("/api/v1/characters/{character_id}/groups/{group_id}/fight")
+    def character_group_fight(character_id: str, group_id: str, boss: Optional[str] = None,
+                              step: Optional[int] = Query(None, ge=1, le=600), log: int = Query(0, ge=0, le=500),
+                              limit: int = Query(8, ge=1, le=100), scope: Optional[str] = Depends(can_read)):
+        """One boss fight of a group session up close, or the whole session (needs the combat log).
+
+        `boss` is the boss's name or its number in the session's `encounters` (1 = first); left out,
+        the answer covers the whole session. Gives per member damage, `dps`, share, healing and
+        damage taken; `dps_over_time` (each member's damage per second in slices of `step` seconds,
+        5 for a boss fight); the `limit` biggest abilities used in that stretch; and, with `log=N`,
+        the first N things that happened (hits, misses, heals, auras, deaths; `at` is seconds in)."""
+        mine(scope, character_id)
+        with db() as conn:
+            s = find(conn, character_id, group_id)
+            d = with_rates(detail(conn, s))
+            who = owner(conn, character_id)
+            me = (who["name"] if who else None) or "我"
+            fights = d["encounters"]
+            if boss is None:
+                a, b = _ms(s["started_at"]), _ms(s["ended_at"]) + 999
+                about = {"boss": None, "seconds": d["meter"].get("fight_seconds"), "started_at": s["started_at"], "ended_at": s["ended_at"]}
+                members = [{k: m[k] for k in ("name", "damage", "dps", "damage_pct", "healing", "hps", "taken", "dtps", "crit_pct")}
+                           for m in d["meter"]["members"]]
+                step = step or max(30, -(-s["duration"] // 60))
+            else:
+                chosen_fight = fights[int(boss) - 1] if boss.isdigit() and 1 <= int(boss) <= len(fights) else \
+                    next((f for f in fights if f["name"] == boss), None)
+                if chosen_fight is None:
+                    raise HTTPException(404, "no such boss fight in this session; its fights are: "
+                                        + (", ".join(f"{i + 1}. {f['name']}" for i, f in enumerate(fights)) or "none"))
+                seconds = max(1, chosen_fight.get("duration") or 0)
+                b = _ms(chosen_fight["timestamp"]) + 1999
+                a = b - seconds * 1000 - 3000
+                about = {"boss": chosen_fight["name"], "number": fights.index(chosen_fight) + 1, "success": chosen_fight["success"],
+                         "seconds": seconds, "ended_at": chosen_fight["timestamp"], "group_dps": chosen_fight["group_dps"]}
+                rows: Dict[str, Dict[str, Any]] = {}
+                for key in ("damage", "healing", "taken"):
+                    for r in chosen_fight[key]:
+                        row = rows.setdefault(r["name"], {"name": r["name"], "damage": 0, "dps": 0.0, "damage_pct": None, "healing": 0, "taken": 0})
+                        row[key] = r["amount"]
+                        if key == "damage":
+                            row.update(dps=r["dps"], damage_pct=r["pct"])
+                members = sorted(rows.values(), key=lambda r: -r["damage"])
+                step = step or 5
+            series = combat.dps(conn, character_id, a, b, me, step)
+            out = {"group_id": s["group_id"], "fight": about, "members": members,
+                   "dps_over_time": {"step_seconds": series["step"],
+                                     "series": {name: [round((own + pet) / series["step"], 1) for own, pet in zip(v["own"], v["pet"])]
+                                                for name, v in series["series"].items()}},
+                   "skills": [{k: sk[k] for k in ("who", "spell", "pet", "total", "hits", "avg", "max", "crit_pct", "hit_pct")}
+                              for sk in combat.skills(conn, character_id, a, b, me)[:limit]]}
+            if log:
+                out["log"] = [{"at": round((e["ts"] - a) / 1000, 1), **{k: e[k] for k in ("way", "who", "pet", "enemy", "spell", "amount", "crit", "miss", "kind")
+                                                                         if e.get(k) not in (None, 0, False)}}
+                              for e in combat.events(conn, character_id, a, b, me, log)]
+            return out
 
     @app.get("/api/v1/characters/{character_id}/groups/{group_id}/skills")
     def character_group_skills(character_id: str, group_id: str, member: Optional[str] = None, spell: Optional[str] = None,

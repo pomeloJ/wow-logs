@@ -189,12 +189,18 @@ def test_party_page_data_from_members(client):
     assert listed[0]["page"] == f"/party/{tok}" and listed[0]["kills"] == d["stats"]["kills"]
     assert client.get(mine, params={"limit": 1}, headers=READ).json()["items"] == listed[:1]
     one = client.get(f"{mine}/{gid}", headers=READ).json()
-    assert one["meter"] == d["meter"] and one["encounters"] == d["encounters"] and one["kills_by"] == d["kills_by"]
-    assert one["omitted"] == ["route", "timeline", "charts", "screenshots"]
-    assert not {"maps", "marks", "timeline", "xp_points", "damage_minutes", "kill_times", "screenshots"} & set(one)
+    assert one["kills_by"] == d["kills_by"] and [m["name"] for m in one["meter"]["members"]] == [m["name"] for m in d["meter"]["members"]]
+    assert one["omitted"] == ["route", "timeline", "skills", "charts", "screenshots"]
+    assert not {"maps", "marks", "timeline", "skills", "xp_points", "damage_minutes", "kill_times", "screenshots"} & set(one)
+    # per-second figures and shares are worked out: 40 seconds of fighting in this session
+    top = one["meter"]["members"][0]
+    assert (top["name"], top["damage"], top["dps"], top["damage_pct"]) == ("波波", 500, 12.5, 55.6) and one["meter"]["group_dps"] == 22.5
+    assert one["meter"]["members"][1]["crit_pct"] == 40.0 and one["meter"]["members"][2]["hps"] == 6.2
+    fight = one["encounters"][0]
+    assert fight["group_dps"] == round(100 / 95, 1) and fight["damage"][0] == {"name": "波波", "amount": 60, "dps": 0.6, "pct": 60.0}
     assert client.get(f"{mine}/latest", headers=READ).json()["group_id"] == gid          # "latest" stands for the newest
     more = client.get(f"{mine}/{gid}", params={"include": "route,timeline"}, headers=READ).json()
-    assert more["maps"] == d["maps"] and more["timeline"] == d["timeline"] and more["omitted"] == ["charts", "screenshots"]
+    assert more["maps"] == d["maps"] and more["timeline"] == d["timeline"] and more["omitted"] == ["skills", "charts", "screenshots"]
     assert client.get(f"{mine}/{gid}", params={"include": "all"}, headers=READ).json()["omitted"] == []
     assert client.get(f"{mine}/{gid}", params={"include": "nonsense"}, headers=READ).status_code == 400
     assert client.get(f"{mine}/nope", headers=READ).status_code == 404
@@ -204,6 +210,18 @@ def test_party_page_data_from_members(client):
     assert [k["spell"] for k in client.get(f"{mine}/{gid}/skills", params={"member": "波波"}, headers=READ).json()["skills"]] == ["射擊", "爪擊"]
     assert len(client.get(f"{mine}/{gid}/skills", params={"spell": "月火術", "enemy": "迪菲亞法師"}, headers=READ).json()["skills"]) == 1
     assert len(client.get(f"{mine}/{gid}/skills", params={"limit": 1}, headers=READ).json()["skills"]) == 1
+    assert (sk["skills"][0]["hit_pct"], sk["skills"][0]["crit_pct"], sk["skills"][0]["pct_of_member"]) == (80.0, 25.0, 100.0)
+    # one boss fight up close, by number or by name; or the whole session
+    boss = client.get(f"{mine}/{gid}/fight", params={"boss": "1", "log": 5}, headers=READ).json()
+    assert boss["fight"]["boss"] == "范克里夫" and boss["fight"]["number"] == 1 and boss["fight"]["seconds"] == 95
+    assert [(m["name"], m["damage"], m["dps"], m["damage_pct"]) for m in boss["members"]] == [("波波", 60, 0.6, 60.0), ("小德", 40, 0.4, 40.0), ("艾莉", 0, 0.0, None)]
+    assert boss["members"][2]["healing"] == 30 and boss["dps_over_time"]["step_seconds"] == 5
+    assert client.get(f"{mine}/{gid}/fight", params={"boss": "范克里夫"}, headers=READ).json()["fight"]["number"] == 1
+    lost = client.get(f"{mine}/{gid}/fight", params={"boss": "不存在"}, headers=READ)
+    assert lost.status_code == 404 and "1. 范克里夫" in lost.json()["detail"]
+    whole = client.get(f"{mine}/{gid}/fight", params={"log": 3}, headers=READ).json()
+    assert whole["fight"]["boss"] is None and whole["members"][0]["name"] == "波波" and len(whole["log"]) == 3
+    assert whole["skills"][0]["spell"] == "月火術" and "小德" in whole["dps_over_time"]["series"] and "at" in whole["log"][0]
     an = client.get(f"{mine}/{gid}/analysis", headers=READ).json()
     assert set(an) == {"group_id", "defence", "level_gaps", "dots", "guard", "buffs", "heals", "activity", "pets", "autoshot", "casts"}
     assert an["defence"][0]["name"] == "迪菲亞盜賊"
