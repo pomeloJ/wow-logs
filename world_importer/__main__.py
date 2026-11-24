@@ -29,12 +29,17 @@ def main(argv=None) -> int:
     tmp.unlink(missing_ok=True)
     out.parent.mkdir(parents=True, exist_ok=True)
     conn = create(str(tmp))
+    failed = None
     try:
         counts = SOURCES[args.source](conn, src)
     except Exception as e:
+        failed = str(e)
+    if failed is not None:
+        # Outside the except block on purpose: while the exception is alive its traceback keeps
+        # the importer's cursor, and with it the file, open. Windows cannot delete an open file.
         conn.close()
         tmp.unlink(missing_ok=True)
-        print(f"import FAILED, existing database left untouched: {e}", file=sys.stderr)
+        print(f"import FAILED, existing database left untouched: {failed}", file=sys.stderr)
         return 1
     conn.execute("VACUUM")
     conn.close()

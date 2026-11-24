@@ -84,6 +84,23 @@ def test_discovery_and_stable_read(tmp_path):
         read_stable(f, settle=0.01, attempts=2)
 
 
+def test_usual_places_to_look_for_the_game(monkeypatch):
+    from adventuresync import core
+    assert core.wow_roots("~/x")[0].name == "x" and len(core.wow_roots("~/x")) == 1     # a chosen folder: only that
+    monkeypatch.setattr(core.sys, "platform", "win32")
+    monkeypatch.setattr(core, "_windows_drives", lambda: ["C", "D"])
+    monkeypatch.setattr(core, "_windows_registry", lambda: [r"D:\Games\World of Warcraft"])
+    places = [str(p).replace("\\", "/") for p in core.wow_roots()]
+    assert places[0] == "D:/Games/World of Warcraft"                  # what the installer wrote down comes first
+    assert "D:/World of Warcraft" in places and "C:/Program Files (x86)/World of Warcraft" in places
+    assert len(places) == len(set(p.lower() for p in places))         # each folder once
+
+    def broken():
+        raise OSError("no registry")
+    monkeypatch.setattr(core, "_windows_registry", broken)
+    assert [str(p).replace("\\", "/") for p in core.wow_roots()][1:] == core.DEFAULT_WOW_PATHS[1:]   # still the usual ones
+
+
 def test_config(tmp_path):
     p = tmp_path / "c.toml"
     p.write_text('[server]\nurl = "http://x:1/"\napi_token = "t"\n[client]\ndevice_id = "d"\n')

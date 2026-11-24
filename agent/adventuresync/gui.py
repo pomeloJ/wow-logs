@@ -13,8 +13,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .core import (DB_GLOBAL, DEFAULT_WOW_PATHS, Config, Queue, Uploader, find_saved_variables, load_config,
-                   read_stable, save_config, scan)
+from .core import (DB_GLOBAL, Config, Queue, Uploader, find_saved_variables, load_config, read_stable, save_config,
+                   scan, wow_roots)
 
 HOME = Path("~/.adventuresync").expanduser()
 CLASSES = {"WARRIOR": "戰士", "PALADIN": "聖騎士", "HUNTER": "獵人", "ROGUE": "盜賊", "PRIEST": "牧師", "SHAMAN": "薩滿",
@@ -65,11 +65,11 @@ def addon_source() -> Optional[Path]:
 def game_folders(wow_path: str) -> List[Path]:
     """Every <game>/_x_/Interface/AddOns folder there is, for the chosen game folder or the usual places."""
     found = []
-    for root in ([Path(wow_path).expanduser()] if wow_path else [Path(p) for p in DEFAULT_WOW_PATHS]):
+    for root in wow_roots(wow_path):
         if not root.is_dir():
             continue
         for base in ([root] if (root / "Interface").is_dir() else [d for d in sorted(root.iterdir()) if d.is_dir()]):
-            if (base / "Interface" / "AddOns").is_dir():
+            if (base / "Interface" / "AddOns").is_dir() and base / "Interface" / "AddOns" not in found:
                 found.append(base / "Interface" / "AddOns")
     return found
 
@@ -203,9 +203,19 @@ def main(config: Optional[str] = None) -> int:
     logging.getLogger("adventuresync").addHandler(handler)
     logging.getLogger("adventuresync").setLevel(logging.INFO)
 
+    if sys.platform.startswith("win"):
+        # Without this Windows draws the window small and stretches it on a scaled display: blurry text.
+        try:
+            import ctypes
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            pass
     root = tk.Tk()
     root.title("AdventureSync")
-    root.minsize(620, 640)
+    # Text follows the display's scaling by itself; lengths given in pixels have to be scaled here.
+    zoom = max(root.winfo_fpixels("1i") / 96, 1) if sys.platform.startswith("win") else 1
+    px = lambda n: round(n * zoom)                                             # noqa: E731
+    root.minsize(px(620), px(640))
     frame = ttk.Frame(root, padding=14)
     frame.pack(fill="both", expand=True)
     frame.columnconfigure(1, weight=1)
@@ -302,7 +312,7 @@ def main(config: Optional[str] = None) -> int:
     auto_button = ttk.Button(buttons, text="開始自動同步", command=toggle)
     auto_button.pack(side="left")
 
-    message = ttk.Label(frame, text=f"設定檔：{path}", wraplength=520, justify="left")
+    message = ttk.Label(frame, text=f"設定檔：{path}", wraplength=px(520), justify="left")
     message.grid(row=6, column=0, columnspan=3, sticky="w", pady=(6, 10))
 
     status = ttk.LabelFrame(frame, text="同步狀態", padding=10)
@@ -312,7 +322,7 @@ def main(config: Optional[str] = None) -> int:
     for row, (key, text) in enumerate((("connected", "伺服器"), ("auto", "自動同步"), ("files", "遊戲存檔"), ("pending", "等待上傳"),
                                        ("uploaded", "已上傳"), ("rejected", "被拒絕"), ("waiting", "缺權杖的角色"), ("synced", "上次同步"))):
         ttk.Label(status, text=text).grid(row=row, column=0, sticky="w", padx=(0, 14), pady=1)
-        shown[key] = ttk.Label(status, text="—", wraplength=380, justify="left")
+        shown[key] = ttk.Label(status, text="—", wraplength=px(380), justify="left")
         shown[key].grid(row=row, column=1, sticky="w", pady=1)
     shown["auto"].configure(text="未啟動")
 
