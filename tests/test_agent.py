@@ -283,3 +283,30 @@ def test_one_token_covers_every_character_on_a_computer(tmp_path):
     assert (res["uploaded"], res["waiting"]) == (0, ["E"]) and q.counts()["pending"] == 3
     assert web.get("/api/v1/token", headers={"Authorization": "Bearer owner"}).json()["kind"] == "owner"
     assert web.get("/api/v1/token", headers={"Authorization": "Bearer nope"}).status_code == 403
+
+
+def test_a_new_version_with_an_odd_name_is_not_taken(tmp_path, monkeypatch):
+    """The file name comes from the server and is used in a path here: only a plain name will do."""
+    import pytest
+    from adventuresync import update
+    monkeypatch.setattr(update.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(update, "build_prefix", lambda: "AdventureSync-windows-x64")
+
+    class Web:
+        def __init__(self, builds):
+            self.builds = builds
+
+        def get(self, path):
+            import httpx
+            return httpx.Response(200, json={"builds": self.builds, "source_version": None})
+
+    good = {"name": "AdventureSync-windows-x64.exe", "version": "9.0", "size": 3}
+    for bad in ("AdventureSync-windows-x64/../../evil.exe", "AdventureSync-windows-x64\\..\\evil.exe",
+                "AdventureSync-windows-x64.exe/x", "AdventureSync-windows-x64 .exe", "AdventureSync-windows-x64.sh"):
+        assert update.check("http://hub", Web([{**good, "name": bad}]), current="0.1") is None, bad
+        with pytest.raises(RuntimeError):
+            update.target({**good, "name": bad}, tmp_path)
+    with pytest.raises(RuntimeError):
+        update.target({**good, "version": "../9"}, tmp_path)
+    found = update.check("http://hub", Web([good]), current="0.1")
+    assert found["name"] == good["name"] and update.target(found, tmp_path).parent == tmp_path

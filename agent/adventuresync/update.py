@@ -18,6 +18,9 @@ import httpx
 from . import __version__
 
 USER_AGENT = "AdventureSync/0.1"                    # the same name the uploads use (see core.USER_AGENT)
+# What a ready-made program may be called. The name comes from the server and ends up in a
+# file path and an address here, so anything else (a folder in it, say) is not taken.
+BUILD_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.(exe|zip|dmg|pkg|gz)")
 
 
 def as_numbers(version: Any) -> Tuple[int, ...]:
@@ -59,7 +62,7 @@ def check(url: str, client: Optional[Any] = None, current: str = __version__) ->
     if packed():
         prefix = build_prefix()
         newer = [b for b in builds if isinstance(b, dict) and prefix and str(b.get("name", "")).startswith(prefix)
-                 and as_numbers(b.get("version")) > mine]
+                 and BUILD_NAME.fullmatch(str(b["name"])) and as_numbers(b.get("version")) > mine]
         if not newer:
             return None
         best = max(newer, key=lambda b: as_numbers(b["version"]))
@@ -80,6 +83,8 @@ def can_fetch(found: Dict[str, Any]) -> bool:
 def target(found: Dict[str, Any], folder: Optional[Path] = None) -> Path:
     """Where the new program goes: beside the running one, with its version in the name."""
     folder = folder or Path(sys.executable).resolve().parent
+    if not BUILD_NAME.fullmatch(str(found["name"])) or not as_numbers(found.get("version")):
+        raise RuntimeError("the server named the new version in a way this program does not accept")
     stem, dot, ext = str(found["name"]).rpartition(".")
     return folder / f"{stem}-{found['version']}{dot}{ext}"
 
