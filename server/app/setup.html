@@ -4,89 +4,111 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>下載同步程式</title>
+<title>下載 AdventureSync</title>
 <style>
-:root { --bg: #f4f1ea; --panel: #fffdf8; --ink: #2a2520; --muted: #7a7065; --line: #e2dbcd; --accent: #b5651d; --accent-soft: #f0dcc4; --ok: #3d7a4a; --bad: #a8402f; }
+:root { --bg: #f4f1ea; --panel: #fffdf8; --ink: #2a2520; --muted: #7a7065; --line: #e2dbcd; --accent: #b5651d; --accent-ink: #fff; --accent-soft: #f0dcc4; }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #17140f; --panel: #211d17; --ink: #ece5d8; --muted: #9c9182; --line: #3a332a; --accent: #e0964a; --accent-soft: #4a3520; --ok: #7fc08a; --bad: #e08a7a; }
+  :root { --bg: #17140f; --panel: #211d17; --ink: #ece5d8; --muted: #9c9182; --line: #3a332a; --accent: #e0964a; --accent-ink: #1c1710; --accent-soft: #4a3520; }
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.6 -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
-main { max-width: 760px; margin: 0 auto; padding: 24px 16px 56px; }
-h1 { font-size: 24px; margin: 0 0 4px; } .sub { color: var(--muted); margin: 0 0 18px; }
-section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; margin-bottom: 14px; }
-h2 { font-size: 17px; margin: 0 0 4px; display: flex; align-items: center; gap: 10px; }
-h2 i { font-style: normal; flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-size: 14px;
-  display: inline-flex; align-items: center; justify-content: center; font-weight: 700; }
-p { margin: 6px 0; } .hint { color: var(--muted); font-size: 13px; }
-.systems { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
-@media (max-width: 520px) { .systems { grid-template-columns: 1fr; } }
-.sys { border: 1px solid var(--line); border-radius: 8px; padding: 14px; } .sys.you { border-color: var(--accent); }
-.sys b { display: block; font-size: 16px; } .sys small { color: var(--muted); display: block; margin-bottom: 10px; }
-a.btn, button { display: inline-block; font: inherit; font-weight: 600; padding: 9px 16px; border-radius: 8px; border: 1px solid var(--accent); cursor: pointer; text-decoration: none; }
-a.btn, button.main { background: var(--accent); color: #fff; } button.plain { background: none; color: var(--ink); border-color: var(--line); font-weight: 400; }
-label { display: block; margin-top: 12px; font-weight: 600; font-size: 14px; }
-input { width: 100%; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; margin-top: 4px; }
-.row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; align-items: center; }
-.say { font-size: 14px; } .say.ok { color: var(--ok); } .say.bad { color: var(--bad); }
-ol { margin: 8px 0 0; padding-left: 22px; } li { margin: 4px 0; }
-code { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-size: 13px; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
+main { max-width: 620px; margin: 0 auto; padding: 48px 20px 64px; }
 a { color: var(--accent); }
+
+header { text-align: center; margin-bottom: 28px; }
+h1 { font-size: 30px; line-height: 1.2; margin: 0 0 8px; letter-spacing: .01em; }
+header p { margin: 0; color: var(--muted); }
+
+.get { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 28px 24px; text-align: center;
+  background-image: radial-gradient(420px 160px at 50% 0%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 75%); }
+.get a.main { display: inline-block; background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: 18px; text-decoration: none;
+  padding: 13px 34px; border-radius: 10px; }
+.get a.main:hover { filter: brightness(1.06); }
+.get .about { color: var(--muted); font-size: 14px; margin: 10px 0 0; min-height: 1.6em; }
+.others { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 18px; margin: 16px 0 0; padding: 14px 0 0; border-top: 1px solid var(--line);
+  font-size: 14px; list-style: none; }
+.others small { color: var(--muted); }
+
+h2 { font-size: 14px; color: var(--muted); font-weight: 600; letter-spacing: .08em; margin: 36px 0 12px; }
+ol.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; display: grid; gap: 10px; }
+ol.steps > li { counter-increment: step; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px 14px 56px; position: relative; }
+ol.steps > li::before { content: counter(step); position: absolute; left: 16px; top: 14px; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+ol.steps b { font-weight: 700; }
+ol.steps small { display: block; color: var(--muted); font-size: 14px; margin-top: 2px; }
+.copy { display: flex; gap: 8px; margin-top: 8px; }
+.copy code { flex: 1; min-width: 0; overflow-wrap: anywhere; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; user-select: all; }
+.copy button { font: inherit; font-size: 14px; padding: 5px 14px; border-radius: 8px; border: 1px solid var(--line); background: none; color: var(--ink); cursor: pointer; white-space: nowrap; }
+kbd { font: inherit; font-weight: 600; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; white-space: nowrap; }
+footer { margin-top: 28px; color: var(--muted); font-size: 13px; text-align: center; }
+@media (max-width: 480px) { main { padding: 28px 14px 48px; } h1 { font-size: 25px; } .get { padding: 22px 16px; } .get a.main { display: block; padding: 13px 16px; } }
 </style>
 </head>
 <body>
 <main>
-  <h1>下載同步程式</h1>
-  <p class="sub">AdventureSync 是一個小視窗程式，Windows 和 macOS 用的是同一份。裝在玩遊戲的那台電腦上，資料就會送到這台伺服器。</p>
+  <header>
+    <h1>AdventureSync</h1>
+    <p>裝在玩遊戲的電腦上，把冒險紀錄送到這台伺服器。</p>
+  </header>
 
-  <section>
-    <h2><i>1</i>下載</h2>
-    <div id="builds"></div>
-    <div class="sys" style="margin-top:10px"><b>原始碼版（Windows／macOS 通用）</b>
-      <small>需要先裝 Python 3.11 以上（<a href="https://www.python.org/downloads/" rel="noreferrer">python.org</a>），解壓後見裡面的 README.txt</small>
-      <a class="btn" id="source" href="/download/client-source.zip">下載</a></div>
-    <p class="hint">只要遊戲插件：<a href="/download/addon.zip">AdventureCollector.zip</a><span id="addon-version"></span>，解壓後放進遊戲的 <code>_forever_/Interface/AddOns</code>。程式裡也有一鍵安裝；插件有新版本時，程式會提示並可以只更新插件。</p>
+  <section class="get" aria-label="下載">
+    <a class="main" id="main" href="/download/client-source.zip">下載</a>
+    <p class="about" id="about"></p>
+    <ul class="others" id="others"></ul>
   </section>
 
-  <section>
-    <h2><i>2</i>打開程式，填兩個欄位</h2>
-    <label for="url">伺服器網址（照抄到程式裡）</label>
-    <div class="row" style="margin-top:4px"><input id="url" type="text" readonly style="flex:1;margin:0"><button class="plain" id="copy" type="button">複製</button></div>
-    <p><b>權杖</b>：向伺服器的主人要。一個人一個權杖，你的每個角色都用同一個，換角色玩不用換。</p>
-    <p class="hint">權杖只填在程式裡，存在那台電腦自己的使用者資料夾，不會出現在這個網頁上。</p>
-  </section>
+  <h2>三個步驟</h2>
+  <ol class="steps">
+    <li><b>打開程式</b>
+      <small id="open">系統會提醒這是未簽署的程式。</small></li>
+    <li><b>填入伺服器網址和你的權杖</b>
+      <div class="copy"><code id="url"></code><button id="copy" type="button">複製</button></div>
+      <small>權杖向伺服器的主人要。一個人一個，你的每個角色都用同一個。</small></li>
+    <li><b>按 <kbd>安裝插件到遊戲</kbd>，再按 <kbd>開始自動同步</kbd></b>
+      <small>進遊戲後按畫面上方的「存檔」，資料才會送出。要有傷害統計，先在遊戲裡輸入 /combatlog。</small></li>
+  </ol>
 
-  <section>
-    <h2><i>3</i>在程式裡依序按</h2>
-    <ol>
-      <li><b>儲存設定</b>，再按<b>測試連線</b>，看到「連線正常，權杖正確」。</li>
-      <li><b>安裝插件到遊戲</b>。找不到遊戲時，先用「選擇…」指定裡面有 <code>_forever_</code> 的資料夾。</li>
-      <li>進遊戲一次。畫面上方會出現「存檔」按鈕，按下去遊戲才會把資料寫到磁碟。</li>
-      <li><b>開始自動同步</b>。視窗開著就會持續同步，下方會顯示等待上傳與已上傳的筆數。</li>
-    </ol>
-    <p class="hint">第一次開啟時系統可能會警告這是未簽署的程式：macOS 在檔案上按右鍵選「打開」；Windows 選「其他資訊 → 仍要執行」。</p>
-  </section>
+  <footer>之後有新版本，程式會自己提示。</footer>
 </main>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
 const el = (tag, attrs, ...kids) => { const n = document.createElement(tag); for (const [k, v] of Object.entries(attrs || {})) k === "text" ? n.textContent = v : n.setAttribute(k, v); n.append(...kids); return n; };
 const windows = /Win/i.test(navigator.platform || navigator.userAgent), mac = /Mac/i.test(navigator.platform || navigator.userAgent);
-$("url").value = location.origin;
-$("copy").addEventListener("click", () => { $("url").select(); (navigator.clipboard ? navigator.clipboard.writeText($("url").value) : Promise.reject()).then(() => { $("copy").textContent = "已複製"; }, () => { document.execCommand("copy"); $("copy").textContent = "已複製"; }); });
-const size = n => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
-// A ready-made program is named after its system; the one for this computer is put first and marked.
+const size = n => n >= 1048576 ? Math.round(n / 1048576) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
+// A ready-made program is named after its system.
 const kind = name => /win|\.exe$/i.test(name) ? "Windows" : /mac|darwin|osx|\.dmg$|\.pkg$/i.test(name) ? "macOS" : "";
-fetch("/api/v1/setup").then(r => r.json()).then(r => {
-  const mine = b => (windows && kind(b.name) === "Windows") || (mac && kind(b.name) === "macOS");
-  const list = r.builds.slice().sort((a, b) => mine(b) - mine(a));
-  $("builds").replaceChildren(...(list.length ? [el("div", { class: "systems" }, ...list.map(b => el("div", { class: "sys" + (mine(b) ? " you" : "") },
-    el("b", { text: (kind(b.name) || "程式") + (mine(b) ? "（這台電腦）" : "") }), el("small", { text: `${b.name}　${b.version ? "版本 " + b.version + "　" : ""}${size(b.size)}　${new Date(b.updated).toLocaleDateString("zh-TW")}，不需要另外裝 Python` }),
-    el("a", { class: "btn", href: "/download/builds/" + encodeURIComponent(b.name), text: "下載" }))))]
-    : [el("p", { class: "hint", text: "這台伺服器還沒有放上編譯好的程式，請用下面的原始碼版。" })]));
-  if (r.addon_version) $("addon-version").textContent = `（版本 ${r.addon_version}）`;
-  if (!r.source) { $("source").replaceWith(el("span", { class: "say bad", text: "這台伺服器上沒有原始碼可下載，請從程式庫取得。" })); }
-}).catch(() => {});
+
+$("url").textContent = location.origin;
+$("copy").addEventListener("click", () => {
+  const done = () => { $("copy").textContent = "已複製"; setTimeout(() => { $("copy").textContent = "複製"; }, 1500); };
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(location.origin).then(done, () => {});
+  else { const r = document.createRange(); r.selectNodeContents($("url")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); try { document.execCommand("copy"); done(); } catch (e) { /* left selected to copy by hand */ } }
+});
+$("open").textContent = windows ? "Windows 會提醒這是未簽署的程式：選「其他資訊 → 仍要執行」。"
+  : mac ? "先解壓縮。macOS 會擋下未簽署的程式：在檔案上按右鍵選「打開」。" : "系統提醒這是未簽署的程式時，選擇仍要開啟。";
+
+// The big button is the ready-made program for this computer; everything else is a small link below it.
+function show(r) {
+  const builds = r.builds || [], mine = builds.find(b => (windows && kind(b.name) === "Windows") || (mac && kind(b.name) === "macOS"));
+  const link = b => "/download/builds/" + encodeURIComponent(b.name), ver = v => v ? " " + v : "";
+  if (mine) {
+    $("main").href = link(mine); $("main").textContent = `下載 ${kind(mine.name)} 版`;
+    $("about").textContent = `版本${ver(mine.version) || " —"}　${size(mine.size)}　不需要安裝其他東西`;
+  } else if (r.source) {
+    $("main").textContent = "下載原始碼版";
+    $("about").replaceChildren(`${windows || mac ? "這台伺服器還沒有" + (windows ? " Windows" : " macOS") + " 的免安裝版。" : ""}原始碼版需要先裝 `,
+      el("a", { href: "https://www.python.org/downloads/", rel: "noreferrer", text: "Python 3.11 以上" }), "。");
+  } else {
+    $("main").remove(); $("about").textContent = "這台伺服器上目前沒有可以下載的程式。";
+  }
+  const rest = builds.filter(b => b !== mine).map(b => el("li", null, el("a", { href: link(b), text: (kind(b.name) || b.name) + " 版" }), el("small", { text: ver(b.version) })));
+  if (r.source && mine) rest.push(el("li", null, el("a", { href: "/download/client-source.zip", text: "原始碼版" }), el("small", { text: `${ver(r.source_version)}（需要 Python）` })));
+  rest.push(el("li", null, el("a", { href: "/download/addon.zip", text: "只要遊戲插件" }), el("small", { text: ver(r.addon_version) })));
+  $("others").replaceChildren(...rest);
+}
+fetch("/api/v1/setup").then(r => r.json()).then(show).catch(() => show({ builds: [], source: true }));
 </script>
 </body>
 </html>
