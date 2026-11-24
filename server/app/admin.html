@@ -18,7 +18,7 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 h2 { font-size: 16px; margin: 0 0 10px; } .hint { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 input, select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 0; }
-input { flex: 1 1 180px; } select { flex: 1 1 200px; max-width: 100%; }
+input { flex: 1 1 180px; } select { flex: 1 1 200px; max-width: 100%; } td select { padding: 4px 8px; font-size: 13px; }
 button { font: inherit; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); background: none; color: var(--ink); cursor: pointer; white-space: nowrap; }
 button.main { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 button.small { padding: 3px 10px; font-size: 13px; } button.danger { color: var(--bad); }
@@ -34,16 +34,17 @@ code.token { font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monos
 <body>
 <main>
   <h1>管理</h1>
-  <p class="sub">角色與個人上傳權杖。這一頁沒有密碼，只有和伺服器在同一個區域網路的電腦打得開。</p>
+  <p class="sub">每個人一個權杖，他的角色都用同一個。這一頁沒有密碼，只有和伺服器在同一個區域網路的電腦打得開。</p>
 
   <section>
     <h2>產生權杖</h2>
     <div class="row">
-      <input id="label" type="text" maxlength="60" placeholder="備註，例如：小明的電腦" autocomplete="off">
-      <select id="bind" aria-label="綁定角色"><option value="">不指定：第一次上傳的角色就是它的</option></select>
+      <input id="label" type="text" maxlength="60" placeholder="這是誰的，例如：小明" autocomplete="off">
+      <select id="bind" aria-label="先給他的角色"><option value="">不先指定角色</option></select>
       <button class="main" id="make" type="button">產生</button>
     </div>
-    <p class="hint">一個權杖只屬於一個角色：第一次用它上傳的角色就固定下來，之後換別的角色用同一個權杖上傳會被拒絕。把權杖交給對方，填進 AdventureSync 視窗裡那個角色的權杖欄（只有一個角色時填「預設權杖」也可以）；一台電腦玩好幾個角色就一個角色發一個。同一個權杖也能讓對方在瀏覽器看自己那個角色。</p>
+    <p class="hint">一個權杖代表一個人。把它交給對方，填進 AdventureSync 視窗的「權杖」欄：他用這個權杖上傳過的角色都算他的，換角色玩不用換權杖。
+      角色是用遊戲裡的角色編號認的；一個角色第一次由誰的權杖上傳，就歸誰，別人的權杖之後傳同一個角色會被拒絕。同一個權杖也能讓他在瀏覽器看自己所有的角色。</p>
     <div class="say" id="say" role="status"></div>
   </section>
 
@@ -76,25 +77,26 @@ const act = (text, cls, run) => { const b = el("button", { type: "button", class
 
 function draw(d) {
   const pick = $("bind").value;
-  $("bind").replaceChildren(el("option", { value: "", text: "不指定：第一次上傳的角色就是它的" }), ...d.characters.map(c => el("option", { value: c.id, text: `綁定給 ${c.name || c.id}` })));
+  $("bind").replaceChildren(el("option", { value: "", text: "不先指定角色" }), ...d.characters.filter(c => !c.token).map(c => el("option", { value: c.id, text: `先把 ${c.name || c.id} 給他` })));
   $("bind").value = [...$("bind").options].some(o => o.value === pick) ? pick : "";
-  $("tokens").replaceChildren(d.tokens.length ? table(["備註", "權杖", "屬於", "建立", "最後使用", ""], d.tokens.map(t => {
+  $("tokens").replaceChildren(d.tokens.length ? table(["誰的", "權杖", "名下角色", "建立", "最後使用", ""], d.tokens.map(t => {
     const cp = act("複製", "", () => copy(t.token, cp));
     return el("tr", null, el("td", { text: t.label || "—" }), el("td", null, el("code", { class: "token", text: t.token }), " ", cp),
-      el("td", { class: t.character_id ? "" : "free", text: t.character_id ? (t.character_name || t.character_id) : "還沒用過" }), el("td", { text: when(t.created_at) }), el("td", { text: when(t.last_used_at) }),
-      el("td", null, t.character_id ? act("解除綁定", "", () => confirm(`讓這個權杖可以重新被任何角色認領？\n（${t.character_name || t.character_id} 已上傳的資料不會動。）`) && api(`/tokens/${t.token}/release`, "POST").then(load)) : null, " ",
-        act("刪除", "danger", () => confirm("刪除這個權杖？用它的同步程式會立刻無法上傳。") && api(`/tokens/${t.token}`, "DELETE").then(load))));
+      el("td", { class: t.characters.length ? "" : "free", text: t.characters.length ? t.characters.map(c => c.name || c.id).join("、") : "還沒上傳過" }),
+      el("td", { text: when(t.created_at) }), el("td", { text: when(t.last_used_at) }),
+      el("td", null, act("刪除", "danger", () => confirm("刪除這個權杖？用它的同步程式會立刻無法上傳。\n已上傳的資料不會動，名下的角色會變成不屬於任何人。") && api(`/tokens/${t.token}`, "DELETE").then(load))));
   })) : el("div", { class: "empty", text: "還沒有個人權杖。上面按「產生」建立第一個。" }));
-  const owned = id => d.tokens.filter(t => t.character_id === id);
-  $("chars").replaceChildren(d.characters.length ? table(["角色", "職業", "等級", "事件", "最後更新", "權杖", ""], d.characters.map(c =>
-    el("tr", null, el("td", { text: c.name || c.id }), el("td", { text: CLASS[c.class] || c.class || "—" }), el("td", { text: c.level || "—" }), el("td", { text: (c.events || 0).toLocaleString() }),
-      el("td", { text: when(c.updated_at) }), el("td", null, ...(owned(c.id).length ? owned(c.id).flatMap(t => [el("code", { class: "token", text: t.token }), " "]) : [el("span", { class: "free", text: "沒有" })])),
-      el("td", null, act("產生它的權杖", "", () => make(c.id, c.name))))))
-    : el("div", { class: "empty", text: "還沒有任何角色上傳過資料。" }));
+  $("chars").replaceChildren(d.characters.length ? table(["角色", "職業", "等級", "事件", "最後更新", "屬於", ""], d.characters.map(c => {
+    const give = el("select", { "aria-label": `${c.name || c.id} 屬於誰` }, el("option", { value: "", text: "不屬於任何人" }), ...d.tokens.map(t => el("option", { value: t.token, text: t.label || t.token })));
+    give.value = c.token || "";
+    give.addEventListener("change", () => api(`/characters/${encodeURIComponent(c.id)}/token` + (give.value ? "?token=" + encodeURIComponent(give.value) : ""), "POST").then(load, e => { say("更改失敗：" + e.message, "bad"); load(); }));
+    return el("tr", null, el("td", { text: c.name || c.id }), el("td", { text: CLASS[c.class] || c.class || "—" }), el("td", { text: c.level || "—" }), el("td", { text: (c.events || 0).toLocaleString() }),
+      el("td", { text: when(c.updated_at) }), el("td", null, give), el("td", { class: "free", text: c.token ? "" : "由主權杖上傳，或等人認領" }));
+  })) : el("div", { class: "empty", text: "還沒有任何角色上傳過資料。" }));
 }
 const load = () => api("/overview").then(draw, e => say("讀取失敗：" + e.message, "bad"));
-function make(characterId, name) {
-  api("/tokens", "POST", { label: $("label").value.trim() || (name ? name : null), character_id: characterId || null })
+function make(characterId) {
+  api("/tokens", "POST", { label: $("label").value.trim() || null, character_id: characterId || null })
     .then(r => { say(`已產生：${r.token}`, "ok"); $("label").value = ""; $("bind").value = ""; return load(); }, e => say("產生失敗：" + e.message, "bad"));
 }
 $("make").addEventListener("click", () => make($("bind").value));

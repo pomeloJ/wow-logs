@@ -78,36 +78,50 @@ def register(app, db) -> None:
     def overview() -> Dict[str, Any]:
         with db() as conn:
             chars = [dict(r) for r in conn.execute(
-                "SELECT c.id, c.name, c.class, c.level, c.updated_at, "
-                "(SELECT COUNT(*) FROM events e WHERE e.character_id=c.id) events FROM characters c ORDER BY c.updated_at DESC")]
-            tokens = [dict(r) for r in conn.execute(
-                "SELECT t.token, t.label, t.character_id, t.created_at, t.bound_at, t.last_used_at, c.name character_name "
-                "FROM upload_tokens t LEFT JOIN characters c ON c.id=t.character_id ORDER BY t.created_at DESC")]
+                "SELECT c.id, c.name, c.class, c.level, c.updated_at, o.token, t.label token_label, "
+                "(SELECT COUNT(*) FROM events e WHERE e.character_id=c.id) events FROM characters c "
+                "LEFT JOIN token_characters o ON o.character_id=c.id LEFT JOIN upload_tokens t ON t.token=o.token "
+                "ORDER BY c.updated_at DESC")]
+            tokens = [dict(r) for r in conn.execute("SELECT token, label, created_at, last_used_at FROM upload_tokens ORDER BY created_at DESC")]
+            for t in tokens:
+                t["characters"] = [{"id": r["character_id"], "name": r["name"]} for r in conn.execute(
+                    "SELECT o.character_id, c.name FROM token_characters o LEFT JOIN characters c ON c.id=o.character_id "
+                    "WHERE o.token=? ORDER BY o.claimed_at", (t["token"],))]
         return {"characters": chars, "tokens": tokens}
 
     @app.post("/api/v1/admin/tokens", include_in_schema=False, dependencies=only)
     def new_token(body: NewToken):
-        """A new personal token: free until its first upload, or tied to a character straight away."""
+        """A new personal token for one person. It takes on each character it is first to upload;
+        with character_id, an existing character is handed to it straight away."""
         token = "".join(secrets.choice(ALPHABET) for _ in range(TOKEN_LEN))
         with db() as conn:
             if body.character_id and not conn.execute("SELECT 1 FROM characters WHERE id=?", (body.character_id,)).fetchone():
                 raise HTTPException(404, "character not found")
             conn.execute("INSERT INTO upload_tokens VALUES (?,?,?,?,?,?)",
-                         (token, (body.label or "").strip() or None, body.character_id or None, _now(),
-                          _now() if body.character_id else None, None))
+                         (token, (body.label or "").strip() or None, None, _now(), None, None))
+            if body.character_id:
+                conn.execute("INSERT OR REPLACE INTO token_characters VALUES (?,?,?)", (body.character_id, token, _now()))
         return {"token": token}
 
-    @app.post("/api/v1/admin/tokens/{token}/release", include_in_schema=False, dependencies=only)
-    def release(token: str):
-        """Let a token be claimed again by whichever character uploads with it next."""
+    @app.post("/api/v1/admin/characters/{character_id}/token", include_in_schema=False, dependencies=only)
+    def assign(character_id: str, token: Optional[str] = None):
+        """Hand a character to a token, or (with no token) to nobody: the next personal token
+        to upload it takes it. Its recorded data is not touched either way."""
         with db() as conn:
-            if not conn.execute("UPDATE upload_tokens SET character_id=NULL, bound_at=NULL WHERE token=?", (token,)).rowcount:
-                raise HTTPException(404, "no such token")
+            if not conn.execute("SELECT 1 FROM characters WHERE id=?", (character_id,)).fetchone():
+                raise HTTPException(404, "character not found")
+            conn.execute("DELETE FROM token_characters WHERE character_id=?", (character_id,))
+            if token:
+                if not conn.execute("SELECT 1 FROM upload_tokens WHERE token=?", (token,)).fetchone():
+                    raise HTTPException(404, "no such token")
+                conn.execute("INSERT INTO token_characters VALUES (?,?,?)", (character_id, token, _now()))
         return {"success": True}
 
     @app.delete("/api/v1/admin/tokens/{token}", include_in_schema=False, dependencies=only)
     def delete_token(token: str):
+        """The token stops working at once. Its characters keep their data and belong to nobody."""
         with db() as conn:
             if not conn.execute("DELETE FROM upload_tokens WHERE token=?", (token,)).rowcount:
                 raise HTTPException(404, "no such token")
+            conn.execute("DELETE FROM token_characters WHERE token=?", (token,))
         return {"success": True}

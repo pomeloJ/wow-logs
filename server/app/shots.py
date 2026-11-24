@@ -166,7 +166,7 @@ def register(app, db, can_read, can_write, claim, folder: str) -> Shots:
         with db() as conn:
             row = conn.execute("SELECT character_id FROM screenshots WHERE id=?", (shot_id,)).fetchone()
         path = shots.path(shot_id, thumb)
-        if not row or (scope is not None and row["character_id"] != scope) or not os.path.isfile(path):
+        if not row or (scope is not None and row["character_id"] not in scope.all) or not os.path.isfile(path):
             raise HTTPException(404, "no such screenshot")
         return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
 

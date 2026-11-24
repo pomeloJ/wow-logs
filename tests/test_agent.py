@@ -174,8 +174,9 @@ def test_settings_file_round_trip_and_addon_install(tmp_path):
         gui.install_addon(str(tmp_path / "nowhere"))
 
 
-def test_each_character_uploads_with_its_own_token(tmp_path):
-    """Two characters on one computer: each has a personal token; one without a token waits."""
+def test_one_token_covers_every_character_on_a_computer(tmp_path):
+    """Three characters, one personal token: all go up. A second person's token on the same
+    computer covers only what is filled in for it, and a character that is someone else's waits."""
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
@@ -185,40 +186,43 @@ def test_each_character_uploads_with_its_own_token(tmp_path):
     app = create_app(db_path=str(tmp_path / "s.db"), write_token="owner", read_token="r")
     lan, web = TestClient(app, client=("192.168.1.5", 1)), TestClient(app, client=("203.0.113.9", 1))
     token = lambda **body: lan.post("/api/v1/admin/tokens", json=body).json()["token"]      # noqa: E731
-    ta, tb = token(label="A"), token(label="B")
+    ming, hua = token(label="小明"), token(label="小華")
 
-    def fill(q):
+    def fill(q, who):
         q.add_events([{"event_id": f"{c}:{i}", "character_id": c, "event_type": "LEVEL_UP", "timestamp": "2026-11-22T12:00:00Z",
-                       "payload": {}} for c in ("A", "B", "C") for i in range(3)])
-        for c in ("A", "B", "C"):
+                       "payload": {}} for c in who for i in range(3)])
+        for c in who:
             q.add_snapshot(c, "2026-11-22T12:00:00Z", {"name": "角色" + c, "level": 5})
 
-    cfg = Config(url="http://testserver", api_token="", device_id="pc", db_path=str(tmp_path / "q.db"), tokens={"A": ta, "B": tb})
-    path = tmp_path / "config.toml"
-    save_config(path, cfg)
-    assert load_config(path) == cfg and "[characters]" in path.read_text()        # the tokens survive a save
+    cfg = Config(url="http://testserver", api_token=ming, device_id="pc", db_path=str(tmp_path / "q.db"))
     q = Queue(cfg.db_path)
-    fill(q)
+    fill(q, "ABC")
     up = Uploader(cfg, q, web)
     res = up.sync_once()
-    assert (res["uploaded"], res["snapshots"], res["rejected"], res["error"], res["waiting"]) == (6, 2, 0, None, ["C"])
-    assert q.counts()["pending"] == 3                                               # C's events are kept, not thrown away
-    seen = {t["label"]: t["character_id"] for t in lan.get("/api/v1/admin/overview").json()["tokens"]}
-    assert seen == {"A": "A", "B": "B"}                                             # each token became its character's
-    check = {t["character_id"]: t for t in up.test_connection()["tokens"]}
-    assert check["A"]["ok"] and check["A"]["owner"] == "A" and check["B"]["owner_name"] == "角色B"
-    # the wrong token for a character: nothing is lost, it just waits and is reported
-    mixed = Config(**{**cfg.__dict__, "tokens": {"A": ta, "B": tb, "C": ta}})
-    wrong = Uploader(mixed, q, web)
-    res = wrong.sync_once()
-    assert (res["uploaded"], res["rejected"], res["waiting"]) == (0, 0, ["C"]) and q.counts()["pending"] == 3
-    bad = {t["character_id"]: t for t in wrong.test_connection()["tokens"]}
-    assert not bad["C"]["ok"] and bad["C"]["owner"] == "A" and bad["A"]["ok"]
-    assert wrong.upload_hits("C", "log", [[1, 1, "cast", "x", 0] + [None] * 23])[0] == "skip"
-    # with a general token as well, a character without its own uses that one
-    owner = Uploader(Config(**{**cfg.__dict__, "api_token": "owner"}), q, web)
-    res = owner.sync_once()
-    assert (res["uploaded"], res["snapshots"], res["waiting"]) == (3, 1, [])
-    assert {c["id"] for c in web.get("/api/v1/characters", headers={"Authorization": "Bearer r"}).json()["items"]} == {"A", "B", "C"}
+    assert (res["uploaded"], res["snapshots"], res["rejected"], res["error"], res["waiting"]) == (9, 3, 0, None, [])
+    held, = [t for t in lan.get("/api/v1/admin/overview").json()["tokens"] if t["label"] == "小明"]
+    assert sorted(c["id"] for c in held["characters"]) == ["A", "B", "C"]
+    check, = up.test_connection()["tokens"]
+    assert check["ok"] and check["kind"] == "personal" and sorted(c["name"] for c in check["characters"]) == ["角色A", "角色B", "角色C"]
+    # a second person plays on the same computer: their character gets their own token
+    shared = Config(**{**cfg.__dict__, "tokens": {"D": hua, "A": hua}})
+    path = tmp_path / "config.toml"
+    save_config(path, shared)
+    assert load_config(path) == shared and "[characters]" in path.read_text()        # the extra tokens survive a save
+    fill(q, "D")
+    q.add_events([{"event_id": "A:late", "character_id": "A", "event_type": "LEVEL_UP", "timestamp": "2026-11-22T12:00:00Z", "payload": {}}])
+    two = Uploader(shared, q, web)
+    res = two.sync_once()
+    # D is new and becomes 小華's; A is 小明's, so 小華's token is refused for it: kept and reported, not lost
+    assert (res["uploaded"], res["snapshots"], res["rejected"], res["waiting"]) == (3, 1, 0, ["A"]) and q.counts()["pending"] == 1
+    judged = {t["character_id"]: t["ok"] for t in two.test_connection()["tokens"]}
+    assert judged == {None: True, "A": False, "D": True}
+    assert two.upload_hits("A", "log", [[1, 1, "cast", "x", 0] + [None] * 23])[0] == "skip"
+    assert Uploader(cfg, q, web).sync_once()["uploaded"] == 1 and q.counts()["pending"] == 0     # the right token again: it goes up
+    # no token at all for a character: it waits
+    none = Uploader(Config(**{**cfg.__dict__, "api_token": "", "tokens": {"D": hua}}), q, web)
+    fill(q, "E")
+    res = none.sync_once()
+    assert (res["uploaded"], res["waiting"]) == (0, ["E"]) and q.counts()["pending"] == 3
     assert web.get("/api/v1/token", headers={"Authorization": "Bearer owner"}).json()["kind"] == "owner"
     assert web.get("/api/v1/token", headers={"Authorization": "Bearer nope"}).status_code == 403

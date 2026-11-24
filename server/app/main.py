@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS upload_tokens (
     token TEXT PRIMARY KEY, label TEXT, character_id TEXT, created_at TEXT NOT NULL,
     bound_at TEXT, last_used_at TEXT
 );
+CREATE TABLE IF NOT EXISTS token_characters (
+    character_id TEXT PRIMARY KEY, token TEXT NOT NULL, claimed_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS character_snapshots (
     character_id TEXT PRIMARY KEY, captured_at TEXT NOT NULL, device_id TEXT,
     payload_json TEXT NOT NULL, received_at TEXT NOT NULL
@@ -98,6 +101,11 @@ class SnapshotIn(BaseModel):
     _tz = field_validator("captured_at")(_aware)
 
 
+class Scope(str):
+    """The character a limited token is looking at. `all` holds every character it may see."""
+    all: frozenset = frozenset()
+
+
 def create_app(
     db_path: Optional[str] = None,
     write_token: Optional[str] = None,
@@ -126,6 +134,10 @@ def create_app(
     with db() as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(SCHEMA)
+        # tokens used to belong to one character each: carry those over to the new table
+        conn.execute("INSERT OR IGNORE INTO token_characters SELECT character_id, token, COALESCE(bound_at, created_at) "
+                     "FROM upload_tokens WHERE character_id IS NOT NULL")
+        conn.execute("UPDATE upload_tokens SET character_id=NULL, bound_at=NULL WHERE character_id IS NOT NULL")
 
     def _token(authorization: Optional[str]) -> str:
         if not authorization or not authorization.startswith("Bearer "):
@@ -136,8 +148,8 @@ def create_app(
         return bool(b) and hmac.compare_digest(a.encode(), b.encode())
 
     def can_write(authorization: Optional[str] = Header(None)) -> Optional[str]:
-        """Returns None for the owner's token, which may write anything, or the personal upload
-        token that was used: one of those belongs to a single character (see `claim`)."""
+        """Returns None for the owner's token, which may write anything, or the personal token
+        that was used: one person's, good for all of that person's characters (see `claim`)."""
         t = _token(authorization)
         if _eq(t, write_token):
             return None
@@ -151,56 +163,66 @@ def create_app(
             raise HTTPException(403, "only the server's own token may do this")
 
     def claim(writer: Optional[str], character_id: str) -> None:
-        """A personal token becomes one character's the first time it uploads; from then on it
-        is refused for any other, so two characters can never end up mixed under one token."""
+        """A character belongs to the first personal token that uploads it. That token may go
+        on to upload any number of characters; another person's token is refused for this one,
+        so two people's data can never end up mixed under one character."""
         if writer is None:
             return
         with db() as conn:
-            row = conn.execute("SELECT character_id FROM upload_tokens WHERE token=?", (writer,)).fetchone()
-            if row is None:
+            if not conn.execute("SELECT 1 FROM upload_tokens WHERE token=?", (writer,)).fetchone():
                 raise HTTPException(403, "invalid token")
-            if row["character_id"] is None:
-                conn.execute("UPDATE upload_tokens SET character_id=?, bound_at=?, last_used_at=? WHERE token=?",
-                             (character_id, now_iso(), now_iso(), writer))
-            elif row["character_id"] != character_id:
-                raise HTTPException(409, "this token belongs to another character")
-            else:
-                conn.execute("UPDATE upload_tokens SET last_used_at=? WHERE token=?", (now_iso(), writer))
+            row = conn.execute("SELECT token FROM token_characters WHERE character_id=?", (character_id,)).fetchone()
+            if row is None:
+                conn.execute("INSERT INTO token_characters VALUES (?,?,?)", (character_id, writer, now_iso()))
+            elif row["token"] != writer:
+                raise HTTPException(409, "this character belongs to another token")
+            conn.execute("UPDATE upload_tokens SET last_used_at=? WHERE token=?", (now_iso(), writer))
 
-    def can_read(authorization: Optional[str] = Header(None)) -> Optional[str]:
-        """Returns None for full read access, or the one character a share token may see.
+    def can_read(request: Request, authorization: Optional[str] = Header(None)) -> Optional[Scope]:
+        """Returns None for full read access, or what a limited token may see.
 
-        A character's short token (the one used for /voice) also works here, limited to that
-        character and never showing chat messages, so a dashboard link can be given to others.
+        A character's short token (the one used for /voice) shows that one character. A personal
+        token shows every character it has uploaded: the result is the one being asked about
+        (so the checks written for a single character keep working) and `.all` holds them all.
+        Neither ever shows chat messages.
         """
         t = _token(authorization)
         if _eq(t, write_token) or _eq(t, read_token):
             return None
         with db() as conn:
-            row = conn.execute("SELECT character_id FROM voice_tokens WHERE token=?", (t,)).fetchone() or \
-                conn.execute("SELECT character_id FROM upload_tokens WHERE token=? AND character_id IS NOT NULL",
-                             (t,)).fetchone()       # a personal upload token also shows its own character
-        if not row:
+            row = conn.execute("SELECT character_id FROM voice_tokens WHERE token=?", (t,)).fetchone()
+            mine = [row["character_id"]] if row else [r["character_id"] for r in conn.execute(
+                "SELECT character_id FROM token_characters WHERE token=? ORDER BY claimed_at, character_id", (t,))]
+        if not mine:
             raise HTTPException(403, "invalid token")
-        return row["character_id"]
+        # Asked about a character that is not theirs, the answer is about one that is (or a
+        # refusal, where the endpoint checks): never about someone else's.
+        asked = request.path_params.get("character_id") or request.query_params.get("character_id")
+        scope = Scope(asked if asked in mine else mine[0])
+        scope.all = frozenset(mine)
+        return scope
 
-    def whose(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
-        """What a token is: the owner's, a personal upload token (and whose), or read-only."""
+    def whose(character_id: Optional[str] = None, authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
+        """What a token is: the owner's, a personal one (with the characters it holds), or
+        read-only. With character_id, also whether it may upload for that character."""
         t = _token(authorization)
         if _eq(t, write_token):
-            return {"kind": "owner", "character_id": None, "character_name": None}
+            return {"kind": "owner", "characters": [], "can_upload": True}
         if _eq(t, read_token):
-            return {"kind": "read", "character_id": None, "character_name": None}
+            return {"kind": "read", "characters": [], "can_upload": False}
         with db() as conn:
-            row = conn.execute("SELECT t.character_id, c.name FROM upload_tokens t LEFT JOIN characters c "
-                               "ON c.id=t.character_id WHERE t.token=?", (t,)).fetchone()
-            kind = "personal"
-            if row is None:
-                row, kind = conn.execute("SELECT v.character_id, c.name FROM voice_tokens v LEFT JOIN characters c "
-                                         "ON c.id=v.character_id WHERE v.token=?", (t,)).fetchone(), "read"
+            if conn.execute("SELECT 1 FROM upload_tokens WHERE token=?", (t,)).fetchone():
+                mine = [{"id": r["character_id"], "name": r["name"]} for r in conn.execute(
+                    "SELECT o.character_id, c.name FROM token_characters o LEFT JOIN characters c ON c.id=o.character_id "
+                    "WHERE o.token=? ORDER BY o.claimed_at", (t,))]
+                taken = conn.execute("SELECT token FROM token_characters WHERE character_id=?", (character_id,)).fetchone() \
+                    if character_id else None
+                return {"kind": "personal", "characters": mine, "can_upload": taken is None or taken["token"] == t}
+            row = conn.execute("SELECT v.character_id, c.name FROM voice_tokens v LEFT JOIN characters c "
+                               "ON c.id=v.character_id WHERE v.token=?", (t,)).fetchone()
         if row is None:
             raise HTTPException(403, "invalid token")
-        return {"kind": kind, "character_id": row["character_id"], "character_name": row["name"]}
+        return {"kind": "read", "characters": [{"id": row["character_id"], "name": row["name"]}], "can_upload": False}
 
     def allow(scope: Optional[str], character_id: Optional[str]) -> None:
         if scope is not None and character_id != scope:
@@ -243,11 +265,8 @@ def create_app(
 
     @app.post("/api/v1/events/batch")
     def post_events(batch: BatchIn, writer: Optional[str] = Depends(can_write)):
-        if writer is not None:
-            who = {e.character_id for e in batch.events}
-            if len(who) > 1:                        # the sender tries again one by one; the others are refused
-                raise HTTPException(409, "a personal token uploads for one character at a time")
-            claim(writer, who.pop())
+        for character_id in sorted({e.character_id for e in batch.events}):
+            claim(writer, character_id)
         received = now_iso()
         accepted = 0
         with db() as conn:
@@ -305,7 +324,7 @@ def create_app(
     def list_characters(scope: Optional[str] = Depends(can_read)):
         with db() as conn:
             rows = conn.execute("SELECT * FROM characters ORDER BY id").fetchall()
-        return {"items": [dict(r) for r in rows if scope is None or r["id"] == scope]}
+        return {"items": [dict(r) for r in rows if scope is None or r["id"] in scope.all]}
 
     @app.get("/api/v1/characters/{character_id}")
     def get_character(character_id: str, scope: Optional[str] = Depends(can_read)):

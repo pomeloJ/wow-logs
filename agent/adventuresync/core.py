@@ -31,8 +31,8 @@ class Config:
     batch_size: int = 100
     db_path: str = "~/.adventuresync/queue.db"
     log_level: str = "INFO"
-    # A token of its own for some characters (character id -> token). A character without one
-    # is sent with api_token; with neither, its data waits on this computer.
+    # api_token is one person's token and covers every character on this computer. A character
+    # can be given a different one here (character id -> token): two people sharing a computer.
     tokens: Dict[str, str] = field(default_factory=dict)
 
 
@@ -314,9 +314,9 @@ def _outcome(r) -> Tuple[str, str]:
                          f"allow the User-Agent \"{USER_AGENT}\" or the paths under /api/ there.")
     detail = f"HTTP {r.status_code}: {r.text[:200]}"
     if r.status_code == 409:
-        # The token belongs to another character. The data is fine: it waits here, like that
-        # of a character with no token, until the right token is filled in.
-        return "skip", "the token used for this character belongs to another one"
+        # The character belongs to someone else's token. The data is fine: it waits here, like
+        # that of a character with no token, until the right token is filled in.
+        return "skip", "this character belongs to another token"
     return ("invalid" if r.status_code in (400, 413, 422) else "retry"), detail
 
 
@@ -340,7 +340,7 @@ class Uploader:
 
     def test_connection(self) -> Dict[str, Any]:
         """Is the server there, and what does it make of each token? `tokens` lists them:
-        character_id is None for the general one; `owner` is who the server says it belongs to."""
+        character_id is None for the general one; `characters` are the ones the token holds."""
         r = self.client.get("/api/v1/health")
         if r.status_code != 200:
             raise RuntimeError(_outcome(r)[1])
@@ -348,15 +348,14 @@ class Uploader:
         for character_id, token in [(None, self.cfg.api_token)] + sorted(self.cfg.tokens.items()):
             if not token:
                 continue
-            who = self.client.get("/api/v1/token", headers={"Authorization": f"Bearer {token}"})
+            auth = {"Authorization": f"Bearer {token}"}
+            who = self.client.get("/api/v1/token", headers=auth, params={"character_id": character_id} if character_id else None)
             info = who.json() if who.status_code == 200 else {}
             if who.status_code == 404:                  # a server from before this question existed
-                who = self.client.get("/api/v1/stats/summary", headers={"Authorization": f"Bearer {token}"})
-            owner = info.get("character_id")
+                who = self.client.get("/api/v1/stats/summary", headers=auth)
             checked.append({"character_id": character_id, "status": who.status_code, "kind": info.get("kind"),
-                            "owner": owner, "owner_name": info.get("character_name"),
-                            "ok": who.status_code == 200 and info.get("kind") != "read"
-                            and (owner is None or character_id is None or owner == character_id)})
+                            "characters": info.get("characters") or [],
+                            "ok": who.status_code == 200 and info.get("kind") != "read" and info.get("can_upload", True)})
         general = next((c for c in checked if c["character_id"] is None), None)
         return {"health": health, "tokens": checked, "token_ok": bool(checked) and all(c["ok"] for c in checked),
                 "auth_status": general["status"] if general else (checked[0]["status"] if checked else 0)}

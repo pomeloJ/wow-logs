@@ -190,7 +190,7 @@ def test_setup_page_and_client_downloads(tmp_path):
     assert web.get("/api/v1/setup").json()["builds"] == [] and not [f for f in (tmp_path / "builds").iterdir()]
 
 
-def test_personal_tokens_belong_to_the_first_character_that_uploads(tmp_path):
+def test_a_personal_token_is_one_person_with_any_number_of_characters(tmp_path):
     from datetime import datetime, timezone
     from fastapi.testclient import TestClient
     from app.main import create_app
@@ -206,41 +206,71 @@ def test_personal_tokens_belong_to_the_first_character_that_uploads(tmp_path):
     assert lan.get("/admin", headers={"X-Forwarded-For": "192.168.1.9", "Forwarded": 'for="[fd00::1]:4711"'}).status_code == 200
     assert "/admin" not in lan.get("/openapi.json").text
 
-    token = lan.post("/api/v1/admin/tokens", json={"label": "小明的電腦"}).json()["token"]
-    assert len(token) == 16 and lan.get("/api/v1/admin/overview").json()["tokens"][0]["character_id"] is None
+    token = lan.post("/api/v1/admin/tokens", json={"label": "小明"}).json()["token"]
+    assert len(token) == 16 and lan.get("/api/v1/admin/overview").json()["tokens"][0]["characters"] == []
     mine, now = {"Authorization": f"Bearer {token}"}, datetime(2026, 11, 22, 12, 0, tzinfo=timezone.utc).isoformat()
-    snap = {"captured_at": now, "device_id": "pc", "data": {"name": "小明", "class": "MAGE", "level": 10}}
+    snap = lambda name: {"captured_at": now, "device_id": "pc", "data": {"name": name, "class": "MAGE", "level": 10}}                 # noqa: E731
     event = lambda cid, n: {"event_id": f"e:{cid}:{n}", "character_id": cid, "event_type": "LEVEL_UP", "timestamp": now, "payload": {}}  # noqa: E731
     batch = lambda *ev: {"schema_version": 1, "device_id": "pc", "events": list(ev)}                                                  # noqa: E731
-    assert out.get("/api/v1/events", headers=mine).status_code == 403               # not used yet: it shows nothing
-    # a batch for two characters is refused whole; the first single upload decides whose token it is
-    assert out.post("/api/v1/events/batch", headers=mine, json=batch(event("A", 1), event("B", 1))).status_code == 409
-    assert out.put("/api/v1/characters/A/snapshot", headers=mine, json=snap).status_code == 200
+    assert out.get("/api/v1/events", headers=mine).status_code == 403               # nothing uploaded yet: it shows nothing
+    # one person, two characters, one token: both are theirs, in one batch or apart
+    assert out.put("/api/v1/characters/A/snapshot", headers=mine, json=snap("小明法師")).status_code == 200
+    assert out.put("/api/v1/characters/B/snapshot", headers=mine, json=snap("小明獵人")).status_code == 200
+    assert out.post("/api/v1/events/batch", headers=mine, json=batch(event("A", 1), event("B", 1), event("A", 2))).json()["accepted"] == 3
     seen = lan.get("/api/v1/admin/overview").json()
-    assert (seen["tokens"][0]["character_id"], seen["tokens"][0]["character_name"], seen["tokens"][0]["label"]) == ("A", "小明", "小明的電腦")
-    assert seen["tokens"][0]["bound_at"] and seen["characters"][0]["name"] == "小明"
-    assert out.post("/api/v1/events/batch", headers=mine, json=batch(event("A", 1), event("A", 2))).json()["accepted"] == 2
-    # from now on every kind of upload for anyone else is refused
-    assert out.put("/api/v1/characters/B/snapshot", headers=mine, json=snap).status_code == 409
-    assert out.post("/api/v1/events/batch", headers=mine, json=batch(event("B", 1))).status_code == 409
-    assert out.post("/api/v1/combat/hits", headers=mine, json={"character_id": "B", "source": "l", "rows": [[1, 1, "cast", "x", 0] + [None] * 23]}).status_code == 409
+    assert [c["name"] for c in seen["tokens"][0]["characters"]] == ["小明法師", "小明獵人"] and seen["tokens"][0]["last_used_at"]
+    assert {c["id"]: c["token_label"] for c in seen["characters"]} == {"A": "小明", "B": "小明"}
+    assert out.get("/api/v1/token", headers=mine).json()["kind"] == "personal"
+    # with the same token they see both, switch between them, and nothing of anyone else's
+    assert sorted(c["id"] for c in out.get("/api/v1/characters", headers=mine).json()["items"]) == ["A", "B"]
+    for cid in ("A", "B"):
+        assert {e["character_id"] for e in out.get(f"/api/v1/events?character_id={cid}", headers=mine).json()["items"]} == {cid}
+        assert out.get(f"/api/v1/characters/{cid}", headers=mine).json()["id"] == cid
+    assert out.put("/api/v1/characters/Z/snapshot", headers={"Authorization": "Bearer w"}, json=snap("主人的角色")).status_code == 200
+    assert out.get("/api/v1/characters/Z", headers=mine).status_code == 403
+    asked = out.get("/api/v1/events?character_id=Z", headers=mine)
+    assert asked.status_code == 403 or {e["character_id"] for e in asked.json()["items"]} <= {"A", "B"}
+    # another person's token: their own characters are fine, somebody else's are refused, in every kind of upload
+    other = {"Authorization": "Bearer " + lan.post("/api/v1/admin/tokens", json={"label": "小華"}).json()["token"]}
+    assert out.put("/api/v1/characters/C/snapshot", headers=other, json=snap("小華戰士")).status_code == 200
+    assert out.put("/api/v1/characters/A/snapshot", headers=other, json=snap("x")).status_code == 409
+    assert out.post("/api/v1/events/batch", headers=other, json=batch(event("C", 1), event("A", 9))).status_code == 409
+    assert out.post("/api/v1/combat/hits", headers=other, json={"character_id": "A", "source": "l", "rows": [[1, 1, "cast", "x", 0] + [None] * 23]}).status_code == 409
+    assert out.get("/api/v1/token?character_id=A", headers=other).json()["can_upload"] is False
+    assert out.get("/api/v1/token?character_id=C", headers=other).json()["can_upload"] is True
     jpeg = b"\xff\xd8\xff" + b"0" * 64
-    shot = lambda cid, h: out.put("/api/v1/screenshots/s1", params={"character_id": cid, "taken_at": now}, content=jpeg, headers=h)  # noqa: E731
-    assert shot("B", mine).status_code == 409 and shot("A", mine).status_code == 200
-    assert out.post("/api/v1/characters/B/voice-token", headers=mine).status_code in (404, 409)
+    shot = lambda sid, cid, h: out.put(f"/api/v1/screenshots/{sid}", params={"character_id": cid, "taken_at": now}, content=jpeg, headers=h)  # noqa: E731
+    assert shot("s1", "A", mine).status_code == 200 and shot("s2", "B", mine).status_code == 200
+    assert shot("s1", "A", other).status_code == 409 and shot("s1", "C", other).status_code == 409
+    assert out.delete("/api/v1/screenshots/s1", headers=other).status_code == 409
+    assert out.get("/api/v1/screenshots/s2/image", headers=mine).status_code == 200      # a second character's picture too
+    assert out.get("/api/v1/screenshots/s1/image", headers=other).status_code == 404
     assert out.put("/api/v1/builds/x.zip", content=b"x", headers=mine).status_code == 403       # the owner's token only
-    # the owner's token is not tied to anyone, and another person's token cannot touch A's screenshot
-    assert out.put("/api/v1/characters/B/snapshot", headers={"Authorization": "Bearer w"}, json=snap).status_code == 200
-    other = {"Authorization": "Bearer " + lan.post("/api/v1/admin/tokens", json={"character_id": "B"}).json()["token"]}
-    assert shot("B", other).status_code == 409 and out.delete("/api/v1/screenshots/s1", headers=other).status_code == 409
-    assert out.put("/api/v1/characters/A/snapshot", headers=other, json=snap).status_code == 409
-    # the same token lets its owner read that one character and nothing else
-    assert [c["id"] for c in out.get("/api/v1/characters", headers=mine).json()["items"]] == ["A"]
-    asked = out.get("/api/v1/events?character_id=B", headers=mine)       # asking for someone else gets its own, or a refusal
-    assert asked.status_code == 403 or {e["character_id"] for e in asked.json()["items"]} == {"A"}
-    # released, it can be claimed again; deleted, it stops working at once
-    assert lan.post(f"/api/v1/admin/tokens/{token}/release").status_code == 200
-    assert out.put("/api/v1/characters/B/snapshot", headers=mine, json=snap).status_code == 200
+    # the owner can hand a character to someone else, or to nobody
+    his = other["Authorization"][7:]
+    assert lan.post(f"/api/v1/admin/characters/B/token?token={his}").status_code == 200
+    assert out.put("/api/v1/characters/B/snapshot", headers=other, json=snap("小明獵人")).status_code == 200
+    assert out.put("/api/v1/characters/B/snapshot", headers=mine, json=snap("x")).status_code == 409
+    assert lan.post("/api/v1/admin/characters/B/token").status_code == 200           # nobody's: the next to upload takes it
+    assert out.put("/api/v1/characters/B/snapshot", headers=mine, json=snap("小明獵人")).status_code == 200
+    assert lan.post("/api/v1/admin/characters/nobody/token").status_code == 404
+    assert lan.post("/api/v1/admin/characters/B/token?token=nope").status_code == 404
+    # a deleted token stops working at once; its characters keep their data and wait for a new owner
     assert lan.delete(f"/api/v1/admin/tokens/{token}").status_code == 200
-    assert out.put("/api/v1/characters/B/snapshot", headers=mine, json=snap).status_code == 403
-    assert lan.post("/api/v1/admin/tokens", json={"character_id": "nobody"}).status_code == 404
+    assert out.put("/api/v1/characters/A/snapshot", headers=mine, json=snap("x")).status_code == 403
+    left = {c["id"]: c["token"] for c in lan.get("/api/v1/admin/overview").json()["characters"]}
+    assert left["A"] is None and left["C"] == his and out.get("/api/v1/characters/A", headers={"Authorization": "Bearer r"}).status_code == 200
+    given = lan.post("/api/v1/admin/tokens", json={"label": "新的", "character_id": "A"}).json()["token"]
+    assert out.put("/api/v1/characters/A/snapshot", headers={"Authorization": f"Bearer {given}"}, json=snap("小明法師")).status_code == 200
+
+
+def test_tokens_from_the_one_character_days_are_carried_over(tmp_path):
+    import sqlite3
+    from fastapi.testclient import TestClient
+    from app.main import create_app
+    TestClient(create_app(db_path=str(tmp_path / "s.db"), write_token="w", read_token="r"))
+    with sqlite3.connect(tmp_path / "s.db") as conn:
+        conn.execute("INSERT INTO upload_tokens VALUES ('oldtoken','阿強','A','2026-11-01T00:00:00Z','2026-11-02T00:00:00Z',NULL)")
+    web = TestClient(create_app(db_path=str(tmp_path / "s.db"), write_token="w", read_token="r"), client=("192.168.1.5", 1))
+    tok, = web.get("/api/v1/admin/overview").json()["tokens"]
+    assert tok["label"] == "阿強" and [c["id"] for c in tok["characters"]] == ["A"]

@@ -140,14 +140,15 @@ class Worker(threading.Thread):
                     names = {c["id"]: c["name"] for c in characters(self._cfg.wow_path)}
                     lines = []
                     for t in info["tokens"]:
-                        label = "預設權杖" if t["character_id"] is None else names.get(t["character_id"], t["character_id"])
+                        label = "權杖" if t["character_id"] is None else names.get(t["character_id"], t["character_id"])
+                        held = "、".join(c.get("name") or c["id"] for c in t["characters"])
                         if t["ok"]:
                             lines.append(f"{label}：正確" + ("（伺服器主人的權杖）" if t["kind"] == "owner" else
-                                                         "（還沒用過，第一次上傳後就屬於這個角色）" if t["kind"] == "personal" and not t["owner"] else ""))
+                                                         f"（名下角色：{held}）" if held else "（還沒上傳過角色）"))
                         elif t["kind"] == "read":
                             lines.append(f"{label}：這是只能看的權杖，不能上傳")
                         elif t["status"] == 200:
-                            lines.append(f"{label}：這個權杖屬於另一個角色（{t['owner_name'] or t['owner']}），上傳會被拒絕")
+                            lines.append(f"{label}：這個角色已經屬於別人的權杖，上傳會被拒絕")
                         else:
                             lines.append(f"{label}：被拒絕（HTTP {t['status']}）")
                     self._say(message="連線正常。" + "　".join(lines), ok=info["token_ok"], connected=info["token_ok"])
@@ -212,7 +213,7 @@ def main(config: Optional[str] = None) -> int:
 
     fields = {"url": tk.StringVar(value=cfg.url), "token": tk.StringVar(value=cfg.api_token),
               "wow": tk.StringVar(value=cfg.wow_path), "device": tk.StringVar(value=cfg.device_id)}
-    labels = (("url", "伺服器網址"), ("token", "預設權杖（沒有個別權杖的角色用它）"), ("wow", "遊戲資料夾（留空自動尋找）"),
+    labels = (("url", "伺服器網址"), ("token", "權杖（這台電腦的角色都用它）"), ("wow", "遊戲資料夾（留空自動尋找）"),
               ("device", "這台電腦的名稱"))
     entries: Dict[str, Any] = {}
     for row, (key, text) in enumerate(labels):
@@ -235,7 +236,7 @@ def main(config: Optional[str] = None) -> int:
     ttk.Button(frame, text="選擇…", width=6, command=browse).grid(row=2, column=2, padx=(6, 0))
 
     # one row per character found in the game's saved data, each with a token of its own
-    people = ttk.LabelFrame(frame, text="角色各自的權杖（留空就用預設權杖）", padding=8)
+    people = ttk.LabelFrame(frame, text="這台電腦的角色（通常不用填；只有某個角色要用另一個人的權杖時才填）", padding=8)
     people.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(10, 0))
     people.columnconfigure(1, weight=1)
     own: Dict[str, Any] = {cid: tk.StringVar(value=token) for cid, token in cfg.tokens.items()}
@@ -268,7 +269,7 @@ def main(config: Optional[str] = None) -> int:
             note("伺服器網址要以 http:// 或 https:// 開頭。", False)
             return None
         if not now.api_token and not now.tokens:
-            note("請填入預設權杖，或至少一個角色的權杖。", False)
+            note("請填入權杖。", False)
             return None
         save_config(path, now)
         if not quiet:
@@ -310,7 +311,7 @@ def main(config: Optional[str] = None) -> int:
     status.columnconfigure(1, weight=1)
     shown = {}
     for row, (key, text) in enumerate((("connected", "伺服器"), ("auto", "自動同步"), ("files", "遊戲存檔"), ("pending", "等待上傳"),
-                                       ("uploaded", "已上傳"), ("rejected", "被拒絕"), ("waiting", "缺權杖的角色"), ("synced", "上次同步"))):
+                                       ("uploaded", "已上傳"), ("rejected", "被拒絕"), ("waiting", "傳不上去的角色"), ("synced", "上次同步"))):
         ttk.Label(status, text=text).grid(row=row, column=0, sticky="w", padx=(0, 14), pady=1)
         shown[key] = ttk.Label(status, text="—", wraplength=380, justify="left")
         shown[key].grid(row=row, column=1, sticky="w", pady=1)
@@ -340,7 +341,7 @@ def main(config: Optional[str] = None) -> int:
                 if "characters" in r:
                     list_people(r["characters"])
                 if "waiting" in r:
-                    shown["waiting"].configure(text=(r["waiting"] + "：資料先留在這台電腦，填了權杖就會補傳") if r["waiting"] else "沒有")
+                    shown["waiting"].configure(text=(r["waiting"] + "：沒有可用的權杖，資料先留在這台電腦") if r["waiting"] else "沒有")
                 if "connected" in r:
                     shown["connected"].configure(text="連線正常" if r["connected"] else "連不上或權杖不對")
                 if "synced_at" in r or "checked_at" in r:
