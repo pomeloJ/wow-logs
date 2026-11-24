@@ -101,6 +101,46 @@ def test_usual_places_to_look_for_the_game(monkeypatch):
     assert [str(p).replace("\\", "/") for p in core.wow_roots()][1:] == core.DEFAULT_WOW_PATHS[1:]   # still the usual ones
 
 
+def test_newer_version_is_found_fetched_and_named_after_its_version(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import create_app
+    from adventuresync import __version__, update
+    assert update.as_numbers("0.10.2") > update.as_numbers("0.9") and update.as_numbers("v1.2") == (1, 2)
+    assert update.as_numbers("1.2-beta") == () and update.as_numbers(None) == ()
+    web = TestClient(create_app(db_path=str(tmp_path / "s.db"), write_token="w", read_token="r"))
+    # run from source: only the source's own version counts, and the server has the same one
+    assert update.check("http://hub", web) is None
+    found = update.check("http://hub/", web, current="0.0.1")
+    assert (found["kind"], found["version"], found["url"]) == ("source", __version__, "http://hub/download/client-source.zip")
+    assert not update.can_fetch(found)
+    # as the one-file Windows program: the build for this kind of computer, when it is newer
+    monkeypatch.setattr(update.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(update.sys, "platform", "win32")
+    monkeypatch.setattr(update.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(update.platform, "machine", lambda: "AMD64")
+    put = lambda name, version, body: web.put(f"/api/v1/builds/{name}", content=body, headers={"Authorization": "Bearer w"},   # noqa: E731
+                                              params={"version": version} if version else {})
+    put("AdventureSync-windows-x64.exe", None, b"MZ old")                      # no version known: never offered
+    put("AdventureSync-macos-arm64.zip", "9.9.9", b"PK")                       # another kind of computer
+    assert update.check("http://hub", web, current="0.2.0") is None
+    put("AdventureSync-windows-x64.exe", "0.10.0", b"MZ" + b"n" * 70000)
+    assert update.check("http://hub", web, current="0.10.0") is None and update.check("http://hub", web, current="0.11") is None
+    found = update.check("http://hub", web, current="0.9.5")
+    assert (found["kind"], found["version"], found["size"]) == ("build", "0.10.0", 70002) and update.can_fetch(found)
+    assert found["url"] == "http://hub/download/builds/AdventureSync-windows-x64.exe"
+    seen = []
+    path = update.fetch(found, tmp_path, lambda got, size: seen.append((got, size)), client=web)
+    assert path == tmp_path / "AdventureSync-windows-x64-0.10.0.exe" and path.read_bytes() == b"MZ" + b"n" * 70000
+    assert seen[-1] == (70002, 70002) and not list(tmp_path.glob("*.part"))
+    # a download that is cut short leaves nothing behind that looks like the program
+    path.unlink()
+    with pytest.raises(RuntimeError):
+        update.fetch({**found, "size": 99999}, tmp_path, client=web)
+    assert not path.exists() and not list(tmp_path.glob("*.part"))
+    with pytest.raises(RuntimeError):
+        update.fetch({**found, "url": "http://hub/download/builds/nope.exe"}, tmp_path, client=web)
+
+
 def test_config(tmp_path):
     p = tmp_path / "c.toml"
     p.write_text('[server]\nurl = "http://x:1/"\napi_token = "t"\n[client]\ndevice_id = "d"\n')

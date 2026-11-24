@@ -81,7 +81,7 @@ fetch("/api/v1/setup").then(r => r.json()).then(r => {
   const mine = b => (windows && kind(b.name) === "Windows") || (mac && kind(b.name) === "macOS");
   const list = r.builds.slice().sort((a, b) => mine(b) - mine(a));
   $("builds").replaceChildren(...(list.length ? [el("div", { class: "systems" }, ...list.map(b => el("div", { class: "sys" + (mine(b) ? " you" : "") },
-    el("b", { text: (kind(b.name) || "程式") + (mine(b) ? "（這台電腦）" : "") }), el("small", { text: `${b.name}　${size(b.size)}　${new Date(b.updated).toLocaleDateString("zh-TW")}，不需要另外裝 Python` }),
+    el("b", { text: (kind(b.name) || "程式") + (mine(b) ? "（這台電腦）" : "") }), el("small", { text: `${b.name}　${b.version ? "版本 " + b.version + "　" : ""}${size(b.size)}　${new Date(b.updated).toLocaleDateString("zh-TW")}，不需要另外裝 Python` }),
     el("a", { class: "btn", href: "/download/builds/" + encodeURIComponent(b.name), text: "下載" }))))]
     : [el("p", { class: "hint", text: "這台伺服器還沒有放上編譯好的程式，請用下面的原始碼版。" })]));
   if (!r.source) { $("source").replaceWith(el("span", { class: "say bad", text: "這台伺服器上沒有原始碼可下載，請從程式庫取得。" })); }

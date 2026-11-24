@@ -163,7 +163,8 @@ def test_setup_page_and_client_downloads(tmp_path):
     web = TestClient(create_app(db_path=str(tmp_path / "s.db"), write_token="w", read_token="r"))
     page = web.get("/setup")
     assert page.status_code == 200 and "AdventureSync" in page.text
-    assert web.get("/api/v1/setup").json() == {"source": True, "builds": []}
+    from adventuresync import __version__
+    assert web.get("/api/v1/setup").json() == {"source": True, "source_version": __version__, "builds": []}
     src = zipfile.ZipFile(io.BytesIO(web.get("/download/client-source.zip").content))
     names = set(src.namelist())
     assert {"AdventureSync/adventuresync/core.py", "AdventureSync/adventuresync/gui.py", "AdventureSync/AdventureSync.pyw",
@@ -182,7 +183,14 @@ def test_setup_page_and_client_downloads(tmp_path):
         assert web.put(f"/api/v1/builds/{bad}", content=b"x", headers=w).status_code in (400, 404)
     assert web.put("/api/v1/builds/empty.zip", content=b"", headers=w).status_code == 400
     listed = web.get("/api/v1/setup").json()["builds"]
-    assert [(b["name"], b["size"]) for b in listed] == [("AdventureSync-windows-x64.exe", 5002)]
+    assert [(b["name"], b["size"], b["version"]) for b in listed] == [("AdventureSync-windows-x64.exe", 5002, None)]
+    # a build uploaded with its version says so; uploading it again without one forgets the old version
+    put = lambda **params: web.put("/api/v1/builds/AdventureSync-windows-x64.exe", content=b"MZ" + b"y" * 5000, headers=w, params=params)   # noqa: E731
+    assert put(version="1.2.3").json()["version"] == "1.2.3"
+    assert web.get("/api/v1/setup").json()["builds"][0]["version"] == "1.2.3"
+    assert put(version="../x").status_code == 400 and put(version="1.2.3-beta").status_code == 400
+    assert put().status_code == 200 and web.get("/api/v1/setup").json()["builds"][0]["version"] is None
+    assert put(version="1.2.4").status_code == 200
     got = web.get("/download/builds/AdventureSync-windows-x64.exe")
     assert got.content[:2] == b"MZ" and "attachment" in got.headers["content-disposition"]
     assert web.get("/download/builds/nope.exe").status_code == 404

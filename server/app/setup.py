@@ -5,8 +5,13 @@ Two kinds of download, neither holding any secret:
   Windows and macOS), zipped on request from the files that came with the server;
 * ready-made builds (an .exe, a zipped .app) that the owner made on a computer of that kind
   and uploaded here with the write token.
+
+Each has a version, which the sync program asks for (GET /api/v1/setup) to tell its user when
+a newer one is here. A build's version is given when it is uploaded and kept in a small file
+beside it; the source's is read from the source itself.
 """
 import io
+import json
 import os
 import re
 import zipfile
@@ -21,6 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ALLOWED = (".py", ".pyw", ".lua", ".toc", ".txt", ".xml")
 BUILD_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.(exe|zip|dmg|pkg|gz)$")
 MAX_BUILD = 150 * 1024 * 1024
+VERSION = re.compile(r"^\d+(\.\d+){0,3}$")
 
 
 def sources(root: Optional[str] = None) -> Optional[Dict[str, str]]:
@@ -34,6 +40,16 @@ def sources(root: Optional[str] = None) -> Optional[Dict[str, str]]:
             found.setdefault("readme", os.path.join(found["extras"], "README.txt"))
             return found
     return None
+
+
+def source_version(src: Optional[Dict[str, str]]) -> Optional[str]:
+    """The version written in the sync program's own source."""
+    try:
+        with open(os.path.join(src["package"], "__init__.py"), encoding="utf-8") as f:
+            found = re.search(r'^__version__\s*=\s*"([^"]+)"', f.read(), re.M)
+    except (OSError, TypeError):
+        return None
+    return found.group(1) if found and VERSION.match(found.group(1)) else None
 
 
 def _add_tree(z: zipfile.ZipFile, folder: str, inside: str) -> None:
@@ -75,13 +91,25 @@ def bundle(src: Dict[str, str], whole: bool) -> bytes:
 def register(app, can_write, builds_dir: str, client_dir: Optional[str] = None) -> None:
     os.makedirs(builds_dir, exist_ok=True)
 
+    def about(name: str) -> str:
+        """The small file beside a build that says which version it is."""
+        return os.path.join(builds_dir, name + ".json")
+
+    def version_of(name: str) -> Optional[str]:
+        try:
+            with open(about(name), encoding="utf-8") as f:
+                version = json.load(f).get("version")
+        except (OSError, ValueError, AttributeError):
+            return None
+        return version if isinstance(version, str) and VERSION.match(version) else None
+
     def builds() -> List[Dict[str, Any]]:
         out = []
         for name in sorted(os.listdir(builds_dir)):
             path = os.path.join(builds_dir, name)
             if BUILD_NAME.match(name) and os.path.isfile(path):
                 st = os.stat(path)
-                out.append({"name": name, "size": st.st_size,
+                out.append({"name": name, "size": st.st_size, "version": version_of(name),
                             "updated": datetime.fromtimestamp(st.st_mtime, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")})
         return out
 
@@ -99,7 +127,8 @@ def register(app, can_write, builds_dir: str, client_dir: Optional[str] = None) 
     @app.get("/api/v1/setup")
     def setup_info():
         """What this server can hand out. No secrets."""
-        return {"source": sources(client_dir) is not None, "builds": builds()}
+        src = sources(client_dir)
+        return {"source": src is not None, "source_version": source_version(src), "builds": builds()}
 
     @app.get("/download/addon.zip", include_in_schema=False)
     def addon_zip():
@@ -117,10 +146,13 @@ def register(app, can_write, builds_dir: str, client_dir: Optional[str] = None) 
         return FileResponse(path, media_type="application/octet-stream", filename=name)
 
     @app.put("/api/v1/builds/{name}", dependencies=[Depends(can_write)])
-    async def put_build(name: str, request: Request):
-        """Upload a ready-made program for the setup page to offer. Written to disk as it arrives."""
+    async def put_build(name: str, request: Request, version: Optional[str] = None):
+        """Upload a ready-made program for the setup page to offer. Written to disk as it arrives.
+        ?version=1.2.3 says which version it is, so that older copies of it can offer the update."""
         if not BUILD_NAME.match(name):
             raise HTTPException(400, "name must be letters, digits, dots and dashes, ending in .exe, .zip, .dmg, .pkg or .gz")
+        if version is not None and not VERSION.match(version):
+            raise HTTPException(400, "version must be numbers separated by dots, like 1.2.3")
         tmp, size = os.path.join(builds_dir, f".{name}.part"), 0
         try:
             with open(tmp, "wb") as f:
@@ -131,11 +163,17 @@ def register(app, can_write, builds_dir: str, client_dir: Optional[str] = None) 
                     f.write(chunk)
             if not size:
                 raise HTTPException(400, "empty file")
+            # The old version file goes first: a build is never listed with the version of the one before it.
+            if os.path.exists(about(name)):
+                os.remove(about(name))
             os.replace(tmp, os.path.join(builds_dir, name))
+            if version:
+                with open(about(name), "w", encoding="utf-8") as f:
+                    json.dump({"version": version}, f)
         finally:
             if os.path.exists(tmp):
                 os.remove(tmp)
-        return {"success": True, "name": name, "size": size}
+        return {"success": True, "name": name, "size": size, "version": version}
 
     @app.delete("/api/v1/builds/{name}", dependencies=[Depends(can_write)])
     def delete_build(name: str):
@@ -143,4 +181,6 @@ def register(app, can_write, builds_dir: str, client_dir: Optional[str] = None) 
         if not BUILD_NAME.match(name) or not os.path.isfile(path):
             raise HTTPException(404, "no such file")
         os.remove(path)
+        if os.path.exists(about(name)):
+            os.remove(about(name))
         return {"success": True}
