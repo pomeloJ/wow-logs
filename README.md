@@ -15,7 +15,7 @@
 ## 自己架設
 
 需要：遊戲本體（Forever 1.60.x）、Python 3.11 以上、一台能用 SSH 金鑰登入的 Linux 主機（或直接在本機跑）。
-目前腳本以 macOS 用戶端加 Ubuntu 伺服器為主；Windows 用戶端尚未測試。
+部署伺服器的腳本是給 macOS／Linux 用的；同步程式（用戶端）在 macOS 與 Windows 11 都測試過。
 
 ```bash
 git clone <這個程式庫> && cd <資料夾>
@@ -36,9 +36,15 @@ cd agent && ../.venv/bin/python AdventureSync.pyw
 測試連線，並顯示等待上傳與已上傳的筆數。設定存在使用者資料夾的 `.adventuresync/config.toml`。
 不想開視窗也可以用指令：`./scripts/run-agent-macos.sh run`（或 `python -m adventuresync run`）。
 
-**給別台電腦用**：伺服器的 `/setup` 頁面可以下載同步程式。要提供不必裝 Python 的單一檔案，在那種系統上執行
-`python scripts/build-client.py --upload`（需要 PyInstaller），編好的檔案會上傳並出現在 `/setup`；
-不同系統要各自在該系統上編譯。
+**給別台電腦用**：伺服器的 `/setup` 頁面可以下載同步程式。原始碼版需要對方自己裝 Python 3.11 以上。
+**對方沒有 Python 時**給單一檔案版：在那種系統上執行 `python scripts/build-client.py --upload`
+（需要 `python -m pip install pyinstaller httpx pillow`），編好的檔案（Windows 是約 22 MB 的 `.exe`，裡面已包含
+Python 與插件）會上傳並出現在 `/setup`，對方下載後點兩下就能用。不同系統要各自在該系統上編譯。
+檔案沒有簽署，Windows 第一次開啟會顯示 SmartScreen 警告（「其他資訊 → 仍要執行」），少數防毒軟體也可能誤判。
+
+**Windows 上的指令**（PowerShell）：`py -3.11 -m venv .venv`、`.venv\Scripts\python -m pip install -r agent\requirements.txt`、
+`cd agent; ..\.venv\Scripts\python -m adventuresync`（加上 `run`、`validate` 等就是不開視窗的用法）。
+遊戲資料夾留空時，會依序找登錄檔記載的安裝位置與每顆硬碟上常見的資料夾。
 
 部署完成後，第一次用 `dashboard-link.txt` 裡的連結開網頁（內含唯讀權杖，會記在瀏覽器裡）。
 只想在本機試：`cd server && AH_API_TOKEN=<寫入權杖> AH_READ_TOKEN=<唯讀權杖> ../.venv/bin/uvicorn --factory app.main:create_app`。

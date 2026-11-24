@@ -1,7 +1,9 @@
 """AdventureSync core: config, discovery, local queue, ingest, upload."""
 import json
 import logging
+import os
 import sqlite3
+import sys
 import time
 import tomllib
 from dataclasses import dataclass, field
@@ -95,19 +97,64 @@ DEFAULT_WOW_PATHS = [
     "C:/Program Files (x86)/World of Warcraft",
     "C:/Program Files/World of Warcraft",
 ]
+# Where people put the game on a drive of their own choosing (Windows: tried on every fixed drive).
+WINDOWS_FOLDERS = ["World of Warcraft", "Games/World of Warcraft", "Program Files (x86)/World of Warcraft",
+                   "Program Files/World of Warcraft"]
+
+
+def _windows_drives() -> List[str]:
+    """Letters of the fixed drives. Removable and network drives are left alone: asking an
+    empty card reader or an unreachable share can hang or pop up a dialog."""
+    import ctypes
+    mask = ctypes.windll.kernel32.GetLogicalDrives()
+    return [c for i, c in enumerate("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+            if mask >> i & 1 and ctypes.windll.kernel32.GetDriveTypeW(f"{c}:\\") == 3]
+
+
+def _windows_registry() -> List[str]:
+    """The folder the game's own installer wrote down, when it did."""
+    import winreg
+    found = []
+    for key in (r"SOFTWARE\WOW6432Node\Blizzard Entertainment\World of Warcraft",
+                r"SOFTWARE\Blizzard Entertainment\World of Warcraft"):
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as k:
+                value = str(winreg.QueryValueEx(k, "InstallPath")[0]).rstrip("\\/")
+        except OSError:
+            continue
+        # It names one game version's folder (…/World of Warcraft/_retail_): the others sit beside it.
+        found += [str(Path(value).parent), value] if Path(value).name.startswith("_") else [value]
+    return found
+
+
+def wow_roots(wow_path: str = "") -> List[Path]:
+    """Folders to look for the game in: the chosen one, or else the usual places."""
+    if wow_path:
+        return [Path(wow_path).expanduser()]
+    places = list(DEFAULT_WOW_PATHS)
+    if sys.platform.startswith("win"):
+        try:
+            places = _windows_registry() + places + [f"{d}:/{f}" for d in _windows_drives() for f in WINDOWS_FOLDERS]
+        except Exception as e:                        # looking further is a convenience, never a reason to fail
+            log.debug("could not look for the game beyond the usual folders: %s", e)
+    roots, seen = [], set()
+    for place in places:
+        key = os.path.normcase(os.path.normpath(place))
+        if key not in seen:
+            seen.add(key)
+            roots.append(Path(place))
+    return roots
 
 
 def find_saved_variables(wow_path: str) -> List[Path]:
     """All AdventureCollector.lua files under <wow>/_*_/WTF/Account/*/SavedVariables."""
-    roots = [Path(wow_path).expanduser()] if wow_path else [Path(p) for p in DEFAULT_WOW_PATHS]
     found: List[Path] = []
-    for root in roots:
+    for root in wow_roots(wow_path):
         if not root.is_dir():
             continue
-        bases = [root] if (root / "WTF").is_dir() else \
-            [d for d in root.iterdir() if d.is_dir() and (d / "WTF").is_dir()]
+        bases = [root] if (root / "WTF").is_dir() else             [d for d in root.iterdir() if d.is_dir() and (d / "WTF").is_dir()]
         for base in bases:
-            found += sorted((base / "WTF" / "Account").glob(f"*/SavedVariables/{SV_NAME}"))
+            found += [f for f in sorted((base / "WTF" / "Account").glob(f"*/SavedVariables/{SV_NAME}")) if f not in found]
     return found
 
 
