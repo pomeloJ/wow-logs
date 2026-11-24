@@ -246,7 +246,9 @@ const SLOT = { 1: "頭部", 2: "頸部", 3: "肩部", 4: "襯衣", 5: "胸部", 
 const list = v => Array.isArray(v) ? v : [];
 const CLASS_COLOR = { WARRIOR: "#C69B6D", PALADIN: "#F48CBA", HUNTER: "#AAD372", ROGUE: "#E6D94C", PRIEST: "#C9CED6",
   SHAMAN: "#2E8BE6", MAGE: "#3FC7EB", WARLOCK: "#8788EE", DRUID: "#FF7C0A" };
-const TABS = [["home", "總覽"], ["map", "地圖"], ["quests", "任務"], ["items", "物品"], ["char", "角色"], ["album", "相簿"], ["data", "資料"]];
+// The album (screenshots) is built further down but has no tab for now: hidden on request.
+// To bring it back, add ["album", "相簿"] to this list.
+const TABS = [["home", "總覽"], ["map", "地圖"], ["quests", "任務"], ["items", "物品"], ["char", "角色"], ["data", "資料"]];
 const TAB_KEY = "adventure-hub-tab";
 
 let token = "";
@@ -1130,7 +1132,8 @@ async function load(quiet) {
     state.me = { map_id: d.map_id, x: d.x, y: d.y };
     try { const ws = await get("/world/sources"); W.ok = ws.available; W.src = ws.items[0] || null; } catch (e) { W.ok = false; }
     let itemNames = {}, near = [], neededBy = {}, zones = null, groups = [], shots = { total: 0, items: [] };
-    try { shots = await get(`/screenshots?character_id=${cid}&limit=120`); } catch (e) { /* shown as "none" */ }
+    // screenshots are only fetched while the album has a tab: hidden means not loaded either
+    if (TABS.some(t => t[0] === "album")) try { shots = await get(`/screenshots?character_id=${cid}&limit=120`); } catch (e) { /* shown as "none" */ }
     try { groups = (await get(`/groups?character_id=${cid}`)).items; } catch (e) { /* shown as "none" */ }
     state.pins = [];
     if (W.ok) {
