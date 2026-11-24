@@ -1,0 +1,1519 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adventure Hub</title>
+<style>
+:root {
+  --bg: #f4f1ea; --panel: #fffdf8; --ink: #2a2520; --muted: #7a7065; --line: #e2dbcd;
+  --accent: #b5651d; --accent-soft: #f0dcc4; --ok: #3d7a4a; --warn: #b3541e;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #17140f; --panel: #211d17; --ink: #ece5d8; --muted: #9c9182; --line: #3a332a;
+          --accent: #e0964a; --accent-soft: #4a3520; --ok: #7fc08a; --warn: #e89a6a; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.5 -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
+main { max-width: 1080px; margin: 0 auto; padding: 20px 16px 48px; }
+header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+h1 { font-size: 20px; margin: 0; letter-spacing: .02em; }
+h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 600; letter-spacing: .08em; }
+.sync { margin-left: auto; font-size: 13px; color: var(--muted); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
+.dot.stale { background: var(--warn); }
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(12, 1fr); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
+.c-char { grid-column: span 5; } .c-stats { grid-column: span 7; }
+.c-map { grid-column: span 7; } .c-events { grid-column: span 5; }
+.c-half { grid-column: span 6; } .c-third { grid-column: span 4; } .c-full { grid-column: 1 / -1; }
+.pbar { display: inline-block; width: 110px; height: 7px; border-radius: 99px; background: var(--line); overflow: hidden;
+  position: relative; flex: none; align-self: center; }
+.pbar i { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 99px; }
+.pbar.ok i { background: var(--ok); } .pbar.low i { background: var(--warn); }
+.pbar.sm { width: 70px; height: 5px; vertical-align: middle; margin-left: 8px; }
+.rank { list-style: none; margin: 0; padding: 0; }
+.rank li { display: grid; grid-template-columns: minmax(90px, 34%) 1fr auto; gap: 10px; align-items: center; padding: 5px 0; }
+.rank .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rank .track { height: 10px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.rank .track i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.rank .num { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; min-width: 2.5em; text-align: right; }
+.summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 18px; align-items: start; }
+@media (max-width: 820px) { .summary { grid-template-columns: 1fr; } }
+.xpchart { aspect-ratio: auto; height: 170px; border: 0; border-radius: 0; }
+.estimate { font-size: 14px; margin-top: 8px; } .estimate b { color: var(--accent); }
+@media (max-width: 820px) { .card { grid-column: 1 / -1 !important; } }
+.hero { grid-column: 1 / -1; display: flex; gap: 18px; align-items: center; position: relative; overflow: hidden; margin-bottom: 4px; }
+.hero::before { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(520px 220px at 0% 0%, color-mix(in srgb, var(--cls, var(--accent)) 26%, transparent), transparent 72%); }
+.hero > * { position: relative; }
+.ring { width: 104px; height: 104px; position: relative; flex: none; }
+.ring svg { width: 100%; height: 100%; transform: rotate(-90deg); display: block; }
+.ring circle { fill: none; stroke-width: 8; }
+.ring .bg { stroke: var(--line); } .ring .rest { stroke: var(--accent-soft); }
+.ring .fg { stroke: var(--cls, var(--accent)); stroke-linecap: round; transition: stroke-dashoffset .8s ease; }
+.ring .lv { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; line-height: 1.05; }
+.ring .lv b { font-size: 34px; font-variant-numeric: tabular-nums; } .ring .lv span { font-size: 11px; color: var(--muted); }
+.hero .who { min-width: 0; flex: 1; }
+.hero .name { color: var(--cls, var(--ink)); overflow-wrap: anywhere; }
+@media (prefers-color-scheme: light) { .hero .name { color: color-mix(in srgb, var(--cls, var(--ink)) 60%, #000); } }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.chip { font-size: 12px; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--line); background: var(--bg);
+  white-space: nowrap; font-variant-numeric: tabular-nums; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.chip b { font-weight: 600; color: var(--muted); margin-right: 4px; }
+.tabs { position: sticky; top: 0; z-index: 5; display: flex; gap: 4px; overflow-x: auto; padding: 8px 0; margin: 4px 0 6px;
+  background: var(--bg); scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs button { background: none; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 7px 16px;
+  white-space: nowrap; flex: none; font-size: 14px; }
+.tabs button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.grid > [data-tab]:not(.on) { display: none; }
+.search { margin: 0 0 8px; }
+@media (max-width: 820px) {
+  main { padding: 12px 12px 40px; }
+  .sync { margin-left: 0; flex-basis: 100%; order: 3; }
+  header #logout { margin-left: auto; }
+  .card { padding: 14px; }
+  .rows, .events { max-height: none; }
+  .btn, select { padding: 8px 12px; }
+  .mapctl input[type=range] { flex-basis: 100%; order: -1; height: 28px; }
+  .tile b { font-size: 21px; }
+  .rank li, .rank li.x summary { grid-template-columns: minmax(80px, 42%) 1fr auto; }
+}
+@media (max-width: 480px) {
+  .hero { gap: 12px; } .ring { width: 84px; height: 84px; } .ring .lv b { font-size: 27px; }
+  .hero .name { font-size: 22px; }
+  .rows li { flex-wrap: wrap; } .rows .num { margin-left: auto; }
+  dl { grid-template-columns: 1fr; gap: 0 0; } dd { margin-bottom: 8px; }
+}
+.name { font-size: 26px; font-weight: 700; line-height: 1.2; }
+.sub { color: var(--muted); margin-top: 2px; }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 14px 0 0; }
+dt { color: var(--muted); } dd { margin: 0; font-variant-numeric: tabular-nums; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+.tile { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.tile b { display: block; font-size: 24px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.tile span { font-size: 12px; color: var(--muted); }
+.maphead { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.maphead h2 { margin: 0; }
+select { margin-left: auto; font: inherit; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; max-width: 60%; }
+canvas { width: 100%; aspect-ratio: 3 / 2; display: block; border: 1px solid var(--line); border-radius: 8px; }
+.mapctl { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.mapctl input[type=range] { flex: 1; min-width: 120px; margin: 0; padding: 0; accent-color: var(--accent); }
+.mapctl select { margin-left: 0; max-width: none; }
+.btn { background: none; color: var(--ink); border: 1px solid var(--line); padding: 4px 12px; white-space: nowrap; }
+.legend { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.events { list-style: none; margin: 0; padding: 0; max-height: 520px; overflow: auto; }
+.events li { display: grid; grid-template-columns: 62px 1fr; gap: 10px; padding: 7px 0; border-top: 1px solid var(--line); }
+.events li:first-child { border-top: 0; }
+.events time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; padding-top: 2px; }
+.tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 99px;
+  background: var(--accent-soft); color: var(--accent); margin-right: 6px; font-weight: 600; }
+.detail { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.bar { height: 8px; border-radius: 99px; background: var(--line); overflow: hidden; margin: 14px 0 4px; position: relative; }
+.bar i { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 99px; }
+.bar i.rest { background: var(--accent-soft); }
+.small { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rows { list-style: none; margin: 0; padding: 0; max-height: 360px; overflow: auto; }
+.rows:has(details[open]) { max-height: none; }
+@media (max-width: 820px) { .rows, .events { max-height: none !important; } }
+.rows li { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--line); }
+.rows li:first-child { border-top: 0; }
+.rows .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.rows .num { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 13px; }
+.q0 { color: var(--muted); } .q2 { color: #2f9e44; } .q3 { color: #3b82c4; } .q4 { color: #9b5de5; } .q5 { color: #e8890c; }
+.done { color: var(--ok); } .obj { display: block; font-size: 12px; color: var(--muted); }
+.cardhead { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.cardhead h2 { margin: 0; } .cardhead .small { margin-left: auto; }
+details.grow > summary { display: flex; gap: 10px; align-items: baseline; cursor: pointer; list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+details > summary:hover .wname { text-decoration: underline; }
+.rank li.x { display: block; }
+.rank li.x summary { display: grid; grid-template-columns: minmax(90px, 34%) 1fr auto; gap: 10px; align-items: center; cursor: pointer; list-style: none; }
+/* An opened row becomes one framed block: tinted header on top, details panel below, so it
+   reads as a unit and does not run into the next row. */
+.wbox { margin: 0 0 10px; padding: 10px 12px 12px; font-size: 13px; color: var(--muted); background: var(--bg);
+  border: 1px solid var(--line); border-top: 0; border-left: 3px solid var(--accent); border-radius: 0 0 8px 8px; }
+details.grow > summary::before { content: "▸"; color: var(--muted); flex: none; width: 1em; transition: transform .15s; align-self: center; }
+details.grow[open] > summary::before { transform: rotate(90deg); color: var(--accent); }
+.rank li.x summary::before { display: none; }
+details.grow[open] > summary { background: var(--accent-soft); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-bottom-style: dashed; border-radius: 8px 8px 0 0; padding: 8px 10px 8px 9px; margin-top: 4px; }
+details.grow[open] > summary .wname { font-weight: 600; }
+.rows li:has(> details[open]) { border-top-color: transparent; padding-top: 2px; }
+.rows li:has(> details[open]) + li { border-top-color: transparent; }
+.wbox .wbox { background: var(--panel); }
+.wbox details.grow[open] > summary { background: var(--panel); }
+.wbox details.grow:not([open]) > summary { padding: 4px 0; border-top: 1px dashed var(--line); }
+.wbox div { padding: 1px 0; overflow-wrap: anywhere; } .wbox b { color: var(--ink); font-weight: 600; }
+.foot { grid-column: 1 / -1; font-size: 12px; color: var(--muted); text-align: center; }
+#busy { position: fixed; inset: 0 0 auto 0; height: 3px; z-index: 20; overflow: hidden; opacity: 0; transition: opacity .2s; pointer-events: none; }
+#busy.on { opacity: 1; }
+#busy::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 40%; background: var(--accent); border-radius: 3px;
+  animation: slide 1.1s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading { padding: 18vh 16px; text-align: center; color: var(--muted); }
+.loading i { display: block; width: 38px; height: 38px; margin: 0 auto 14px; border-radius: 50%;
+  border: 4px solid var(--line); border-top-color: var(--accent); animation: spin .9s linear infinite; }
+.loading small { display: block; margin-top: 6px; font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { .loading i, #busy::before { animation-duration: 3s; } }
+.wsec { font-weight: 600; color: var(--ink); margin-top: 8px; }
+.timerange { margin: 0 0 10px; } .timerange input { width: auto; flex: 1; min-width: 170px; margin: 0; padding: 5px 8px; }
+.legbar[hidden], .timerange[hidden] { display: none; }
+.legbar { display: flex; gap: 6px; overflow-x: auto; margin: 0 0 10px; padding-bottom: 4px; align-items: center; scrollbar-width: thin; }
+.legbar .chip { cursor: pointer; color: var(--ink); font: inherit; font-size: 12px; flex: none; }
+.legbar .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.legbar .chip[aria-pressed="true"] b { color: #fff; }
+.legbar .arrow { color: var(--muted); flex: none; font-size: 12px; }
+.zbar { display: flex; height: 8px; border-radius: 99px; overflow: hidden; background: var(--line); width: 110px; flex: none; align-self: center; }
+.zbar i { display: block; height: 100%; } .zbar .d { background: var(--ok); } .zbar .l { background: var(--accent); } .zbar .a { background: var(--accent-soft); }
+.zone { cursor: pointer; border-radius: 6px; padding-left: 6px !important; padding-right: 6px !important; }
+.zone:hover { background: var(--bg); } .zone.sel { background: var(--accent-soft); }
+.zone.here .grow > span:first-child::after { content: " · 你在這裡"; color: var(--accent); font-size: 12px; }
+.note { font-size: 13px; padding: 8px 10px; border-radius: 8px; background: var(--accent-soft); margin-bottom: 8px; }
+.xp s { color: var(--muted); margin-right: 4px; }
+@media (max-width: 480px) { .zbar { width: 64px; } }
+.srow { display: grid; grid-template-columns: minmax(0, 1fr) 90px 4.2em auto; gap: 8px; align-items: center; padding: 5px 0 !important;
+  border-top: 1px dashed var(--line); }
+.srow.plain { grid-template-columns: minmax(0, 1fr) auto; }
+.srow .sname { min-width: 0; color: var(--ink); } .srow .obj { margin-top: 1px; }
+.srow .pct { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); white-space: nowrap; }
+.srow .pct.unk { color: var(--muted); font-size: 12px; }
+.cbar { height: 8px; border-radius: 99px; background: var(--line); overflow: hidden; position: relative; }
+.cbar i { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 99px; min-width: 3px; }
+.cbar.unk { background: repeating-linear-gradient(135deg, var(--line) 0 4px, transparent 4px 8px); }
+.btn.sm { padding: 2px 10px; font-size: 12px; border-radius: 99px; }
+.btn.sm[aria-expanded="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.mini { margin: 4px 0 10px; } .mini canvas { max-width: 540px; } .mini .chips { margin: 0 0 6px; }
+.mini .chip { cursor: pointer; color: var(--ink); font: inherit; font-size: 12px; }
+.mini .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+@media (max-width: 480px) { .srow { grid-template-columns: minmax(0, 1fr) 48px 3.6em auto; gap: 6px; } }
+.album { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.album figure { margin: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; cursor: pointer; background: var(--bg); }
+.album img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; display: block; background: var(--line); }
+.album figcaption { padding: 6px 8px; font-size: 12px; color: var(--muted); }
+.album figcaption b { display: block; color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lightbox { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, .92); display: flex; flex-direction: column;
+  align-items: center; justify-content: center; padding: 12px; gap: 10px; }
+.lightbox img { max-width: 100%; max-height: calc(100vh - 110px); border-radius: 6px; }
+.lightbox .cap { color: #eee; font-size: 14px; text-align: center; }
+.lightbox .bar { display: flex; gap: 10px; }
+.lightbox button { background: rgba(255, 255, 255, .14); color: #fff; border: 0; border-radius: 99px; padding: 7px 18px; font: inherit; cursor: pointer; }
+.msg { padding: 40px 16px; text-align: center; color: var(--muted); } .msg button { margin-top: 14px; }
+.login { max-width: 420px; margin: 12vh auto; }
+input { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); color: var(--ink); margin: 10px 0; }
+button { font: inherit; padding: 7px 16px; border: 0; border-radius: 6px; background: var(--accent);
+  color: #fff; cursor: pointer; }
+button.link { background: none; color: var(--muted); padding: 0; font-size: 13px; text-decoration: underline; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Adventure Hub</h1>
+    <span class="sync" id="sync"></span>
+    <button class="link" id="logout" hidden>登出</button>
+  </header>
+  <div id="busy" role="progressbar" aria-label="載入中"></div>
+  <div id="app"><div class="loading" role="status"><i></i>載入冒險紀錄中…<small id="slow" hidden>伺服器回應比較慢，請再等一下。</small></div></div>
+</main>
+<script>
+"use strict";
+const API = "/api/v1";
+const KEY = "adventure-hub-token";
+const CLASS = { WARRIOR: "戰士", PALADIN: "聖騎士", HUNTER: "獵人", ROGUE: "盜賊", PRIEST: "牧師",
+  SHAMAN: "薩滿", MAGE: "法師", WARLOCK: "術士", DRUID: "德魯伊", DEATHKNIGHT: "死亡騎士", MONK: "武僧" };
+const RACE = { Human: "人類", Dwarf: "矮人", NightElf: "夜精靈", Gnome: "地精", Orc: "獸人",
+  Scourge: "不死族", Tauren: "牛頭人", Troll: "食人妖", BloodElf: "血精靈", Draenei: "德萊尼" };
+const FACTION = { Alliance: "聯盟", Horde: "部落" };
+const EVENT = { LOCATION_SAMPLE: "位置", ZONE_CHANGED: "換區", LEVEL_UP: "升級", SESSION_START: "登入",
+  QUEST_ACCEPTED: "接任務", QUEST_COMPLETED: "完成任務", QUEST_REMOVED: "任務移除", PLAYER_DIED: "死亡",
+  ITEM_LOOTED: "拾取", MOB_KILLED: "擊殺", MAP_SCREENSHOT: "地圖截圖", MONEY_CHANGED: "金錢", XP_GAINED: "經驗",
+  SKILL_UP: "技能提升", GROUP_JOINED: "組隊", GROUP_LEFT: "隊伍解散", GROUP_MEMBER_JOINED: "隊友加入", GROUP_MEMBER_LEFT: "隊友離隊",
+  PARTY_LOOT: "隊友拾取", PARTY_MEMBER_DIED: "隊友死亡", GROUP_MEMBER_LEVEL_UP: "隊友升級", PARTY_POSITIONS: "隊友位置", GROUP_METER: "傷害統計", GROUP_ENCOUNTER: "首領戰統計", COMBAT: "戰鬥", INSTANCE_ENTERED: "進副本", INSTANCE_LEFT: "離開副本", ENCOUNTER_END: "首領戰",
+  NPC_INTERACTION: "互動", ACHIEVEMENT_EARNED: "成就", FLIGHT_STARTED: "起飛", FLIGHT_ENDED: "降落", CHAT_MESSAGE: "聊天" };
+const NPC_KIND = { merchant: "商人", trainer: "訓練師", mailbox: "信箱", bank: "銀行", auction: "拍賣場", flightmaster: "飛行管理員" };
+const CHANNEL = { say: "說", yell: "喊", party: "隊伍", raid: "團隊", guild: "公會", whisper: "密語", general: "綜合", trade: "交易", other_channels: "頻道" };
+const STANDING = { 1: "仇恨", 2: "敵對", 3: "冷淡", 4: "中立", 5: "友善", 6: "尊敬", 7: "崇敬", 8: "崇拜" };
+const STAT = { strength: "力量", agility: "敏捷", stamina: "耐力", intellect: "智力", spirit: "精神", armor: "護甲", health_max: "生命上限", power_max: "能量上限" };
+const duration = s => s >= 3600 ? `${Math.floor(s / 3600)} 小時 ${Math.floor(s % 3600 / 60)} 分` : s >= 60 ? `${Math.floor(s / 60)} 分 ${s % 60} 秒` : `${s} 秒`;
+const SLOT = { 1: "頭部", 2: "頸部", 3: "肩部", 4: "襯衣", 5: "胸部", 6: "腰部", 7: "腿部", 8: "腳", 9: "手腕",
+  10: "手", 11: "戒指", 12: "戒指", 13: "飾品", 14: "飾品", 15: "背部", 16: "主手", 17: "副手", 18: "遠程", 19: "外袍" };
+const list = v => Array.isArray(v) ? v : [];
+const CLASS_COLOR = { WARRIOR: "#C69B6D", PALADIN: "#F48CBA", HUNTER: "#AAD372", ROGUE: "#E6D94C", PRIEST: "#C9CED6",
+  SHAMAN: "#2E8BE6", MAGE: "#3FC7EB", WARLOCK: "#8788EE", DRUID: "#FF7C0A" };
+const TABS = [["home", "總覽"], ["map", "地圖"], ["quests", "任務"], ["items", "物品"], ["char", "角色"], ["album", "相簿"], ["data", "資料"]];
+const TAB_KEY = "adventure-hub-tab";
+
+let token = "";
+try {
+  const m = location.hash.match(/token=([^&]+)/);
+  if (m) { localStorage.setItem(KEY, decodeURIComponent(m[1])); history.replaceState(null, "", location.pathname); }
+  token = localStorage.getItem(KEY) || "";
+} catch (e) { /* storage unavailable: fall through to the token form */ }
+
+const app = document.getElementById("app");
+const state = { charId: null, mapId: null, locs: [], maps: {}, filter: "activity", range: "today", tab: "home", pins: [], redraw: null };
+try { const t = localStorage.getItem(TAB_KEY); if (TABS.some(x => x[0] === t)) state.tab = t; } catch (e) { /* default tab */ }
+
+function el(tag, attrs, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") n.className = v; else if (k === "text") n.textContent = v; else n.setAttribute(k, v);
+  }
+  for (const kid of kids) if (kid != null) n.append(kid);
+  return n;
+}
+
+async function get(path) {
+  const r = await fetch(API + path, { headers: { Authorization: "Bearer " + token } });
+  if (r.status === 401 || r.status === 403) throw new Error("auth");
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+function ago(iso) {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 90) return "剛剛";
+  if (s < 3600) return Math.round(s / 60) + " 分鐘前";
+  if (s < 86400) return Math.round(s / 3600) + " 小時前";
+  return Math.round(s / 86400) + " 天前";
+}
+const hm = iso => new Date(iso).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", hour12: false });
+const full = iso => new Date(iso).toLocaleString("zh-TW", { hour12: false });
+function money(c) {
+  if (typeof c !== "number") return "—";
+  return `${Math.floor(c / 10000)} 金 ${Math.floor(c % 10000 / 100)} 銀 ${c % 100} 銅`;
+}
+const pos = d => (typeof d.x === "number" && typeof d.y === "number") ? `${d.x.toFixed(1)}, ${d.y.toFixed(1)}` : "—";
+
+function showLogin(failed) {
+  document.getElementById("logout").hidden = true;
+  document.getElementById("sync").textContent = "";
+  const input = el("input", { type: "password", placeholder: "Token", autocomplete: "off" });
+  const form = el("form", { class: "card login" },
+    el("h2", { text: "需要存取 Token" }),
+    el("div", { class: "detail", text: failed ? "Token 無效，請重新輸入。" : "請貼上唯讀 Token（只會存在這個瀏覽器）。" }),
+    input, el("button", { text: "進入" }));
+  form.addEventListener("submit", e => {
+    e.preventDefault();
+    token = input.value.trim();
+    try { localStorage.setItem(KEY, token); } catch (err) { /* keep in memory only */ }
+    app.replaceChildren(el("div", { class: "loading", role: "status" }, el("i"), "載入冒險紀錄中…"));
+    load();
+  });
+  app.replaceChildren(form);
+}
+
+document.getElementById("logout").addEventListener("click", () => {
+  try { localStorage.removeItem(KEY); } catch (e) { /* nothing stored */ }
+  token = "";
+  showLogin(false);
+});
+
+// ---- world database (static game data): optional, the page works without it
+const W = { ok: false, src: null, cache: new Map(), open: new Set() };
+const at = l => l ? `${l.zone || "地圖 " + l.map_id} ${l.x.toFixed(0)}, ${l.y.toFixed(0)}` : "位置未知";
+const pctText = c => c == null ? "機率未知" : (c >= 10 ? c.toFixed(0) : c.toFixed(1)) + "%";
+const line = (label, text) => el("div", null, el("b", { text: label + "　" }), text);
+function expandable(key, head, path, render) {
+  const box = el("div", { class: "wbox" });
+  const fill = async () => {
+    if (box.dataset.done) return;
+    box.dataset.done = "1";
+    box.textContent = "讀取中…";
+    try {
+      if (!W.cache.has(path)) W.cache.set(path, await get(path));
+      box.replaceChildren(...render(W.cache.get(path)));
+    } catch (e) {
+      box.textContent = e.message === "HTTP 404" ? "世界資料庫沒有這筆資料（可能是 Forever 新增的內容）。" : "讀取失敗：" + e.message;
+      delete box.dataset.done;
+    }
+  };
+  const det = el("details", { class: "grow" }, el("summary", null, ...head), box);
+  det.addEventListener("toggle", () => { if (det.open) { W.open.add(key); fill(); } else W.open.delete(key); });
+  if (W.open.has(key)) { det.open = true; fill(); }
+  return det;
+}
+const RANK_NAME = { elite: "精英", rare_elite: "稀有精英", boss: "首領", rare: "稀有" };
+const levelText = s => s.min_level ? (s.min_level === s.max_level ? s.min_level : `${s.min_level}–${s.max_level}`) + " 級" : null;
+
+// A small map of where one NPC or object spawns; the busiest zone first, the player's own zone preferred.
+function miniMap(kind, id) {
+  const canvas = el("canvas", { role: "img", "aria-label": "出沒位置圖" });
+  const chips = el("div", { class: "chips" }), cap = el("div", { class: "small" });
+  const box = el("div", { class: "mini" }, chips, canvas, cap);
+  (async () => {
+    try {
+      const path = `/world/spawns?kind=${kind}&id=${id}`;
+      if (!W.cache.has(path)) W.cache.set(path, await get(path));
+      const data = W.cache.get(path);
+      if (!data.zones.length) { box.replaceChildren(el("div", { text: "沒有已知的出沒位置（可能在副本裡，或資料庫還沒有紀錄）。" })); return; }
+      const me = state.me;
+      let cur = (data.zones.find(z => me && z.map_id === me.map_id) || data.zones[0]).map_id;
+      const draw = async () => {
+        const zone = data.zones.find(z => z.map_id === cur), img = await mapImage(cur);
+        if (!canvas.isConnected || !canvas.clientWidth) return;
+        const dpr = window.devicePixelRatio || 1, Wd = canvas.clientWidth, Hd = Wd * 2 / 3;
+        canvas.width = Wd * dpr; canvas.height = Hd * dpr;
+        const g = canvas.getContext("2d");
+        g.scale(dpr, dpr);
+        if (img) { g.drawImage(img, 0, 0, Wd, Hd); g.fillStyle = "rgba(0,0,0,.28)"; g.fillRect(0, 0, Wd, Hd); }
+        else {
+          g.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--line").trim();
+          for (let v = 10; v < 100; v += 10) { g.beginPath(); g.moveTo(v / 100 * Wd, 0); g.lineTo(v / 100 * Wd, Hd); g.moveTo(0, v / 100 * Hd); g.lineTo(Wd, v / 100 * Hd); g.stroke(); }
+        }
+        const pts = data.spawns.filter(p => p.map_id === cur);
+        for (const p of pts) {
+          g.beginPath(); g.arc(p.x / 100 * Wd, p.y / 100 * Hd, 4, 0, 7);
+          g.fillStyle = "rgba(255,170,40,.9)"; g.fill(); g.lineWidth = 1.2; g.strokeStyle = "rgba(0,0,0,.85)"; g.stroke();
+        }
+        const here = me && me.map_id === cur && typeof me.x === "number";
+        if (here) {
+          g.beginPath(); g.arc(me.x / 100 * Wd, me.y / 100 * Hd, 6, 0, 7);
+          g.fillStyle = "rgb(255,77,141)"; g.fill(); g.lineWidth = 2; g.strokeStyle = "#fff"; g.stroke();
+        }
+        cap.textContent = `${zone.zone || "地圖 " + cur}：${zone.spawns} 個出沒點（橘點）` + (pts.length < zone.spawns ? `，圖上顯示 ${pts.length} 個` : "")
+          + (here ? "，粉紅點是你的位置" : "") + (img ? "" : "。這張地圖沒有底圖，只畫出座標格線") + "。";
+      };
+      if (data.zones.length > 1) {
+        for (const z of data.zones.slice(0, 8)) {
+          const b = el("button", { class: "chip", type: "button", "aria-pressed": z.map_id === cur, text: `${z.zone || z.map_id}（${z.spawns}）` });
+          b.addEventListener("click", () => { cur = z.map_id; for (const c of chips.children) c.setAttribute("aria-pressed", c === b); draw(); });
+          chips.append(b);
+        }
+      }
+      requestAnimationFrame(draw);
+    } catch (e) { box.replaceChildren(el("div", { text: "讀取位置失敗：" + e.message })); }
+  })();
+  return box;
+}
+
+// One place to get something: name, level and zones, an optional chance bar, and a map toggle.
+function srcRow(s, max) {
+  const zones = list(s.zones);
+  const sub = [levelText(s), RANK_NAME[s.rank], zones.length ? zones.slice(0, 2).map(z => z.zone).filter(Boolean).join("、") + (zones.length > 2 ? ` 等 ${zones.length} 區` : "")
+    : s.location ? at(s.location) : s.kind === "item" ? "物品" : "位置未知"].filter(Boolean).join(" · ");
+  const row = el("div", { class: "srow" + (max == null ? " plain" : "") },
+    el("div", { class: "sname" }, el("span", { text: s.name || "#" + s.id }), el("span", { class: "obj", text: sub })));
+  if (max != null) row.append(chanceBar(s.chance, max), el("span", { class: "pct" + (s.chance == null ? " unk" : ""), text: s.chance == null ? "機率未知" : pctText(s.chance) }));
+  const wrap = el("div", null, row);
+  if ((s.kind === "npc" || s.kind === "object") && (zones.length || s.location)) {
+    const b = el("button", { class: "btn sm", type: "button", "aria-expanded": "false", text: "地圖" });
+    b.addEventListener("click", ev => {
+      ev.preventDefault();
+      const open = wrap.children.length > 1;
+      if (open) wrap.lastChild.remove(); else wrap.append(miniMap(s.kind, s.id));
+      b.setAttribute("aria-expanded", !open);
+    });
+    row.append(b);
+  } else if (max != null) row.append(el("span"));
+  return wrap;
+}
+function chanceBar(c, max) {
+  const bar = el("span", { class: "cbar" + (c == null ? " unk" : ""), role: "img", "aria-label": c == null ? "機率未知" : pctText(c) });
+  if (c != null) { const f = el("i"); f.style.width = Math.max(2, Math.min(100, c / (max || 100) * 100)).toFixed(1) + "%"; bar.append(f); }
+  return bar;
+}
+// Rows for a list of sources with chances; the longest bar is the best source in the list.
+function chanceRows(title, rows, total) {
+  if (!rows.length) return [];
+  const max = Math.max(...rows.map(r => r.chance || 0), 0) || 100;
+  const out = [el("div", { class: "wsec", text: title + (total > rows.length ? `（機率最高的 ${rows.length} 個，共 ${total} 個）` : "") }), ...rows.map(r => srcRow(r, max))];
+  if (rows.every(r => r.chance == null)) out.push(el("div", { class: "small", text: "資料庫只知道這些來源會掉，沒有機率數字。" }));
+  return out;
+}
+const plainRows = (title, rows) => rows.length ? [el("div", { class: "wsec", text: title }), ...rows.map(r => srcRow(r, null))] : [];
+
+function questDetail(q) {
+  const out = [];
+  if (q.objective_text.length) out.push(el("div", { text: q.objective_text.join(" ") }));
+  out.push(...plainRows("交付給", q.finishers));
+  const same = q.finishers.length === q.starters.length && q.finishers.every((f, k) => f.kind === q.starters[k].kind && f.id === q.starters[k].id);
+  if (!same) out.push(...plainRows("起始於", q.starters));
+  const targets = q.objectives.filter(o => o.kind !== "item");
+  out.push(...plainRows("目標", targets));
+  for (const o of q.objectives.filter(o => o.kind === "item")) {
+    const src = list(o.dropped_by).slice(0, 4);
+    if (src.length) out.push(...chanceRows(`取得「${o.name || "#" + o.id}」`, src, src.length));
+    else out.push(el("div", { class: "wsec", text: `取得「${o.name || "#" + o.id}」` }), el("div", { class: "small", text: "資料庫沒有它的掉落來源。" }));
+  }
+  const rw = [];
+  if (q.rewards.xp) rw.push(`${q.rewards.xp.toLocaleString()} 經驗${q.rewards.xp_confirmed ? "" : "（經典版數值，Forever 可能更高）"}`);
+  if (q.rewards.items.length) rw.push((q.rewards.choice ? "擇一：" : "") + q.rewards.items.map(i => i.name || "#" + i.id).join("、"));
+  if (rw.length) out.push(line("獎勵", rw.join("；")));
+  if (q.next_quest) out.push(line("後續", q.next_quest.name || "#" + q.next_quest.id));
+  return out.length ? out : [el("div", { text: "世界資料庫沒有這個任務的細節。" })];
+}
+function npcDetail(n) {
+  const zones = [...new Set(n.spawns.map(s => s.zone).filter(Boolean))];
+  const out = [el("div", { text: [levelText(n) || "等級未知", RANK_NAME[n.rank], `出沒點 ${n.spawn_count} 處` + (zones.length ? `（${zones.join("、")}）` : "")].filter(Boolean).join(" · ") })];
+  if (n.spawn_count) {
+    const b = el("button", { class: "btn sm", type: "button", "aria-expanded": "false", text: "在地圖上看出沒點" });
+    const holder = el("div", null, b);
+    b.addEventListener("click", () => {
+      const open = holder.children.length > 1;
+      if (open) holder.lastChild.remove(); else holder.append(miniMap("npc", n.id));
+      b.setAttribute("aria-expanded", !open);
+    });
+    out.push(holder);
+  }
+  const drops = n.drops.filter(d => d.name).slice(0, 10);
+  if (drops.length) out.push(...chanceRows("掉落物", drops.map(d => ({ kind: "item", id: d.id, name: d.name, chance: d.chance, zones: [], location: null })), drops.length));
+  if (n.sells && n.sells.length) out.push(line("販售", n.sells.slice(0, 12).map(i => i.name || "#" + i.id).join("、") + (n.sells.length > 12 ? ` 等 ${n.sells.length} 種` : "")));
+  if (n.quest_starts.length) out.push(line("相關任務", n.quest_starts.slice(0, 5).map(q => q.name || "#" + q.id).join("、")));
+  return out;
+}
+
+// ctx: { inLog: Map(quest id -> quest in the log), skills: Map(profession name -> rank) }
+function itemDetail(it, ctx) {
+  const inLog = ctx && ctx.inLog || new Map(), skills = ctx && ctx.skills || new Map();
+  const out = [];
+  const head = [it.kind, it.level ? "物品等級 " + it.level : null, it.required_level ? "需要 " + it.required_level + " 級" : null].filter(Boolean);
+  if (head.length) out.push(el("div", { text: head.join(" · ") }));
+  if (it.needed_by.length) {
+    const mine = it.needed_by.filter(q => inLog.has(q.id));
+    out.push(line("任務需要", (mine.length ? mine : it.needed_by.slice(0, 5)).map(q => (q.name || "#" + q.id) + (inLog.has(q.id) ? "（你正在解）" : "")).join("、")
+      + (mine.length ? "" : "（都不在你的任務日誌裡）")));
+  }
+  out.push(...chanceRows("掉落來源", it.dropped_by.slice(0, 8), it.dropped_by_total || it.dropped_by.length));
+  out.push(...plainRows("販售商人", it.sold_by.slice(0, 6)));
+  const can = r => skills.has(r.skill) ? (skills.get(r.skill) >= (r.learn || 0) ? "✓ " : "") : "";
+  if (it.reagent_for.length) {
+    out.push(line("可以做成", it.reagent_for.slice(0, 8).map(r => `${can(r)}${r.name || "#" + r.spell_id}（${r.skill || "專業"} ${r.learn ?? "?"}，用 ${r.uses} 個）`).join("、")
+      + (it.reagent_for_total > 8 ? ` 等 ${it.reagent_for_total} 種` : "")));
+    if (it.reagent_for.some(r => can(r))) out.push(el("div", { text: "✓ 代表你目前的專業等級已經學得到。" }));
+  }
+  for (const r of it.crafted_by.slice(0, 2)) {
+    out.push(line("製作方式", `${r.skill || "專業"} ${r.learn ?? "?"}` + (r.makes > 1 ? `（一次 ${r.makes} 個）` : "") + "："
+      + r.reagents.map(x => `${x.name || "#" + x.id} ×${x.count}`).join("、")
+      + ({ trainer: "　向訓練師學", recipe: "　需要配方", quest: "　任務獎勵", auto: "" }[r.source] || "")));
+  }
+  if (it.reward_of.length) out.push(line("任務獎勵", it.reward_of.slice(0, 6).map(q => q.name || "#" + q.id).join("、")));
+  if (it.starts_quest) out.push(line("開啟任務", it.starts_quest.name || "#" + it.starts_quest.id));
+  return out.length ? out : [el("div", { text: "世界資料庫沒有這件物品的來源。" })];
+}
+function searchCard() {
+  const input = el("input", { class: "search", type: "search", placeholder: "搜尋任務、怪物、NPC、物品（中英文皆可）", "aria-label": "搜尋世界資料" });
+  input.value = W.q || "";
+  const out = el("ul", { class: "rows" });
+  const hint = text => out.replaceChildren(el("li", null, el("span", { class: "detail", text })));
+  let timer;
+  const run = async () => {
+    const q = input.value.trim();
+    W.q = q;
+    if (q.length < 2) return hint("輸入至少兩個字，例如「野豬」「亞麻」「迪菲亞」。");
+    const enc = encodeURIComponent(q);
+    try {
+      const [qs, ns, is] = await Promise.all([get(`/world/quests?q=${enc}&limit=8`), get(`/world/npcs?q=${enc}&limit=8`), get(`/world/items?q=${enc}&limit=8`)]);
+      if (input.value.trim() !== q) return;                       // a newer search is on its way
+      const rows = [];
+      const add = (tag, res, key, path, render, note) => res.items.forEach(r => rows.push(el("li", null,
+        expandable(key + r.id, [el("span", { class: "tag", text: tag }), el("span", { class: "grow wname", text: r.name || "#" + r.id }),
+          el("span", { class: "num", text: note(r) })], path + r.id, render))));
+      add("任務", qs, "sq", "/world/quests/", questDetail, r => r.level > 0 ? r.level + " 級" : "");
+      add("NPC", ns, "sn", "/world/npcs/", npcDetail, r => [r.title, r.min_level ? r.min_level + " 級" : null].filter(Boolean).join(" · "));
+      add("物品", is, "si", "/world/items/", itemDetail, r => r.required_level ? "需 " + r.required_level + " 級" : "");
+      if (!rows.length) return hint("找不到符合的資料。");
+      out.replaceChildren(...rows);
+      const more = [qs, ns, is].some(r => r.total > r.items.length);
+      if (more) out.append(el("li", null, el("span", { class: "detail", text: `每類最多顯示 8 筆（任務 ${qs.total}、NPC ${ns.total}、物品 ${is.total}），可以再打多一點字縮小範圍。` })));
+    } catch (e) { hint("搜尋失敗：" + e.message); }
+  };
+  input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(run, 300); });
+  run();
+  return el("section", { class: "card c-full" }, el("div", { class: "cardhead" }, el("h2", { text: "世界資料搜尋" }),
+    el("span", { class: "small", text: "點結果看出處、掉落與座標" })), input, out);
+}
+
+// A full-screen viewer for a list of pictures; srcOf(item) resolves to an image address.
+function lightbox(items, index, srcOf, captionOf) {
+  const img = el("img", { alt: "" }), cap = el("div", { class: "cap" });
+  const prev = el("button", { type: "button", text: "‹ 上一張" }), next = el("button", { type: "button", text: "下一張 ›" }), close = el("button", { type: "button", text: "關閉" });
+  const box = el("div", { class: "lightbox", role: "dialog", "aria-label": "截圖" }, img, cap, el("div", { class: "bar" }, prev, close, next));
+  const show = async k => {
+    index = (k + items.length) % items.length;
+    cap.textContent = captionOf(items[index]) + `　（${index + 1} / ${items.length}）`;
+    img.style.opacity = ".4";
+    const src = await srcOf(items[index]);
+    if (src) img.src = src;
+    img.style.opacity = "1";
+  };
+  const done = () => { box.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = e => { if (e.key === "Escape") done(); else if (e.key === "ArrowLeft") show(index - 1); else if (e.key === "ArrowRight") show(index + 1); };
+  prev.addEventListener("click", e => { e.stopPropagation(); show(index - 1); });
+  next.addEventListener("click", e => { e.stopPropagation(); show(index + 1); });
+  close.addEventListener("click", done);
+  box.addEventListener("click", e => { if (e.target === box) done(); });
+  document.addEventListener("keydown", onKey);
+  prev.hidden = next.hidden = items.length < 2;
+  document.body.append(box);
+  show(index);
+}
+// Pictures need the token too, so they are fetched and handed to <img> as object addresses.
+const pictureCache = new Map();
+function picture(path) {
+  if (!pictureCache.has(path)) {
+    pictureCache.set(path, fetch(API + path, { headers: { Authorization: "Bearer " + token } })
+      .then(r => r.ok ? r.blob() : Promise.reject(new Error("HTTP " + r.status))).then(b => URL.createObjectURL(b)).catch(() => null));
+  }
+  return pictureCache.get(path);
+}
+const shotCaption = s => [new Date(s.taken_at).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }),
+  s.place && s.place.zone ? `${s.place.zone} ${s.place.x.toFixed(0)}, ${s.place.y.toFixed(0)}` : null, s.moment].filter(Boolean).join("　");
+
+function pbar(frac, cls) {
+  const f = Math.min(1, Math.max(0, frac || 0));
+  const bar = el("span", { class: "pbar" + (cls ? " " + cls : ""), role: "img", "aria-label": Math.round(f * 100) + "%" });
+  const fill = el("i"); fill.style.width = (f * 100).toFixed(1) + "%";
+  bar.append(fill);
+  return bar;
+}
+const shortMoney = c => c >= 10000 ? (c / 10000).toFixed(c >= 1000000 ? 0 : 1) + " 金" : c >= 100 ? Math.floor(c / 100) + " 銀" : c + " 銅";
+const shortDuration = s => s >= 3600 ? (s / 3600).toFixed(1) + " 小時" : Math.round(s / 60) + " 分";
+
+// XP per hour over the last 30 minutes of the most recent grinding stretch (needs 5+ minutes).
+function xpRate(points) {
+  if (points.length < 2) return null;
+  const pts = points.map(([t, a]) => [new Date(t).getTime(), a]);
+  const end = pts[pts.length - 1][0];
+  let k = pts.length - 1;
+  while (k > 0 && end - pts[k - 1][0] <= 1800000 && pts[k][0] - pts[k - 1][0] <= 300000) k--;
+  const span = end - pts[k][0];
+  if (span < 300000) return null;
+  const gained = pts.slice(k + 1).reduce((s, p) => s + p[1], 0);
+  return gained / (span / 3600000);
+}
+
+// Cumulative XP as a step line; long breaks stay flat.
+function drawXp(canvas, points) {
+  const css = getComputedStyle(document.documentElement);
+  const ink = css.getPropertyValue("--muted").trim(), line = css.getPropertyValue("--line").trim();
+  const accent = css.getPropertyValue("--accent").trim();
+  const dpr = window.devicePixelRatio || 1, W = canvas.clientWidth, H = canvas.clientHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  const g = canvas.getContext("2d");
+  g.scale(dpr, dpr);
+  g.font = "11px sans-serif"; g.fillStyle = ink;
+  if (!points.length) {
+    g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("這段期間沒有獲得經驗", W / 2, H / 2);
+    return;
+  }
+  const pts = points.map(([t, a]) => [new Date(t).getTime(), a]);
+  const t0 = pts[0][0] - 60000, t1 = Math.max(pts[pts.length - 1][0], t0 + 120000);
+  const total = pts.reduce((s, p) => s + p[1], 0);
+  const L = 8, Rr = 8, T = 16, B = 20;
+  const X = t => L + (t - t0) / (t1 - t0) * (W - L - Rr), Y = v => T + (1 - v / total) * (H - T - B);
+  g.strokeStyle = line; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(L, Y(0)); g.lineTo(W - Rr, Y(0)); g.stroke();
+  g.beginPath(); g.moveTo(X(t0), Y(0));
+  let sum = 0;
+  for (const [t, a] of pts) { g.lineTo(X(t), Y(sum)); sum += a; g.lineTo(X(t), Y(sum)); }
+  g.lineTo(X(t1), Y(sum));
+  g.strokeStyle = accent; g.lineWidth = 2; g.lineJoin = "round"; g.stroke();
+  g.lineTo(X(t1), Y(0)); g.closePath(); g.globalAlpha = 0.12; g.fillStyle = accent; g.fill(); g.globalAlpha = 1;
+  g.fillStyle = ink; g.textBaseline = "top";
+  const fmt = t => new Date(t).toLocaleString("zh-TW", t1 - t0 > 86400000
+    ? { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }
+    : { hour: "2-digit", minute: "2-digit", hour12: false });
+  g.textAlign = "left"; g.fillText(fmt(pts[0][0]), L, H - B + 5);
+  g.textAlign = "right"; g.fillText(fmt(t1), W - Rr, H - B + 5);
+  g.textBaseline = "bottom"; g.fillText("+" + total.toLocaleString(), W - Rr, Y(total) - 2);
+}
+
+function describe(e) {
+  const p = e.payload || {};
+  const where = [p.zone_name, pos(p) !== "—" ? pos(p) : null].filter(Boolean).join("  ");
+  if (e.event_type === "LEVEL_UP") return "升到 " + p.level + " 級";
+  const at = where ? "　" + where : "";
+  if (e.event_type.startsWith("QUEST_")) return (p.quest_name || "任務 #" + p.quest_id)
+    + (e.event_type === "QUEST_REMOVED" ? "（放棄或失敗）" : "") + at;
+  if (e.event_type === "ITEM_LOOTED") return (p.item_name || "物品 #" + p.item_id) + (p.count > 1 ? " ×" + p.count : "") + at;
+  if (e.event_type === "MOB_KILLED") return (p.monster_name || "怪物 #" + p.monster_id) + (p.killed_by ? `（${p.killed_by} 擊殺）` : "") + at;
+  if (e.event_type === "PARTY_LOOT") return `${p.looter || "隊友"}：${p.item_name || "物品 #" + p.item_id}` + (p.count > 1 ? " ×" + p.count : "");
+  if (e.event_type === "PARTY_MEMBER_DIED") return (p.name || "隊友") + at;
+  if (e.event_type === "GROUP_MEMBER_LEVEL_UP") return `${p.name || "隊友"} 升到 ${p.level} 級`;
+  if (e.event_type === "PARTY_POSITIONS") return Object.keys(p.members || {}).join("、");
+  if (e.event_type === "GROUP_METER") return "傷害 " + Object.values(p.damage || {}).reduce((a, b) => a + b, 0).toLocaleString();
+  if (e.event_type === "GROUP_JOINED") return "和 " + (list(p.members).map(m => m.name).join("、") || "隊友") + at;
+  if (e.event_type === "GROUP_MEMBER_JOINED" && p.update) return `${p.name || ""}（等級確認為 ${p.level}）`;
+  if (e.event_type === "GROUP_MEMBER_JOINED" || e.event_type === "GROUP_MEMBER_LEFT") return p.name || "";
+  if (e.event_type === "GROUP_LEFT") return "持續 " + duration(p.duration || 0);
+  if (e.event_type === "MONEY_CHANGED") return (p.delta > 0 ? "+" : "−") + money(Math.abs(p.delta)) + "（餘 " + money(p.total) + "）";
+  if (e.event_type === "XP_GAINED") return "+" + p.amount + " 經驗" + at;
+  if (e.event_type === "SKILL_UP") return p.text || "";
+  if (e.event_type === "COMBAT") return "持續 " + duration(p.duration || 0) + at;
+  if (e.event_type === "INSTANCE_ENTERED" || e.event_type === "INSTANCE_LEFT") return (p.name || "副本 " + p.instance_id) + (p.difficulty ? "（" + p.difficulty + "）" : "");
+  if (e.event_type === "ENCOUNTER_END") return (p.name || "首領 " + p.encounter_id) + (p.success ? "　擊敗" : "　失敗");
+  if (e.event_type === "NPC_INTERACTION") return (NPC_KIND[p.kind] || p.kind) + (p.npc_name ? "：" + p.npc_name : "") + at;
+  if (e.event_type === "ACHIEVEMENT_EARNED") return p.name || "成就 #" + p.achievement_id;
+  if (e.event_type === "FLIGHT_STARTED" || e.event_type === "FLIGHT_ENDED") return where || "";
+  if (e.event_type === "CHAT_MESSAGE") return `[${CHANNEL[p.channel_type] || p.channel_type}] ${p.sender || ""}：${p.message || ""}`;
+  if (e.event_type === "MAP_SCREENSHOT") return (p.map_name || "地圖 " + p.map_id);
+  if (e.event_type === "PLAYER_DIED") return (where || "位置不明");
+  if (e.event_type === "SESSION_START") return "等級 " + (p.level ?? "—") + "，插件 " + (p.addon_version ?? "—");
+  return where || JSON.stringify(p);
+}
+
+const imageCache = new Map();
+function mapImage(id) {
+  const meta = state.maps[id];
+  if (!meta) return Promise.resolve(null);
+  const key = id + ":" + meta.updated_at;
+  if (!imageCache.has(key)) {
+    imageCache.set(key, fetch(`${API}/maps/${id}/image`, { headers: { Authorization: "Bearer " + token } })
+      .then(r => r.ok ? r.blob() : Promise.reject(new Error("HTTP " + r.status)))
+      .then(blob => new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("bad image"));
+        img.src = URL.createObjectURL(blob);
+      }))
+      .catch(() => null));
+  }
+  return imageCache.get(key);
+}
+
+// ---- route view -------------------------------------------------------------
+const R = { mode: "fit", view: "journey", span: null, playing: false, p: 1, markers: new Map() };
+const GAP = 300000;          // a pause longer than this breaks the line (logout, hearth, other map)
+const OLD = [57, 208, 255], FRESH = [255, 77, 141];
+const mix = t => `rgb(${OLD.map((c, k) => Math.round(c + (FRESH[k] - c) * t)).join(",")})`;
+
+// Cumulative path length (map art is 3:2, so x counts 1.5x) with gaps contributing nothing.
+function buildModel(pts) {
+  const cum = [0], gap = [false];
+  for (let k = 1; k < pts.length; k++) {
+    const g = pts[k].t - pts[k - 1].t > GAP;
+    gap.push(g);
+    cum.push(cum[k - 1] + (g ? 0 : Math.hypot((pts[k].x - pts[k - 1].x) * 1.5, pts[k].y - pts[k - 1].y)));
+  }
+  return { pts, cum, gap, total: cum[cum.length - 1] || 0 };
+}
+
+// A square window in map percent units has the map's own aspect ratio.
+function computeView(pts, mode) {
+  if (mode === "full" || !pts.length) return { x0: 0, y0: 0, span: 100 };
+  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+  const span = Math.min(100, Math.max(18, Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * 1.4));
+  const lo = c => Math.min(Math.max(c - span / 2, 0), 100 - span);
+  return { x0: lo((Math.max(...xs) + Math.min(...xs)) / 2), y0: lo((Math.max(...ys) + Math.min(...ys)) / 2), span };
+}
+
+function mapMarkers(id) {
+  const key = state.charId + ":" + id;
+  if (!R.markers.has(key)) {
+    R.markers.set(key, get(`/events?character_id=${encodeURIComponent(state.charId)}&map_id=${id}&exclude_type=LOCATION_SAMPLE,PARTY_POSITIONS,GROUP_METER,GROUP_ENCOUNTER,PARTY_LOOT&limit=1000`)
+      .then(r => r.items.map(e => ({ t: new Date(e.timestamp).getTime(), x: e.payload.x, y: e.payload.y, type: e.event_type }))
+        .filter(m => typeof m.x === "number" && typeof m.y === "number"
+          && ["MOB_KILLED", "PLAYER_DIED", "QUEST_ACCEPTED", "QUEST_COMPLETED"].includes(m.type)))
+      .catch(() => []));
+  }
+  return R.markers.get(key);
+}
+
+function drawRoute(canvas, model, img, view, d, marks, hover, heat) {
+  const css = getComputedStyle(document.documentElement);
+  const ink = css.getPropertyValue("--muted").trim(), line = css.getPropertyValue("--line").trim();
+  const ratio = img ? img.naturalHeight / img.naturalWidth : 2 / 3;
+  canvas.style.aspectRatio = `1 / ${ratio}`;
+  const dpr = window.devicePixelRatio || 1, W = canvas.clientWidth, H = W * ratio;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  const g = canvas.getContext("2d");
+  g.scale(dpr, dpr);
+  g.clearRect(0, 0, W, H);
+  const X = v => (v - view.x0) / view.span * W, Y = v => (v - view.y0) / view.span * H;
+  if (img) {
+    const iw = img.naturalWidth, ih = img.naturalHeight;
+    g.imageSmoothingQuality = "high";
+    g.drawImage(img, view.x0 / 100 * iw, view.y0 / 100 * ih, view.span / 100 * iw, view.span / 100 * ih, 0, 0, W, H);
+    g.fillStyle = "rgba(0,0,0,.22)"; g.fillRect(0, 0, W, H);       // dim the art so the route stands out
+  } else {
+    g.font = "11px sans-serif"; g.fillStyle = ink; g.strokeStyle = line; g.lineWidth = 1;
+    const step = view.span > 50 ? 20 : view.span > 20 ? 10 : 5;
+    for (let v = Math.ceil(view.x0 / step) * step; v <= view.x0 + view.span; v += step) {
+      g.beginPath(); g.moveTo(X(v), 0); g.lineTo(X(v), H); g.stroke();
+      g.textAlign = "left"; g.textBaseline = "top"; g.fillText(v, X(v) + 3, 3);
+    }
+    for (let v = Math.ceil(view.y0 / step) * step; v <= view.y0 + view.span; v += step) {
+      g.beginPath(); g.moveTo(0, Y(v)); g.lineTo(W, Y(v)); g.stroke();
+      g.textAlign = "left"; g.textBaseline = "bottom"; g.fillText(v, 3, Y(v) - 2);
+    }
+  }
+  const { pts, cum, gap, total } = model;
+  if (!pts.length) return;
+
+  // How far along the path we are: n = last point fully reached, head = interpolated position.
+  let n = 0;
+  while (n + 1 < pts.length && cum[n + 1] <= d) n++;
+  let head = pts[n];
+  if (n + 1 < pts.length && d > cum[n] && cum[n + 1] > cum[n]) {
+    const f = (d - cum[n]) / (cum[n + 1] - cum[n]), a = pts[n], b = pts[n + 1];
+    head = { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, t: a.t + (b.t - a.t) * f };
+  }
+  const segs = [];
+  for (let k = 1; k <= n; k++) if (!gap[k]) segs.push([pts[k - 1], pts[k], cum[k]]);
+  if (head !== pts[n]) segs.push([pts[n], head, d]);
+
+  if (heat) {                      // heat layer: overlapping blobs add up where more time or kills pile up
+    const maxW = Math.max(...heat.map(h => h.w), 1), r = Math.max(16, W / 20);
+    for (const h of heat) {
+      const cx = X(h.x), cy = Y(h.y), a = 0.12 + 0.4 * h.w / maxW;
+      const grad = g.createRadialGradient(cx, cy, 0, cx, cy, r);
+      grad.addColorStop(0, `rgba(255,60,20,${a})`);
+      grad.addColorStop(0.6, `rgba(255,170,0,${a * 0.5})`);
+      grad.addColorStop(1, "rgba(255,200,0,0)");
+      g.fillStyle = grad; g.beginPath(); g.arc(cx, cy, r, 0, 7); g.fill();
+    }
+    return;
+  }
+  g.lineJoin = "round"; g.lineCap = "round";
+  g.strokeStyle = "rgba(0,0,0,.7)"; g.lineWidth = 7;
+  for (const [a, b] of segs) { g.beginPath(); g.moveTo(X(a.x), Y(a.y)); g.lineTo(X(b.x), Y(b.y)); g.stroke(); }
+  g.lineWidth = 3.5;
+  for (const [a, b, c] of segs) {
+    g.strokeStyle = mix(total ? c / total : 1);
+    g.beginPath(); g.moveTo(X(a.x), Y(a.y)); g.lineTo(X(b.x), Y(b.y)); g.stroke();
+  }
+  // Direction arrows roughly every 70px along the path.
+  let run = 35;
+  for (const [a, b] of segs) {
+    const ax = X(a.x), ay = Y(a.y), bx = X(b.x), by = Y(b.y), len = Math.hypot(bx - ax, by - ay);
+    run += len;
+    if (run < 70 || len < 10) continue;
+    run = 0;
+    const ang = Math.atan2(by - ay, bx - ax);
+    g.save(); g.translate((ax + bx) / 2, (ay + by) / 2); g.rotate(ang);
+    g.beginPath(); g.moveTo(7, 0); g.lineTo(-5, -5.5); g.lineTo(-5, 5.5); g.closePath();
+    g.fillStyle = "#fff"; g.strokeStyle = "rgba(0,0,0,.8)"; g.lineWidth = 1.5; g.fill(); g.stroke();
+    g.restore();
+  }
+  // Things that happened along the way (only those already reached during playback).
+  g.textAlign = "center"; g.textBaseline = "middle"; g.lineWidth = 3; g.strokeStyle = "rgba(0,0,0,.85)";
+  for (const m of marks) {
+    if (m.t > head.t + 1000 || m.t < pts[0].t - 1000) continue;
+    const [glyph, color, size] = m.type === "MOB_KILLED" ? ["✕", "#ff6b6b", 12]
+      : m.type === "PLAYER_DIED" ? ["☠", "#fff", 18] : ["!", "#ffe066", 16];
+    g.font = `bold ${size}px sans-serif`;
+    g.strokeText(glyph, X(m.x), Y(m.y)); g.fillStyle = color; g.fillText(glyph, X(m.x), Y(m.y));
+  }
+  const dot = (p, r, fill) => {
+    g.beginPath(); g.arc(X(p.x), Y(p.y), r, 0, 7); g.fillStyle = fill; g.fill();
+    g.lineWidth = 2; g.strokeStyle = "#fff"; g.stroke();
+  };
+  dot(pts[0], 4.5, "rgb(" + OLD.join(",") + ")");
+  dot(head, 7, "rgb(" + FRESH.join(",") + ")");
+  if (hover) { g.beginPath(); g.arc(X(hover.x), Y(hover.y), 9, 0, 7); g.lineWidth = 2; g.strokeStyle = "#fff"; g.stroke(); }
+  if (d < total) {                                               // clock while playing or scrubbing
+    const label = full(new Date(head.t).toISOString());
+    g.font = "12px sans-serif"; g.textAlign = "left"; g.textBaseline = "middle";
+    const tw = g.measureText(label).width;
+    g.fillStyle = "rgba(0,0,0,.7)"; g.fillRect(8, 8, tw + 16, 24);
+    g.fillStyle = "#fff"; g.fillText(label, 16, 20);
+  }
+}
+
+// Quest pins from the world database: "?" where a quest is handed in, dots where its targets spawn.
+function drawPins(canvas, view, pins, hot) {
+  const g = canvas.getContext("2d"), box = canvas.getBoundingClientRect();
+  const X = v => (v - view.x0) / view.span * box.width, Y = v => (v - view.y0) / view.span * box.height;
+  const inside = p => p.x >= view.x0 && p.x <= view.x0 + view.span && p.y >= view.y0 && p.y <= view.y0 + view.span;
+  for (const p of pins) {
+    if (p.role !== "target" || !inside(p)) continue;
+    g.beginPath(); g.arc(X(p.x), Y(p.y), p === hot ? 6 : 3.5, 0, 7);
+    g.fillStyle = p === hot ? "rgb(255,170,40)" : "rgba(255,170,40,.75)"; g.fill(); g.lineWidth = 1; g.strokeStyle = "rgba(0,0,0,.7)"; g.stroke();
+  }
+  g.font = "bold 13px sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
+  for (const p of pins) {
+    if (p.role !== "turn_in" || !inside(p)) continue;
+    g.beginPath(); g.arc(X(p.x), Y(p.y), p === hot ? 12 : 9.5, 0, 7);
+    g.fillStyle = p.complete ? "#ffd43b" : "#adb5bd"; g.fill(); g.lineWidth = 2; g.strokeStyle = "rgba(0,0,0,.85)"; g.stroke();
+    g.fillStyle = "#1a1a1a"; g.fillText("?", X(p.x), Y(p.y) + 1);
+  }
+}
+const pinText = p => p.role === "turn_in"
+  ? `${p.complete ? "可交付" : "交付點"}「${p.title}」：${p.name}（${p.x.toFixed(0)}, ${p.y.toFixed(0)}）`
+  : `「${p.title}」目標：${p.name}${p.note ? "（掉落 " + p.note + "）" : ""}（${p.x.toFixed(0)}, ${p.y.toFixed(0)}）`;
+
+function renderMap(card) {
+  const all = [], zoneCount = new Map();
+  for (const e of state.locs) {
+    const p = e.payload;
+    if (typeof p.x !== "number" || typeof p.y !== "number" || p.map_id == null) continue;
+    all.push({ x: p.x, y: p.y, t: new Date(e.timestamp).getTime(), map: p.map_id });
+    if (p.zone_name) { const m = zoneCount.get(p.map_id) || {}; m[p.zone_name] = (m[p.zone_name] || 0) + 1; zoneCount.set(p.map_id, m); }
+  }
+  all.sort((a, b) => a.t - b.t);
+  if (!all.length) { card.append(el("div", { class: "msg", text: "還沒有位置紀錄" })); return; }
+  // Sub-zone names share the map id; the name seen most often is the zone itself.
+  // On a boat or a flight the game reports the continent map, still carrying the last zone's name.
+  const CONTINENT = { 1414: "卡林多（移動中）", 1415: "東部王國（移動中）" };
+  const nameOf = id => { const m = zoneCount.get(id); return CONTINENT[id] || (m ? Object.entries(m).sort((a, b) => b[1] - a[1])[0][0] : "地圖 " + id); };
+  const stamp = t => full(new Date(t).toISOString());
+  const forInput = t => new Date(t - new Date(t).getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+
+  // ---- controls: the time range comes first, then how to look at it
+  const spanSel = el("select", { "aria-label": "時間範圍" }, ...[["today", "今天"], ["session", "最近一次連續遊玩"], ["1h", "最後 1 小時"],
+    ["3h", "最後 3 小時"], ["all", "全部紀錄"], ["custom", "自訂起訖時間"]].map(([v, t]) => el("option", { value: v, text: t })));
+  if (!R.span) R.span = all.some(p => p.t >= new Date().setHours(0, 0, 0, 0)) ? "today" : "session";
+  spanSel.value = R.span;
+  const fromIn = el("input", { type: "datetime-local", "aria-label": "開始時間" }), toIn = el("input", { type: "datetime-local", "aria-label": "結束時間" });
+  const custom = el("div", { class: "mapctl timerange" }, el("span", { class: "small", text: "從" }), fromIn, el("span", { class: "small", text: "到" }), toIn);
+  const mapSel = el("select", { "aria-label": "檢視方式" });
+  const legbar = el("div", { class: "legbar", role: "group", "aria-label": "旅程分段" });
+  const canvas = el("canvas", { role: "img", "aria-label": "移動路線圖" });
+  const play = el("button", { class: "btn", type: "button", text: "▶ 播放" });
+  const slider = el("input", { type: "range", min: 0, max: 1000, value: 1000, "aria-label": "時間軸" });
+  const zoom = el("button", { class: "btn", type: "button" });
+  const info = el("div", { class: "legend" }), legend = el("div", { class: "legend" });
+  const pinBtn = el("button", { class: "btn", type: "button" });
+  const layer = el("select", { "aria-label": "圖層" }, el("option", { value: "route", text: "路線" }),
+    el("option", { value: "stay", text: "停留熱區" }), el("option", { value: "kills", text: "擊殺熱區" }));
+  layer.value = R.layer || "route";
+
+  // pts: samples in the time range. segs: what the timeline runs through, in order: one
+  // per stretch on a single map (journey), or just one map's samples. cur: the one shown.
+  let pts = [], legs = [], segs = [], cur = null, total = 1, ticket = 0;
+  let model = buildModel([]), view = computeView([], "full"), img = null, marks = [], hover = null, hotPin = null, baseInfo = "", noImage = "";
+  const mapPins = () => R.pins === false ? [] : state.pins.filter(p => p.map_id === state.mapId);
+  const setPinBtn = () => { pinBtn.textContent = R.pins === false ? "任務點：關" : "任務點：開"; pinBtn.hidden = !state.pins.length; };
+  setPinBtn();
+
+  const bounds = () => {
+    const last = all[all.length - 1].t;
+    if (R.span === "1h") return [last - 3600e3, last];
+    if (R.span === "3h") return [last - 3 * 3600e3, last];
+    if (R.span === "today") return [new Date().setHours(0, 0, 0, 0), Infinity];
+    if (R.span === "session") {                       // back to the last break of over 30 minutes
+      let k = all.length - 1;
+      while (k > 0 && all[k].t - all[k - 1].t <= 1800e3) k--;
+      return [all[k].t, last];
+    }
+    if (R.span === "custom") return [R.cFrom ? new Date(R.cFrom).getTime() : -Infinity, R.cTo ? new Date(R.cTo).getTime() + 59999 : Infinity];
+    return [-Infinity, Infinity];
+  };
+  const recompute = () => {
+    const [a, b] = bounds();
+    pts = all.filter(p => p.t >= a && p.t <= b);
+    legs = [];
+    for (const p of pts) {
+      let l = legs[legs.length - 1];
+      if (!l || l.map !== p.map) { l = { map: p.map, pts: [] }; legs.push(l); }
+      l.pts.push(p);
+    }
+    // A single sample on a map is usually the world map at login or mid-flight, not a place visited.
+    if (legs.some(l => l.pts.length > 1)) legs = legs.filter(l => l.pts.length > 1);
+    legs = legs.reduce((out, l) => {                  // rejoin stretches the filter made adjacent
+      const prev = out[out.length - 1];
+      if (prev && prev.map === l.map) prev.pts.push(...l.pts); else out.push(l);
+      return out;
+    }, []);
+    for (const l of legs) l.name = nameOf(l.map);
+    const counts = new Map();
+    for (const p of pts) counts.set(p.map, (counts.get(p.map) || 0) + 1);
+    if (R.view !== "journey" && !counts.has(Number(R.view))) R.view = "journey";
+    mapSel.replaceChildren(el("option", { value: "journey", text: `旅程：依時間自動換地圖（${legs.length} 段）` }),
+      ...[...counts].sort((x, y) => y[1] - x[1]).map(([id, n]) => el("option", { value: id, text: `只看 ${nameOf(id)} · ${n} 點${state.maps[id] ? "" : " · 無底圖"}` })));
+    mapSel.value = R.view;
+    segs = R.view === "journey" ? legs : [{ map: Number(R.view), name: nameOf(Number(R.view)), pts: pts.filter(p => p.map === Number(R.view)) }];
+    // Each stretch plays for a time that follows its length; the whole range stays under a minute.
+    for (const sg of segs) sg.dur = Math.min(12000, Math.max(segs.length > 1 ? 2000 : 5000, sg.pts.length * 150));
+    const sum = segs.reduce((n, sg) => n + sg.dur, 0), scale = Math.min(1, 60000 / (sum || 1));
+    let off = 0;
+    for (const sg of segs) { sg.dur *= scale; sg.off = off; off += sg.dur; }
+    total = off || 1;
+    legbar.replaceChildren();
+    legbar.hidden = !(R.view === "journey" && legs.length > 1);
+    legs.forEach((l, k) => {
+      const b = el("button", { class: "chip", type: "button", title: `${stamp(l.pts[0].t)} → ${stamp(l.pts[l.pts.length - 1].t)}` },
+        el("b", { text: hm(new Date(l.pts[0].t).toISOString()) }), l.name);
+      l.chip = b;
+      b.addEventListener("click", () => { stop(); R.p = 1; show(l, true).then(syncSlider); });
+      legbar.append(el("span", { class: "arrow", text: k ? "→" : "旅程" }), b);
+    });
+    custom.hidden = R.span !== "custom";
+    if (R.span === "custom") {
+      fromIn.value = R.cFrom || forInput((pts[0] || all[0]).t);
+      toIn.value = R.cTo || forInput((pts[pts.length - 1] || all[all.length - 1]).t);
+    }
+  };
+
+  const heatData = () => {
+    if (layer.value === "kills") {
+      const from = model.pts.length ? model.pts[0].t - 1000 : 0, to = model.pts.length ? model.pts[model.pts.length - 1].t + 1000 : 0;
+      return marks.filter(m => m.type === "MOB_KILLED" && m.t >= from && m.t <= to).map(m => ({ x: m.x, y: m.y, w: 1 }));
+    }
+    if (layer.value === "stay") {    // each sample is weighted by the time until the next one (max 2 min)
+      const out = [];
+      for (let k = 1; k < model.pts.length; k++) {
+        if (!model.gap[k]) out.push({ x: model.pts[k - 1].x, y: model.pts[k - 1].y, w: Math.min((model.pts[k].t - model.pts[k - 1].t) / 1000, 120) });
+      }
+      return out;
+    }
+    return null;
+  };
+  const setLegend = () => {
+    play.hidden = slider.hidden = layer.value !== "route";
+    legend.textContent = (layer.value === "route" ? "線條由藍（舊）到粉紅（新），白色箭頭是行進方向；✕ 擊殺　! 任務　☠ 死亡。"
+      : layer.value === "stay" ? "顏色越紅代表在那裡停留越久。" : "顏色越紅代表在那裡擊殺越多。")
+      + (mapPins().length ? "　？ 是任務交付點（黃色代表可以交了），橘點是任務目標的出沒處，點一下看是哪個任務。" : "") + noImage;
+  };
+  const paint = () => {
+    if (!canvas.clientWidth) return;                 // on a hidden tab; repainted when it is shown
+    drawRoute(canvas, model, img, view, R.p * model.total, marks, hover, heatData());
+    drawPins(canvas, view, mapPins(), hotPin);
+  };
+  const pinAt = ev => {
+    const box = canvas.getBoundingClientRect(), mx = ev.clientX - box.left, my = ev.clientY - box.top;
+    let best = null, bestD = 16;
+    for (const p of mapPins()) {
+      const dd = Math.hypot((p.x - view.x0) / view.span * box.width - mx, (p.y - view.y0) / view.span * box.height - my)
+        - (p.role === "turn_in" ? 6 : 0);            // hand-in pins are bigger and win ties
+      if (dd < bestD) { best = p; bestD = dd; }
+    }
+    return best;
+  };
+  const stop = () => { R.playing = false; play.textContent = "▶ 播放"; };
+  // Where the whole timeline stands (0..1), and the stretch plus position for a point on it.
+  const progress = () => cur ? (cur.off + R.p * cur.dur) / total : 1;
+  const locate = g => {
+    const ms = Math.min(Math.max(g, 0), 1) * total;
+    let k = segs.length - 1;
+    while (k > 0 && segs[k].off > ms) k--;
+    return [segs[k], Math.min(1, Math.max(0, (ms - segs[k].off) / segs[k].dur))];
+  };
+  const syncSlider = () => { slider.value = Math.round(progress() * 1000); };
+
+  // Put one stretch on screen (its map, its part of the route). R.p says how far along it.
+  const show = async (sg, keepP) => {
+    const my = ++ticket;
+    cur = sg;
+    if (!sg || !sg.pts.length) {
+      model = buildModel([]); img = null; marks = [];
+      info.textContent = "這段時間沒有位置紀錄，換一個時間範圍試試。"; baseInfo = info.textContent;
+      paint(); return false;
+    }
+    state.mapId = sg.map;
+    for (const l of legs) if (l.chip) l.chip.setAttribute("aria-pressed", l === sg);
+    if (sg.chip) sg.chip.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const [image, events] = await Promise.all([mapImage(sg.map), mapMarkers(sg.map)]);
+    if (my !== ticket || !canvas.isConnected) return false;       // something newer was asked for meanwhile
+    img = image; marks = events; model = buildModel(sg.pts); view = computeView(sg.pts, R.mode);
+    if (!keepP) R.p = 1;
+    zoom.textContent = R.mode === "fit" ? "顯示整張地圖" : "聚焦路線";
+    const n = segs.indexOf(sg);
+    baseInfo = (segs.length > 1 ? `第 ${n + 1} / ${segs.length} 段：` : "") + `${sg.name}　${stamp(sg.pts[0].t)} → ${stamp(sg.pts[sg.pts.length - 1].t)}　共 ${sg.pts.length} 個位置點`
+      + (segs.length > 1 ? `　整段區間 ${stamp(pts[0].t)} → ${stamp(pts[pts.length - 1].t)}，播放時會自動換地圖。` : "");
+    info.textContent = baseInfo;
+    noImage = img ? "" : "　這張地圖還沒有底圖：在遊戲內輸入 /adventure mapshot 可以加上。";
+    setLegend();
+    paint();
+    return true;
+  };
+  const rebuild = async () => {                       // the range or the way of looking changed
+    stop();
+    recompute();
+    R.p = 1;
+    await show(segs[segs.length - 1] || null, true);  // rest on the newest position
+    syncSlider();
+  };
+
+  play.addEventListener("click", () => {
+    if (R.playing) return stop();
+    if (!cur || !pts.length) return;
+    R.playing = true; play.textContent = "❚❚ 暫停";
+    let g = progress() >= 0.999 ? 0 : progress(), last = performance.now(), busy = false;
+    const step = now => {
+      if (!R.playing || !canvas.isConnected) return stop();
+      if (!busy) {
+        g = Math.min(1, g + (now - last) / total);
+        last = now;
+        const [sg, p] = locate(g);
+        R.p = p;
+        slider.value = Math.round(g * 1000);
+        if (sg !== cur) {                             // the journey moved onto another map
+          busy = true;
+          show(sg, true).then(() => { busy = false; last = performance.now(); });
+        } else paint();
+        if (g >= 1) return stop();
+      }
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+  slider.addEventListener("input", () => {
+    stop();
+    const [sg, p] = locate(slider.value / 1000);
+    R.p = p;
+    if (sg !== cur) show(sg, true); else paint();
+  });
+  zoom.addEventListener("click", () => { R.mode = R.mode === "fit" ? "full" : "fit"; stop(); if (cur) show(cur, true); });
+  spanSel.addEventListener("change", () => { R.span = spanSel.value; rebuild(); });
+  for (const [inp, key] of [[fromIn, "cFrom"], [toIn, "cTo"]]) inp.addEventListener("change", () => { R[key] = inp.value; rebuild(); });
+  mapSel.addEventListener("change", () => { R.view = mapSel.value; rebuild(); });
+  layer.addEventListener("change", () => { R.layer = layer.value; stop(); R.p = 1; syncSlider(); setLegend(); paint(); });
+  canvas.addEventListener("mousemove", ev => {
+    const box = canvas.getBoundingClientRect(), mx = ev.clientX - box.left, my = ev.clientY - box.top;
+    let best = null, bestD = 14;
+    for (const p of model.pts) {
+      const dd = Math.hypot((p.x - view.x0) / view.span * box.width - mx, (p.y - view.y0) / view.span * box.height - my);
+      if (dd < bestD) { best = p; bestD = dd; }
+    }
+    const pin = pinAt(ev);
+    if (best === hover && pin === hotPin) return;
+    hover = best; hotPin = pin;
+    canvas.title = pin ? pinText(pin) : best ? `${stamp(best.t)}　${best.x.toFixed(1)}, ${best.y.toFixed(1)}` : "";
+    canvas.style.cursor = pin ? "pointer" : "";
+    if (!R.playing) paint();
+  });
+  canvas.addEventListener("click", ev => {            // works for touch too, where there is no hover
+    hotPin = pinAt(ev);
+    info.textContent = hotPin ? pinText(hotPin) : baseInfo;
+    if (!R.playing) paint();
+  });
+  pinBtn.addEventListener("click", () => { R.pins = R.pins === false; hotPin = null; setPinBtn(); setLegend(); paint(); });
+  canvas.addEventListener("mouseleave", () => { if (hover) { hover = null; if (!R.playing) paint(); } });
+  card.append(el("div", { class: "maphead" }, el("h2", { text: "移動路線" }), spanSel), custom,
+    el("div", { class: "mapctl", style: "margin:0 0 10px" }, mapSel), legbar, canvas,
+    el("div", { class: "mapctl" }, play, slider, layer, zoom, pinBtn), info, legend);
+  requestAnimationFrame(rebuild);
+  window.onresize = paint;
+}
+
+// quiet = background refresh: no indicator, so the page does not flicker every 30 seconds.
+async function load(quiet) {
+  if (!token) return showLogin(false);
+  const busy = document.getElementById("busy");
+  if (!quiet) busy.classList.add("on");
+  const slow = setTimeout(() => { const n = document.getElementById("slow"); if (n) n.hidden = false; }, 4000);
+  try {
+    const chars = (await get("/characters")).items;
+    const stats = await get("/stats/summary");
+    R.markers.clear();
+    state.maps = Object.fromEntries((await get("/maps")).items.map(m => [m.map_id, m]));
+    document.getElementById("logout").hidden = false;
+    if (!chars.length) {
+      app.replaceChildren(el("div", { class: "card msg", text: "伺服器還沒有收到任何角色資料。" }));
+      return;
+    }
+    if (!chars.some(c => c.id === state.charId)) state.charId = chars[0].id;
+    const cid = encodeURIComponent(state.charId);
+    const [snap, locs, events] = await Promise.all([
+      get(`/characters/${cid}/snapshot`), get(`/locations?character_id=${cid}&limit=1000`),
+      get(`/events?character_id=${cid}&limit=100` + (state.filter === "activity" ? "&exclude_type=LOCATION_SAMPLE,PARTY_POSITIONS,GROUP_METER,GROUP_ENCOUNTER"
+        : state.filter === "all" ? "" : "&event_type=" + encodeURIComponent(state.filter)))]);
+    state.locs = locs.items;
+    // Older positions too, so a time range can reach back (five pages at most).
+    for (let cursor = locs.next_cursor, page = 1; cursor && page < 5; page++) {
+      const more = await get(`/locations?character_id=${cid}&limit=1000&cursor=${encodeURIComponent(cursor)}`);
+      state.locs = state.locs.concat(more.items);
+      cursor = more.next_cursor;
+    }
+    const since = state.range === "today" ? new Date(new Date().setHours(0, 0, 0, 0))
+      : state.range === "week" ? new Date(Date.now() - 7 * 86400000) : null;
+    const act = await get(`/stats/activity?character_id=${cid}` + (since ? "&start_time=" + encodeURIComponent(since.toISOString()) : ""));
+    const d = snap.data;
+    state.me = { map_id: d.map_id, x: d.x, y: d.y };
+    try { const ws = await get("/world/sources"); W.ok = ws.available; W.src = ws.items[0] || null; } catch (e) { W.ok = false; }
+    let itemNames = {}, near = [], neededBy = {}, zones = null, groups = [], shots = { total: 0, items: [] };
+    try { shots = await get(`/screenshots?character_id=${cid}&limit=120`); } catch (e) { /* shown as "none" */ }
+    try { groups = (await get(`/groups?character_id=${cid}`)).items; } catch (e) { /* shown as "none" */ }
+    state.pins = [];
+    if (W.ok) {
+      const ids = [...new Set([...list(d.equipment), ...list(d.bags && d.bags.items)].map(i => i.item_id).filter(Boolean))];
+      try {
+        if (ids.length) { const nm = await get("/world/names?items=" + ids.join(",")); itemNames = nm.items; neededBy = nm.needed_by || {}; }
+        state.pins = (await get(`/world/quest-pins?character_id=${cid}`)).items;
+        zones = await get(`/world/quest-zones?character_id=${cid}`);
+        if (d.map_id && typeof d.x === "number") near = (await get(`/world/nearby?map_id=${d.map_id}&x=${d.x}&y=${d.y}&radius=10&quest_only=true&limit=12`)).items;
+      } catch (e) { /* world data is optional */ }
+    }
+
+    const stale = Date.now() - new Date(snap.captured_at).getTime() > 3600000;
+    document.getElementById("sync").replaceChildren(
+      el("span", { class: "dot" + (stale ? " stale" : "") }),
+      `角色狀態為 ${ago(snap.captured_at)} 的資料（${full(snap.captured_at)}）`);
+
+    const C = 2 * Math.PI * 44, frac = v => d.xp_max > 0 ? Math.min(1, Math.max(0, v / d.xp_max)) : 0;
+    const arc = (cls, f) => { const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      c.setAttribute("class", cls); c.setAttribute("cx", 52); c.setAttribute("cy", 52); c.setAttribute("r", 44);
+      c.style.strokeDasharray = C; c.style.strokeDashoffset = C * (1 - f); return c; };
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 104 104");
+    const fg = arc("fg", 0);
+    svg.append(arc("bg", 1), arc("rest", frac((d.xp || 0) + (d.rested_xp || 0))), fg);
+    requestAnimationFrame(() => requestAnimationFrame(() => { fg.style.strokeDashoffset = C * (1 - frac(d.xp || 0)); }));
+    const chip = (label, text) => text ? el("span", { class: "chip" }, el("b", { text: label }), text) : null;
+    const hero = el("section", { class: "card hero" },
+      el("div", { class: "ring", role: "img", "aria-label": `${d.level ?? "?"} 級，經驗 ${Math.round(frac(d.xp || 0) * 100)}%` }, svg,
+        el("div", { class: "lv" }, el("b", { text: d.level ?? "?" }), el("span", { text: d.xp_max > 0 ? Math.round(frac(d.xp || 0) * 100) + "%" : "等級" }))),
+      el("div", { class: "who" },
+        el("div", { class: "name", text: d.name || state.charId }),
+        el("div", { class: "sub", text: [RACE[d.race] || d.race, CLASS[d.class] || d.class, FACTION[d.faction] || d.faction].filter(Boolean).join(" · ") }),
+        el("div", { class: "chips" },
+          chip("位置", [d.zone_name, d.sub_zone].filter(Boolean).join(" · ")),
+          chip("金錢", typeof d.money === "number" ? money(d.money) : ""),
+          chip("背包", d.bags && d.bags.slots ? `空 ${d.bags.free}/${d.bags.slots}` : ""),
+          chip("升級還差", d.xp_max > 0 && typeof d.xp === "number" ? (d.xp_max - d.xp).toLocaleString() + " 經驗" : ""),
+          chip("任務", list(d.quests).length ? `${list(d.quests).filter(q => q.complete).length} 可交 / ${list(d.quests).length}` : ""))));
+    if (CLASS_COLOR[d.class]) hero.style.setProperty("--cls", CLASS_COLOR[d.class]);
+
+    const charCard = el("section", { class: "card c-half" },
+      el("h2", { text: "詳細資料" }),
+      el("dl", null,
+        el("dt", { text: "所在地" }), el("dd", { text: [d.zone_name, d.sub_zone].filter(Boolean).join(" · ") || "—" }),
+        el("dt", { text: "座標" }), el("dd", { text: pos(d) + (d.map_id ? `（地圖 ${d.map_id}）` : "") }),
+        el("dt", { text: "金錢" }), el("dd", { text: money(d.money) }),
+        el("dt", { text: "伺服器" }), el("dd", { text: d.realm || "—" }),
+        el("dt", { text: "爐石" }), el("dd", { text: d.bind_location || "—" }),
+        el("dt", { text: "公會" }), el("dd", { text: d.guild || "—" }),
+        el("dt", { text: "遊戲時間" }), el("dd", { text: typeof d.played_total === "number"
+          ? duration(d.played_total) + (typeof d.played_level === "number" ? `（本級 ${duration(d.played_level)}）` : "") : "—" }),
+        el("dt", { text: "上傳裝置" }), el("dd", { text: snap.device_id || "—" })));
+    if (typeof d.xp === "number" && d.xp_max > 0) {
+      const pct = v => Math.min(100, v / d.xp_max * 100).toFixed(1) + "%";
+      const bar = el("div", { class: "bar", role: "img", "aria-label": "經驗值 " + pct(d.xp) });
+      const rest = el("i", { class: "rest" }), cur = el("i");
+      rest.style.width = pct(d.xp + (d.rested_xp || 0)); cur.style.width = pct(d.xp);
+      bar.append(rest, cur);
+      charCard.insertBefore(bar, charCard.querySelector("dl"));
+      charCard.insertBefore(el("div", { class: "small", text: `經驗 ${d.xp.toLocaleString()} / ${d.xp_max.toLocaleString()}（${pct(d.xp)}）`
+        + (d.rested_xp ? `　休息加成 ${d.rested_xp.toLocaleString()}` : "") }), charCard.querySelector("dl"));
+    }
+
+    const section = (cls, title, note, rows, empty) => {
+      const ul = el("ul", { class: "rows" }, ...rows);
+      return el("section", { class: "card " + cls },
+        el("div", { class: "cardhead" }, el("h2", { text: title }), el("span", { class: "small", text: note || "" })),
+        rows.length ? ul : el("div", { class: "detail", text: empty }));
+    };
+    const quests = list(d.quests), equip = list(d.equipment), profs = list(d.professions);
+    const inLog = new Map(quests.map(q => [q.quest_id, q]));
+    const doneSet = new Set(list(d.quests_done));
+    const itemCtx = { inLog, skills: new Map(profs.map(pf => [pf.name, pf.rank || 0])) };
+    // Stats, level and price as the game reports them (recorded by the addon), shown first.
+    const STAT_ZH = { armor: "護甲", strength: "力量", agility: "敏捷", stamina: "耐力", intellect: "智力", spirit: "精神",
+      damage_per_second: "每秒傷害", attack_power: "攻擊強度", spell_power: "法術強度" };
+    const ownLines = i => {
+      const st = i.stats && typeof i.stats === "object" ? Object.entries(i.stats) : [];
+      const order = Object.keys(STAT_ZH);
+      st.sort((a, b) => (order.indexOf(a[0]) + 1 || 99) - (order.indexOf(b[0]) + 1 || 99));
+      const out = [];
+      if (st.length) out.push(line("屬性", st.map(([k, v]) => `${STAT_ZH[k] || k} ${v}`).join("、")));
+      const meta = [i.item_level ? "物品等級 " + i.item_level : null, i.item_subtype, i.req_level > 1 ? `需要 ${i.req_level} 級` : null,
+        i.sell_price ? "賣店 " + money(i.sell_price) : null].filter(Boolean);
+      if (meta.length && (st.length || i.sell_price)) out.push(el("div", { text: meta.join(" · ") }));
+      return out;
+    };
+    const itemRow = (i, cells) => W.ok && i.item_id
+      ? el("li", null, expandable("i" + i.item_id, cells, "/world/items/" + i.item_id, it => [...ownLines(i), ...itemDetail(it, itemCtx)])) : el("li", null, ...cells);
+    const bagItems = list(d.bags && d.bags.items).slice().sort((a, b) => (b.quality || 0) - (a.quality || 0) || b.count - a.count);
+    const questCard = section("c-half", "任務日誌", quests.length ? quests.length + " 個" + (W.ok ? " · 點任務看交付地點" : "") : "", quests.map(q => {
+      const head = [el("span", { class: "grow" },
+        el("span", { class: "wname" + (q.complete ? " done" : ""), text: (q.complete ? "✓ " : "") + (q.title || "任務 #" + q.quest_id) }),
+        ...list(q.objectives).map(o => {
+          const m = /(\d+)\s*\/\s*(\d+)/.exec(o.text || "");
+          return el("span", { class: "obj" + (o.finished ? " done" : ""), text: o.text },
+            m && Number(m[2]) > 0 ? pbar(Number(m[1]) / Number(m[2]), "sm" + (o.finished ? " ok" : "")) : null);
+        })),
+        el("span", { class: "num", text: [q.category, q.level ? q.level + " 級" : null].filter(Boolean).join(" · ") })];
+      return W.ok && q.quest_id ? el("li", null, expandable("q" + q.quest_id, head, "/world/quests/" + q.quest_id, questDetail))
+        : el("li", null, ...head);
+    }), "這份快照沒有任務資料。");
+    const tip = W.ok ? " · 點物品看來源與用途" : "";
+    const worth = i => (i.sell_price || 0) * (i.count || 1);
+    const bagValue = bagItems.reduce((s, i) => s + worth(i), 0), junkValue = bagItems.filter(i => i.quality === 0).reduce((s, i) => s + worth(i), 0);
+    const priced = bagItems.some(i => typeof i.sell_price === "number");
+    const bagCard = section("c-half", "背包", d.bags ? `空位 ${d.bags.free} / ${d.bags.slots}${tip}` : "", bagItems.map(i => {
+      const wanted = list(neededBy[i.item_id]).map(id => inLog.get(id)).filter(Boolean);
+      return itemRow(i, [el("span", { class: "grow wname q" + (i.quality ?? 1), text: i.name || itemNames[i.item_id] || "物品 #" + i.item_id }),
+        wanted.length ? el("span", { class: "tag", title: wanted.map(q => q.title).join("、"), text: "任務" }) : null,
+        el("span", { class: "num", title: i.sell_price ? `單價 ${money(i.sell_price)}` : "", text: "×" + i.count + (worth(i) ? "　" + shortMoney(worth(i)) : "") })]);
+    }), "這份快照沒有背包資料。");
+    if (d.bags) bagCard.append(el("div", { class: "small", text: priced
+      ? `全部賣給商店約值 ${money(bagValue)}` + (junkValue ? `，其中灰色垃圾 ${money(junkValue)}` : "") + "。價格是賣給 NPC 的金額，不是拍賣場行情。"
+      : "還沒有賣價資料：更新插件後重新登入並存檔一次就會出現。" }));
+    const equipCard = section("c-half", "裝備", tip.slice(3), equip.map(i =>
+      itemRow(i, [el("span", { class: "num", text: SLOT[i.slot] || i.slot }),
+        el("span", { class: "grow wname q" + (i.quality ?? 1), text: i.name || itemNames[i.item_id] || "物品 #" + i.item_id }),
+        i.durability_max ? pbar(i.durability / i.durability_max, "sm" + (i.durability / i.durability_max < 0.25 ? " low" : " ok")) : null,
+        el("span", { class: "num", text: i.durability_max ? `耐久 ${i.durability}/${i.durability_max}` : "" })])),
+      "這份快照沒有裝備資料。");
+    const profCard = section("c-half", "專業技能", "", profs.map(pf =>
+      el("li", null, el("span", { class: "grow", text: pf.name }),
+        pf.max_rank > 0 ? pbar(pf.rank / pf.max_rank, pf.rank >= pf.max_rank ? "low" : "") : null,
+        el("span", { class: "num", text: `${pf.rank ?? "—"} / ${pf.max_rank ?? "—"}` }))),
+      "這份快照沒有專業技能資料。");
+    if (profs.some(pf => pf.max_rank > 0 && pf.rank >= pf.max_rank)) {
+      profCard.append(el("div", { class: "small", text: "橘色代表已達目前上限，要找訓練師學下一階才能繼續提升。" }));
+    }
+
+    const tile = (n, label) => el("div", { class: "tile" }, el("b", { text: n }), el("span", { text: label }));
+
+    // ---- adventure summary for the chosen period
+    const rangeSel = el("select", { "aria-label": "期間" }, el("option", { value: "today", text: "今天" }),
+      el("option", { value: "week", text: "最近 7 天" }), el("option", { value: "all", text: "全部" }));
+    rangeSel.value = state.range;
+    rangeSel.addEventListener("change", () => { state.range = rangeSel.value; load(); });
+    const net = act.money_in - act.money_out;
+    const xpCanvas = el("canvas", { class: "xpchart", role: "img",
+      "aria-label": `這段期間累積獲得 ${act.xp.toLocaleString()} 經驗` });
+    const estimate = el("div", { class: "estimate" });
+    const rate = xpRate(act.xp_points);
+    if (rate && typeof d.xp === "number" && d.xp_max > d.xp) {
+      estimate.append("以最近練功的速度（每小時 ", el("b", { text: Math.round(rate).toLocaleString() }), " 經驗），再約 ",
+        el("b", { text: duration(Math.round((d.xp_max - d.xp) / rate * 3600 / 60) * 60).replace(/ 0 秒$/, "") }), ` 可升到 ${d.level + 1} 級。`);
+    } else {
+      estimate.append(el("span", { class: "small", text: "連續練功 5 分鐘以上才能估算升級時間。" }));
+    }
+    const summaryCard = el("section", { class: "card c-full" },
+      el("div", { class: "maphead" }, el("h2", { text: "冒險摘要" }), rangeSel),
+      el("div", { class: "summary" },
+        el("div", { class: "tiles" }, tile(act.kills.toLocaleString(), "擊殺"), tile(act.xp.toLocaleString(), "獲得經驗"),
+          tile((net < 0 ? "−" : "+") + shortMoney(Math.abs(net)), "金錢淨額"), tile(act.items_looted.toLocaleString(), "拾取物品"),
+          act.loot_value ? tile(shortMoney(act.loot_value), "拾取物賣店價值") : null,
+          tile(act.fights.toLocaleString(), "戰鬥場數"), tile(shortDuration(act.active_seconds), "活動時間")),
+        el("div", null, el("div", { class: "small", text: "累積獲得經驗" }), xpCanvas, estimate)));
+    requestAnimationFrame(() => { if (xpCanvas.clientWidth) drawXp(xpCanvas, act.xp_points); });
+    const rank = (title, rows, empty, detail) => {
+      const max = Math.max(...rows.map(r => r.count), 1);
+      return el("section", { class: "card c-half" }, el("div", { class: "cardhead" }, el("h2", { text: title }),
+        el("span", { class: "small", text: rangeSel.selectedOptions[0].textContent })),
+        rows.length ? el("ul", { class: "rank" }, ...rows.map(r => {
+          const fill = el("i"); fill.style.width = (r.count / max * 100).toFixed(1) + "%";
+          const cells = [el("span", { class: "name wname", title: r.name || "", text: r.name || "#" + r.id }),
+            el("span", { class: "track" }, fill), el("span", { class: "num", text: r.count.toLocaleString() + (r.value ? "　" + shortMoney(r.value) : "") })];
+          return W.ok && detail && r.id ? el("li", { class: "x" }, expandable(detail[0] + r.id, cells, detail[1] + r.id, detail[2]))
+            : el("li", null, ...cells);
+        })) : el("div", { class: "detail", text: empty }));
+    };
+    const monsterCard = rank("擊殺排行", act.top_monsters, "這段期間沒有擊殺紀錄。", ["n", "/world/npcs/", npcDetail]);
+    const itemCard = rank("拾取排行", act.top_items, "這段期間沒有拾取紀錄。");
+    const statCard = el("section", { class: "card c-full" }, el("h2", { text: "紀錄統計" }),
+      el("div", { class: "tiles" },
+        tile(stats.events, "事件總數"),
+        ...Object.entries(stats.by_type).sort((a, b) => b[1] - a[1]).map(([k, v]) => tile(v, EVENT[k] || k)),
+        tile(stats.last_received_at ? ago(stats.last_received_at) : "—", "最近一次上傳")));
+
+    const mapCard = el("section", { class: "card c-map" });
+    renderMap(mapCard);
+
+    const evList = el("ul", { class: "events" });
+    let day = "";
+    for (const e of events.items) {
+      const dkey = new Date(e.timestamp).toLocaleDateString("zh-TW");
+      const t = el("time", { datetime: e.timestamp, title: full(e.timestamp), text: (dkey !== day ? dkey.slice(5) + " " : "") + hm(e.timestamp) });
+      day = dkey;
+      evList.append(el("li", null, t, el("div", null,
+        el("span", { class: "tag", text: EVENT[e.event_type] || e.event_type }),
+        el("span", { class: "detail", text: describe(e) }))));
+    }
+    const filter = el("select", { "aria-label": "事件篩選" },
+      el("option", { value: "activity", text: "活動（不含位置）" }), el("option", { value: "all", text: "全部" }),
+      ...Object.keys(stats.by_type).sort().map(k => el("option", { value: k, text: EVENT[k] || k })));
+    filter.value = state.filter;
+    filter.addEventListener("change", () => { state.filter = filter.value; load(); });
+    if (!events.items.length) evList.append(el("li", null, el("span"), el("span", { class: "detail", text: "沒有符合的事件" })));
+    const evCard = el("section", { class: "card c-half" },
+      el("div", { class: "maphead" }, el("h2", { text: "最近事件" }), filter), evList);
+
+    const reps = list(d.reputations).slice().sort((a, b) => (b.standing || 0) - (a.standing || 0) || (b.value || 0) - (a.value || 0));
+    const repCard = section("c-half", "聲望", "", reps.map(r =>
+      el("li", null, el("span", { class: "grow", text: r.name }),
+        typeof r.value === "number" && r.ceiling > r.floor ? pbar((r.value - r.floor) / (r.ceiling - r.floor)) : null,
+        el("span", { class: "num", text: (STANDING[r.standing] || "") + (typeof r.value === "number" && r.ceiling > r.floor
+          ? `　${r.value - r.floor} / ${r.ceiling - r.floor}` : "") }))), "這份快照沒有聲望資料。");
+    const st = d.stats && typeof d.stats === "object" && !Array.isArray(d.stats) ? d.stats : {};
+    const statRows = Object.keys(STAT).filter(k => typeof st[k] === "number").map(k =>
+      el("li", null, el("span", { class: "grow", text: STAT[k] }), el("span", { class: "num", text: st[k].toLocaleString() })));
+    const attrCard = section("c-half", "屬性", "", statRows, "這份快照沒有屬性資料。");
+    const fp = d.flight_points && typeof d.flight_points === "object" && !Array.isArray(d.flight_points) ? d.flight_points : {};
+    // Names starting with "zz" are leftover developer entries in the game's own data.
+    const fpRows = Object.keys(fp).filter(n => !/^zz/i.test(n)).sort((a, b) => (fp[b] - fp[a]) || a.localeCompare(b, "zh-Hant")).map(n =>
+      el("li", null, el("span", { class: "grow" + (fp[n] ? "" : " q0"), text: n }), el("span", { class: "num", text: fp[n] ? "已開" : "未開" })));
+    const fpCard = section("c-half", "飛行點", "", fpRows, "找飛行管理員開一次飛行地圖後就會有資料。");
+
+    // One quest inside a nearby NPC's list: its state for this character, and its own details on click.
+    const questLine = q => {
+      const mine = inLog.get(q.id);
+      const state_ = mine ? (mine.complete ? "可以交了" : "進行中") : doneSet.has(q.id) ? "已完成" : q.min_level && d.level < q.min_level ? `需 ${q.min_level} 級` : "";
+      return el("div", null, expandable("nq" + q.id, [el("span", { class: "grow wname" + (mine && mine.complete ? " done" : ""), text: q.name || "任務 #" + q.id }),
+        state_ ? el("span", { class: "tag", text: state_ }) : null,
+        el("span", { class: "num", text: q.level > 0 ? q.level + " 級" : "" })], "/world/quests/" + q.id, questDetail));
+    };
+    const nearDetail = n => () => {
+      const out = [];
+      const ends = n.quest_ends, endIds = new Set(ends.map(q => q.id)), starts = n.quest_starts;
+      const both = starts.filter(q => endIds.has(q.id)), only = starts.filter(q => !endIds.has(q.id)), turn = ends.filter(q => !starts.some(x => x.id === q.id));
+      if (only.length) out.push(el("div", { class: "wsec", text: `在這裡接（${only.length}）` }), ...only.map(questLine));
+      if (both.length) out.push(el("div", { class: "wsec", text: `在這裡接也在這裡交（${both.length}）` }), ...both.map(questLine));
+      if (turn.length) out.push(el("div", { class: "wsec", text: `在這裡交（${turn.length}）` }), ...turn.map(questLine));
+      out.push(el("div", { class: "small", text: "資料庫列出所有陣營與職業的任務，其中有些你的角色可能接不到；沒有紀錄的任務無法判斷是否已經做過。" }));
+      return out;
+    };
+    const nearCard = W.ok ? section("c-half", "附近的任務人物", "半徑 10 格內 · 點開看是哪些任務", near.map(n => {
+      const give = n.quest_ends.map(q => inLog.get(q.id)).filter(Boolean);
+      const ids = [...new Set([...n.quest_starts, ...n.quest_ends].map(q => q.id))], all = ids.length;
+      const left = ids.filter(id => !doneSet.has(id)).length;
+      const note = (give.length ? (give.some(q => q.complete) ? "✓ 可交：" : "交付對象：") + give.map(q => q.title).join("、") + "　" : "")
+        + `相關任務 ${all} 個` + (doneSet.size ? (left ? `，${left} 個還沒做` : "，都做過了") : "");
+      const key = "near" + n.kind + n.id, render = nearDetail(n);
+      const box = el("div", { class: "wbox" });
+      const det = el("details", { class: "grow" }, el("summary", null, el("span", { class: "grow" }, el("span", { class: "wname", text: n.name }),
+        el("span", { class: "obj" + (give.some(q => q.complete) ? " done" : ""), text: note })),
+        el("span", { class: "num", text: `${n.x.toFixed(0)}, ${n.y.toFixed(0)} · 距 ${n.distance.toFixed(1)}` })), box);
+      const fill = () => { if (!box.childElementCount) box.replaceChildren(...render()); };
+      det.addEventListener("toggle", () => { if (det.open) { W.open.add(key); fill(); } else W.open.delete(key); });
+      if (W.open.has(key)) { det.open = true; fill(); }
+      return el("li", null, det);
+    }), "目前位置附近沒有已知的任務人物。") : null;
+    const foot = W.ok && W.src ? el("div", { class: "foot", text: `世界資料：${W.src.name} ${W.src.version}（遊戲版本 ${W.src.game_build}，${W.src.license}）。`
+      + "以經典版資料為底，Forever 新增內容可能不完整；僅供個人使用。" }) : null;
+    questCard.classList.replace("c-half", "c-full");
+
+    // ---- album: screenshots taken in the game, with where and when
+    const albumCard = el("section", { class: "card c-full" },
+      el("div", { class: "cardhead" }, el("h2", { text: "相簿" }), el("span", { class: "small", text: shots.total ? `${shots.total} 張` + (shots.total > shots.items.length ? `，顯示最新 ${shots.items.length} 張` : "") : "" })),
+      shots.items.length ? el("div", { class: "album" }, ...shots.items.map((sh, k) => {
+        const img = el("img", { alt: shotCaption(sh), loading: "lazy" });
+        picture(`/screenshots/${sh.id}/thumb`).then(src => { if (src) img.src = src; });
+        const fig = el("figure", { tabindex: "0", role: "button" }, img, el("figcaption", null,
+          el("b", { text: sh.place && sh.place.zone ? sh.place.zone : "地點未知" }),
+          new Date(sh.taken_at).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }) + (sh.moment ? "　" + sh.moment : "")));
+        const open = () => lightbox(shots.items, k, x => picture(`/screenshots/${x.id}/image`), shotCaption);
+        fig.addEventListener("click", open);
+        fig.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); } });
+        return fig;
+      })) : el("div", { class: "detail", text: "還沒有截圖。在遊戲裡按截圖鍵，同步程式會自動上傳，並配上當時的地點與發生的事。" }),
+      el("div", { class: "small", text: "截圖會拍到畫面上的所有東西，包含聊天視窗。分享連結與組隊頁面也看得到這些截圖。" }));
+
+    // ---- group sessions: each has its own page that can be shared with the party
+    const groupCard = section("c-half", "組隊紀錄", groups.length ? groups.length + " 場 · 每場有獨立網址" : "", groups.map(g => {
+      const url = `${location.origin}/party/${g.token}`;
+      const copy = el("button", { class: "btn sm", type: "button", text: "複製連結" });
+      copy.addEventListener("click", async ev => {
+        ev.preventDefault();
+        try { await navigator.clipboard.writeText(url); copy.textContent = "已複製"; } catch (e) { window.prompt("複製這個網址", url); }
+        setTimeout(() => { copy.textContent = "複製連結"; }, 1500);
+      });
+      const names = g.members.map(m => m.name).join("、") || "隊友名稱未知";
+      return el("li", null, el("span", { class: "grow" },
+        el("a", { href: url, target: "_blank", rel: "noopener", class: "wname", style: "color:inherit", text: `和 ${names}` + (g.ongoing ? "（進行中）" : "") }),
+        el("span", { class: "obj", text: `${new Date(g.started_at).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })}`
+          + `　${duration(g.duration).replace(/ \d+ 秒$/, "")}　擊殺 ${g.kills}　經驗 ${g.xp.toLocaleString()}` + (g.zone_name ? `　${g.zone_name}` : "") })),
+        copy);
+    }), "還沒有組隊紀錄。組隊後存檔並同步，這裡就會出現，每一場都有可以分享給隊友的網址。");
+
+    // ---- quests by zone: what is done, what is left, and what is worth doing now
+    let zonesCard = null, zoneCard = null;
+    if (W.ok && zones && zones.items.length) {
+      const hereId = d.map_id;
+      if (!zones.items.some(z => z.map_id === state.questZone)) {
+        state.questZone = (zones.items.find(z => z.map_id === hereId) || zones.items.find(z => z.available) || zones.items[0]).map_id;
+      }
+      zoneCard = el("section", { class: "card c-map" });
+      const fillZone = async () => {
+        const id = state.questZone;
+        zoneCard.replaceChildren(el("div", { class: "loading", role: "status" }, el("i"), "讀取這一區的任務…"));
+        try {
+          const path = `/world/zone-quests?character_id=${cid}&map_id=${id}`;
+          const z = await get(path);
+          if (id !== state.questZone) return;
+          const by = s => z.items.filter(q => q.state === s);
+          const row = q => {
+            const xp = el("span", { class: "num xp" });
+            if (q.xp) { if (q.xp_share < 1) xp.append(el("s", { text: q.xp.toLocaleString() })); xp.append(q.xp_now.toLocaleString() + " 經驗" + (q.xp_confirmed ? "" : "＊")); }
+            const sub = q.state === "locked" && q.needs.length ? "要先完成：" + q.needs.map(n => n.name || "#" + n.id).join("、")
+              : [q.start && q.start.name ? "起點：" + q.start.name + (q.start.location ? `（${at(q.start.location)}）` : "") : null,
+                 q.rewards.length ? "獎勵：" + q.rewards.map(r => r.name || "#" + r.id).join("、") : null].filter(Boolean).join("　");
+            return el("li", null, expandable("zq" + q.id, [el("span", { class: "grow" }, el("span", { class: "wname" + (q.state === "completed" ? " done" : ""), text: q.name }),
+              sub ? el("span", { class: "obj", text: sub }) : null),
+              el("span", { class: "num", text: (q.level > 0 ? q.level + " 級" : "") + (q.state === "too_low" ? `（需 ${q.min_level}）` : "") }), xp],
+              "/world/quests/" + q.id, questDetail));
+          };
+          const group = (title, rows, openByDefault) => {
+            if (!rows.length) return null;
+            const key = "zg" + id + title, det = el("details", null, el("summary", { class: "wsec", text: `${title}（${rows.length}）` }), el("ul", { class: "rows" }, ...rows.map(row)));
+            det.style.marginBottom = "6px"; det.firstChild.style.cursor = "pointer";
+            det.open = W.groups ? (W.groups.has(key) ? W.groups.get(key) : openByDefault) : openByDefault;
+            det.addEventListener("toggle", () => { (W.groups = W.groups || new Map()).set(key, det.open); });
+            return det;
+          };
+          const done = by("completed").length, total = z.items.length;
+          const worth = by("available").reduce((s, q) => s + q.xp_now, 0);
+          zoneCard.replaceChildren(...[
+            el("div", { class: "cardhead" }, el("h2", { text: `${z.zone || "地圖 " + id} 的任務` }),
+              el("span", { class: "small", text: `完成 ${done} / ${total}` })),
+            z.known ? null : el("div", { class: "note", text: "還沒有完整的「已完成任務」清單，所以下面的「現在可接」可能包含你其實做過的任務。更新插件後重新登入並存檔一次就會準確。" }),
+            el("div", { class: "small", text: by("available").length ? `現在可接的 ${by("available").length} 個任務全做完大約是 ${worth.toLocaleString()} 經驗`
+              + (typeof d.xp === "number" && d.xp_max > 0 ? `（升級還差 ${(d.xp_max - d.xp).toLocaleString()}）。` : "。") + "依你現在等級實際能拿的經驗排序。" : "這一區沒有現在可接的任務。" }),
+            group("現在可接", by("available"), true), group("進行中", by("in_log"), true),
+            group("等級不足", by("too_low"), false), group("要先完成前置任務", by("locked"), false), group("已完成", by("completed"), false),
+            el("div", { class: "small", text: "劃掉的數字是原本的經驗，任務比你低 6 級以上會打折。＊ 是經典版數值，Forever 實際可能更高。資料庫的種族、陣營設定未必完全正確，少數任務你可能接不到。" })].filter(Boolean));
+        } catch (e) { zoneCard.replaceChildren(el("div", { class: "msg", text: "讀取失敗：" + e.message })); }
+      };
+      const zoneRows = zones.items.map(z => {
+        const li = el("li", { class: "zone" + (z.map_id === state.questZone ? " sel" : "") + (z.map_id === hereId ? " here" : ""), tabindex: "0", role: "button" },
+          el("span", { class: "grow" }, el("span", { text: z.zone }),
+            el("span", { class: "obj", text: (z.level_min ? `${z.level_min}–${z.level_max} 級　` : "") + (z.available ? `可接 ${z.available}` : "沒有可接的") + (z.in_log ? `　進行中 ${z.in_log}` : "") })),
+          (() => { const b = el("span", { class: "zbar", role: "img", "aria-label": `完成 ${z.completed}，共 ${z.total}` });
+            for (const [c, n] of [["d", z.completed], ["l", z.in_log], ["a", z.available]]) { const i = el("i", { class: c }); i.style.width = (n / z.total * 100) + "%"; b.append(i); }
+            return b; })(),
+          el("span", { class: "num", text: `${z.completed}/${z.total}` }));
+        const pick = () => { state.questZone = z.map_id; for (const n of li.parentElement.children) n.classList.toggle("sel", n === li); fillZone(); };
+        li.addEventListener("click", pick);
+        li.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); pick(); } });
+        return li;
+      });
+      zonesCard = section("c-events", "各區任務進度", zones.known ? "點一區看還有哪些沒做" : "尚無完整紀錄", zoneRows, "");
+      zonesCard.append(el("div", { class: "small", text: "綠色是已完成，橘色是進行中，淺色是現在可接。只算你的種族與職業接得到、非節慶、非重複的任務。" }));
+      fillZone();
+    }
+    const layout = { home: [summaryCard, evCard, nearCard, monsterCard, itemCard, groupCard], map: [mapCard, fpCard], quests: [questCard, zonesCard, zoneCard],
+      items: [equipCard, bagCard], char: [charCard, attrCard, profCard, repCard], album: [albumCard], data: [W.ok ? searchCard() : null, statCard, foot] };
+    const cards = [];
+    for (const [name, nodes] of Object.entries(layout)) for (const n of nodes) if (n) { n.dataset.tab = name; cards.push(n); }
+    const bar = el("nav", { class: "tabs", role: "tablist", "aria-label": "區塊" });
+    const showTab = name => {
+      state.tab = name;
+      try { localStorage.setItem(TAB_KEY, name); } catch (e) { /* not remembered */ }
+      for (const b of bar.children) b.setAttribute("aria-selected", b.dataset.tab === name);
+      for (const n of cards) n.classList.toggle("on", n.dataset.tab === name);
+      if (state.redraw) state.redraw();              // canvases cannot draw while hidden
+    };
+    for (const [name, label] of TABS) {
+      const b = el("button", { type: "button", role: "tab", "data-tab": name, text: label });
+      b.addEventListener("click", () => { showTab(name); bar.scrollIntoView({ block: "nearest" }); });
+      bar.append(b);
+    }
+    fpCard.classList.replace("c-half", "c-events");
+    state.redraw = () => { if (xpCanvas.clientWidth) drawXp(xpCanvas, act.xp_points); if (window.onresize) window.onresize(); };
+    const y = window.scrollY;
+    app.replaceChildren(hero, bar, el("div", { class: "grid" }, ...cards));
+    showTab(state.tab);
+    window.scrollTo(0, y);                           // a refresh must not move the page
+  } catch (err) {
+    if (err.message === "auth") return showLogin(true);
+    const again = el("button", { type: "button", text: "重試" });
+    again.addEventListener("click", () => { app.replaceChildren(el("div", { class: "loading", role: "status" }, el("i"), "重新載入中…")); load(); });
+    app.replaceChildren(el("div", { class: "card msg" }, "無法讀取資料：" + (err.message === "Failed to fetch" ? "連不上伺服器" : err.message), el("div", null, again)));
+  } finally {
+    clearTimeout(slow);
+    busy.classList.remove("on");
+  }
+}
+
+load();
+window.addEventListener("resize", () => { if (state.redraw) state.redraw(); });
+// Background refresh, but never while someone is typing, choosing from a menu or watching the route play.
+setInterval(() => {
+  const busy = document.activeElement && ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName);
+  if (token && !document.hidden && !R.playing && !busy) load(true);
+}, 30000);
+</script>
+</body>
+</html>

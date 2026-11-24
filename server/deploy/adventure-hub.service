@@ -1,0 +1,22 @@
+[Unit]
+Description=WoW Adventure Hub API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# An account of its own with no login, able to write only its data folder.
+User=adventure-hub
+Group=adventure-hub
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/adventure-hub/data
+WorkingDirectory=/opt/adventure-hub
+EnvironmentFile=/opt/adventure-hub/.env
+ExecStart=/opt/adventure-hub/.venv/bin/uvicorn --factory app.main:create_app --host 0.0.0.0 --port ${AH_PORT}
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

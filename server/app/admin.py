@@ -1,0 +1,113 @@
+"""The owner's page: every character and every personal upload token, and a button to make more.
+
+It asks for no password and shows tokens in the clear, so it answers only to computers on
+the same network as the server. A request that came through a proxy is judged by the
+addresses the proxy reports: the proxy itself sits on the local network, the visitor may not.
+"""
+import ipaddress
+import os
+import re
+import secrets
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+from fastapi import Depends, HTTPException, Request
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"          # no look-alikes (0/o, 1/l/i)
+TOKEN_LEN = 16
+LOCAL = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,fc00::/7,fe80::/10"
+FORWARDED = ("x-forwarded-for", "x-real-ip", "cf-connecting-ip", "true-client-ip", "forwarded")
+
+
+def networks() -> List[Any]:
+    return [ipaddress.ip_network(n.strip()) for n in (os.environ.get("AH_ADMIN_NETS") or LOCAL).split(",") if n.strip()]
+
+
+def is_local(peer: Optional[str], headers) -> bool:
+    """True only when the computer that connected, and every address a proxy says the request
+    passed through, is on an allowed network. Anything that cannot be read counts as outside."""
+    seen = [peer or ""]
+    for name in FORWARDED:
+        value = headers.get(name)
+        if value is None:
+            continue
+        parts = re.findall(r'for=\s*"?\[?([^\]";,\s]+)', value, re.I) if name == "forwarded" else value.split(",")
+        if not parts:
+            return False
+        seen += parts
+    nets = networks()
+    for text in seen:
+        text = text.strip().strip("[]")
+        if text.count(":") == 1 and "." in text:        # 203.0.113.9:4711
+            text = text.split(":")[0]
+        try:
+            ip = ipaddress.ip_address(text)
+        except ValueError:
+            return False
+        ip = getattr(ip, "ipv4_mapped", None) or ip
+        if not any(ip.version == n.version and ip in n for n in nets):
+            return False
+    return True
+
+
+def local_only(request: Request) -> None:
+    if not is_local(request.client.host if request.client else None, request.headers):
+        raise HTTPException(404, "Not Found")           # from outside it looks as if nothing is here
+
+
+class NewToken(BaseModel):
+    label: Optional[str] = Field(None, max_length=60)
+    character_id: Optional[str] = Field(None, max_length=200)
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def register(app, db) -> None:
+    only = [Depends(local_only)]
+
+    @app.get("/admin", include_in_schema=False, dependencies=only)
+    def admin_page():
+        return FileResponse(os.path.join(HERE, "admin.html"), media_type="text/html", headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/v1/admin/overview", include_in_schema=False, dependencies=only)
+    def overview() -> Dict[str, Any]:
+        with db() as conn:
+            chars = [dict(r) for r in conn.execute(
+                "SELECT c.id, c.name, c.class, c.level, c.updated_at, "
+                "(SELECT COUNT(*) FROM events e WHERE e.character_id=c.id) events FROM characters c ORDER BY c.updated_at DESC")]
+            tokens = [dict(r) for r in conn.execute(
+                "SELECT t.token, t.label, t.character_id, t.created_at, t.bound_at, t.last_used_at, c.name character_name "
+                "FROM upload_tokens t LEFT JOIN characters c ON c.id=t.character_id ORDER BY t.created_at DESC")]
+        return {"characters": chars, "tokens": tokens}
+
+    @app.post("/api/v1/admin/tokens", include_in_schema=False, dependencies=only)
+    def new_token(body: NewToken):
+        """A new personal token: free until its first upload, or tied to a character straight away."""
+        token = "".join(secrets.choice(ALPHABET) for _ in range(TOKEN_LEN))
+        with db() as conn:
+            if body.character_id and not conn.execute("SELECT 1 FROM characters WHERE id=?", (body.character_id,)).fetchone():
+                raise HTTPException(404, "character not found")
+            conn.execute("INSERT INTO upload_tokens VALUES (?,?,?,?,?,?)",
+                         (token, (body.label or "").strip() or None, body.character_id or None, _now(),
+                          _now() if body.character_id else None, None))
+        return {"token": token}
+
+    @app.post("/api/v1/admin/tokens/{token}/release", include_in_schema=False, dependencies=only)
+    def release(token: str):
+        """Let a token be claimed again by whichever character uploads with it next."""
+        with db() as conn:
+            if not conn.execute("UPDATE upload_tokens SET character_id=NULL, bound_at=NULL WHERE token=?", (token,)).rowcount:
+                raise HTTPException(404, "no such token")
+        return {"success": True}
+
+    @app.delete("/api/v1/admin/tokens/{token}", include_in_schema=False, dependencies=only)
+    def delete_token(token: str):
+        with db() as conn:
+            if not conn.execute("DELETE FROM upload_tokens WHERE token=?", (token,)).rowcount:
+                raise HTTPException(404, "no such token")
+        return {"success": True}

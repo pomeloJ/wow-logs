@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>管理</title>
+<style>
+:root { --bg: #f4f1ea; --panel: #fffdf8; --ink: #2a2520; --muted: #7a7065; --line: #e2dbcd; --accent: #b5651d; --accent-soft: #f0dcc4; --ok: #3d7a4a; --bad: #a8402f; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #17140f; --panel: #211d17; --ink: #ece5d8; --muted: #9c9182; --line: #3a332a; --accent: #e0964a; --accent-soft: #4a3520; --ok: #7fc08a; --bad: #e08a7a; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 22px 16px 56px; }
+h1 { font-size: 24px; margin: 0 0 4px; } .sub { color: var(--muted); margin: 0 0 16px; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; min-width: 0; }
+h2 { font-size: 16px; margin: 0 0 10px; } .hint { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+input, select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+input { flex: 1 1 180px; } select { flex: 1 1 200px; max-width: 100%; }
+button { font: inherit; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); background: none; color: var(--ink); cursor: pointer; white-space: nowrap; }
+button.main { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+button.small { padding: 3px 10px; font-size: 13px; } button.danger { color: var(--bad); }
+.scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { padding: 7px 10px; border-top: 1px solid var(--line); text-align: left; white-space: nowrap; vertical-align: middle; }
+thead th { border-top: 0; color: var(--muted); font-weight: 600; font-size: 13px; }
+code.token { font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; user-select: all; }
+.free { color: var(--muted); } .say { font-size: 14px; margin-top: 10px; min-height: 1.4em; } .say.ok { color: var(--ok); } .say.bad { color: var(--bad); }
+.empty { color: var(--muted); padding: 6px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>管理</h1>
+  <p class="sub">角色與個人上傳權杖。這一頁沒有密碼，只有和伺服器在同一個區域網路的電腦打得開。</p>
+
+  <section>
+    <h2>產生權杖</h2>
+    <div class="row">
+      <input id="label" type="text" maxlength="60" placeholder="備註，例如：小明的電腦" autocomplete="off">
+      <select id="bind" aria-label="綁定角色"><option value="">不指定：第一次上傳的角色就是它的</option></select>
+      <button class="main" id="make" type="button">產生</button>
+    </div>
+    <p class="hint">一個權杖只屬於一個角色：第一次用它上傳的角色就固定下來，之後換別的角色用同一個權杖上傳會被拒絕。把權杖交給對方，填進 AdventureSync 視窗裡那個角色的權杖欄（只有一個角色時填「預設權杖」也可以）；一台電腦玩好幾個角色就一個角色發一個。同一個權杖也能讓對方在瀏覽器看自己那個角色。</p>
+    <div class="say" id="say" role="status"></div>
+  </section>
+
+  <section>
+    <h2>權杖</h2>
+    <div class="scroll" id="tokens"></div>
+  </section>
+
+  <section>
+    <h2>角色</h2>
+    <div class="scroll" id="chars"></div>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const el = (tag, attrs, ...kids) => { const n = document.createElement(tag); for (const [k, v] of Object.entries(attrs || {})) k === "text" ? n.textContent = v : n.setAttribute(k, v); n.append(...kids.filter(k => k != null)); return n; };
+const CLASS = { WARRIOR: "戰士", PALADIN: "聖騎士", HUNTER: "獵人", ROGUE: "盜賊", PRIEST: "牧師", SHAMAN: "薩滿", MAGE: "法師", WARLOCK: "術士", DRUID: "德魯伊" };
+const when = iso => iso ? new Date(iso).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }) : "—";
+const say = (text, kind) => { $("say").textContent = text; $("say").className = "say " + (kind || ""); };
+const api = (path, method = "GET", body) => fetch("/api/v1/admin" + path, { method, headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined })
+  .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(new Error(e.detail || r.status)), () => Promise.reject(new Error(r.status))));
+function copy(text, button) {
+  const done = () => { const was = button.textContent; button.textContent = "已複製"; setTimeout(() => { button.textContent = was; }, 1200); };
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, () => {});
+  else { const t = el("textarea"); t.value = text; document.body.append(t); t.select(); try { document.execCommand("copy"); done(); } catch (e) { /* select it by hand */ } t.remove(); }
+}
+const table = (heads, rows) => el("table", null, el("thead", null, el("tr", null, ...heads.map(h => el("th", { text: h })))), el("tbody", null, ...rows));
+const act = (text, cls, run) => { const b = el("button", { type: "button", class: "small " + cls, text }); b.addEventListener("click", run); return b; };
+
+function draw(d) {
+  const pick = $("bind").value;
+  $("bind").replaceChildren(el("option", { value: "", text: "不指定：第一次上傳的角色就是它的" }), ...d.characters.map(c => el("option", { value: c.id, text: `綁定給 ${c.name || c.id}` })));
+  $("bind").value = [...$("bind").options].some(o => o.value === pick) ? pick : "";
+  $("tokens").replaceChildren(d.tokens.length ? table(["備註", "權杖", "屬於", "建立", "最後使用", ""], d.tokens.map(t => {
+    const cp = act("複製", "", () => copy(t.token, cp));
+    return el("tr", null, el("td", { text: t.label || "—" }), el("td", null, el("code", { class: "token", text: t.token }), " ", cp),
+      el("td", { class: t.character_id ? "" : "free", text: t.character_id ? (t.character_name || t.character_id) : "還沒用過" }), el("td", { text: when(t.created_at) }), el("td", { text: when(t.last_used_at) }),
+      el("td", null, t.character_id ? act("解除綁定", "", () => confirm(`讓這個權杖可以重新被任何角色認領？\n（${t.character_name || t.character_id} 已上傳的資料不會動。）`) && api(`/tokens/${t.token}/release`, "POST").then(load)) : null, " ",
+        act("刪除", "danger", () => confirm("刪除這個權杖？用它的同步程式會立刻無法上傳。") && api(`/tokens/${t.token}`, "DELETE").then(load))));
+  })) : el("div", { class: "empty", text: "還沒有個人權杖。上面按「產生」建立第一個。" }));
+  const owned = id => d.tokens.filter(t => t.character_id === id);
+  $("chars").replaceChildren(d.characters.length ? table(["角色", "職業", "等級", "事件", "最後更新", "權杖", ""], d.characters.map(c =>
+    el("tr", null, el("td", { text: c.name || c.id }), el("td", { text: CLASS[c.class] || c.class || "—" }), el("td", { text: c.level || "—" }), el("td", { text: (c.events || 0).toLocaleString() }),
+      el("td", { text: when(c.updated_at) }), el("td", null, ...(owned(c.id).length ? owned(c.id).flatMap(t => [el("code", { class: "token", text: t.token }), " "]) : [el("span", { class: "free", text: "沒有" })])),
+      el("td", null, act("產生它的權杖", "", () => make(c.id, c.name))))))
+    : el("div", { class: "empty", text: "還沒有任何角色上傳過資料。" }));
+}
+const load = () => api("/overview").then(draw, e => say("讀取失敗：" + e.message, "bad"));
+function make(characterId, name) {
+  api("/tokens", "POST", { label: $("label").value.trim() || (name ? name : null), character_id: characterId || null })
+    .then(r => { say(`已產生：${r.token}`, "ok"); $("label").value = ""; $("bind").value = ""; return load(); }, e => say("產生失敗：" + e.message, "bad"));
+}
+$("make").addEventListener("click", () => make($("bind").value));
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+[server]
+# Where your own server runs, as this computer reaches it.
+url = "http://YOUR-SERVER:8080"
+# Any long random text. The deploy script gives the same value to the server.
+api_token = "CHANGE_ME"
+timeout = 10
+
+[client]
+device_id = "mac-main"
+# Leave empty to auto-detect; or set to the folder that contains _forever_.
+wow_path = ""
+sync_interval = 30
+batch_size = 100
+db_path = "~/.adventuresync/queue.db"
+
+[logging]
+level = "INFO"
