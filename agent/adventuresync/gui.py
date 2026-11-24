@@ -13,9 +13,11 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from . import __version__, update
 from .core import (DB_GLOBAL, Config, Queue, Uploader, find_saved_variables, load_config, read_stable, save_config,
                    scan, wow_roots)
 
+CHECK_EVERY = 6 * 3600                               # seconds between looks for a newer version
 HOME = Path("~/.adventuresync").expanduser()
 CLASSES = {"WARRIOR": "戰士", "PALADIN": "聖騎士", "HUNTER": "獵人", "ROGUE": "盜賊", "PRIEST": "牧師", "SHAMAN": "薩滿",
            "MAGE": "法師", "WARLOCK": "術士", "DRUID": "德魯伊"}
@@ -100,6 +102,7 @@ class Worker(threading.Thread):
         self.reports: "queues.Queue[Dict[str, Any]]" = queues.Queue()
         self.auto = False
         self._cfg: Optional[Config] = None
+        self._url = ""                                # the server to ask about newer versions
 
     def ask(self, what: str, cfg: Optional[Config] = None) -> None:
         self.requests.put((what, cfg))
@@ -114,7 +117,7 @@ class Worker(threading.Thread):
         store: Optional[Queue] = None
         up: Optional[Uploader] = None
         seen: Dict[Path, Any] = {}
-        next_scan = next_sync = 0.0
+        next_scan = next_sync = next_check = 0.0
         failures = 0
         while True:
             try:
@@ -123,6 +126,28 @@ class Worker(threading.Thread):
                 what, cfg = "tick", None
             if what == "quit":
                 return
+            if isinstance(cfg, Config) and cfg.url.startswith(("http://", "https://")) and cfg.url != self._url:
+                self._url, next_check = cfg.url, 0.0            # another server: ask it right away
+            if self._url and (what == "update" or (what == "tick" and time.monotonic() >= next_check)):
+                next_check = time.monotonic() + CHECK_EVERY
+                try:
+                    self._say(update=update.check(self._url))
+                except Exception as e:                          # no answer now: nothing to offer, ask again later
+                    log.debug("could not ask for a newer version: %s", e)
+            if what == "update":
+                continue
+            if what == "fetch":                                 # cfg is what update.check found
+                try:
+                    told = [0.0]
+
+                    def progress(got: int, size: Optional[int]) -> None:
+                        if time.monotonic() - told[0] >= 0.3:
+                            told[0] = time.monotonic()
+                            self._say(fetching=(got, size))
+                    self._say(fetched=str(update.fetch(cfg, progress=progress)))
+                except Exception as e:
+                    self._say(message=f"新版下載失敗：{e}", ok=False, fetch_failed=True)
+                continue
             try:
                 if what == "chars":                             # needs no server: just the game's files
                     self._say(characters=characters(cfg.wow_path if cfg else self._cfg.wow_path if self._cfg else ""))
@@ -211,7 +236,7 @@ def main(config: Optional[str] = None) -> int:
         except Exception:
             pass
     root = tk.Tk()
-    root.title("AdventureSync")
+    root.title(f"AdventureSync {__version__}")
     # Text follows the display's scaling by itself; lengths given in pixels have to be scaled here.
     zoom = max(root.winfo_fpixels("1i") / 96, 1) if sys.platform.startswith("win") else 1
     px = lambda n: round(n * zoom)                                             # noqa: E731
@@ -219,6 +244,46 @@ def main(config: Optional[str] = None) -> int:
     frame = ttk.Frame(root, padding=14)
     frame.pack(fill="both", expand=True)
     frame.columnconfigure(1, weight=1)
+
+    # shown above everything else, and only while the server offers a newer version
+    bar = ttk.Frame(root, padding=(14, 12, 14, 0))
+    bar_text = ttk.Label(bar, foreground="#b26a00")
+    bar_text.pack(side="left")
+    newer: Dict[str, Any] = {}
+
+    def offer(found: Optional[Dict[str, Any]]) -> None:
+        newer.clear()
+        if not found:
+            bar.pack_forget()
+            return
+        newer.update(found)
+        bar_text.configure(text=f"有新版本 {found['version']}（這個是 {__version__}）")
+        bar_button.configure(text="下載並開啟新版" if update.can_fetch(found) else "下載新版", state="normal")
+        bar.pack(fill="x", before=frame)
+
+    def get_update() -> None:
+        if not newer:
+            return
+        if update.can_fetch(newer):
+            bar_button.configure(text="下載中…", state="disabled")
+            worker.ask("fetch", dict(newer))
+            return
+        import webbrowser
+        webbrowser.open(newer["url"])
+        note("已用瀏覽器下載新版。" + ("解壓後蓋掉舊的資料夾，" if newer["kind"] == "source" else "下載完成後，") + "關掉這個視窗，改開新的 AdventureSync。", True)
+
+    def opened(path: str) -> None:
+        try:
+            update.launch(Path(path))
+        except OSError as e:
+            note(f"新版已下載到 {path}，但開不起來（{e}）。請關掉這個視窗後自己點兩下開啟。", False)
+            bar_button.configure(text="下載並開啟新版", state="normal")
+            return
+        note(f"新版已下載到 {path}，正在開啟；這個視窗會自己關掉。舊的檔案可以刪除。", True)
+        root.after(1500, close)
+
+    bar_button = ttk.Button(bar, command=get_update)
+    bar_button.pack(side="left", padx=(10, 0))
 
     fields = {"url": tk.StringVar(value=cfg.url), "token": tk.StringVar(value=cfg.api_token),
               "wow": tk.StringVar(value=cfg.wow_path), "device": tk.StringVar(value=cfg.device_id)}
@@ -349,6 +414,15 @@ def main(config: Optional[str] = None) -> int:
                     write(r["message"])
                 if "characters" in r:
                     list_people(r["characters"])
+                if "update" in r:
+                    offer(r["update"])
+                if "fetching" in r:
+                    got, size = r["fetching"]
+                    bar_button.configure(text=f"下載中… {got * 100 // size}%" if size else f"下載中… {got / 1048576:.0f} MB")
+                if r.get("fetch_failed"):
+                    bar_button.configure(text="再試一次", state="normal")
+                if "fetched" in r:
+                    opened(r["fetched"])
                 if "waiting" in r:
                     shown["waiting"].configure(text=(r["waiting"] + "：資料先留在這台電腦，填了權杖就會補傳") if r["waiting"] else "沒有")
                 if "connected" in r:
@@ -376,12 +450,13 @@ def main(config: Optional[str] = None) -> int:
     worker.start()
     list_people([])
     worker.ask("chars", cfg)
+    worker.ask("update", cfg)
     if cfg.url and (cfg.api_token or cfg.tokens):       # settings from last time: show where things stand
         worker.ask("test", cfg)
     root.after(300, poll)
     hook = getattr(main, "_started", None)              # lets a test drive the window
     if hook:
         hook(root, fields, worker, {"save": save, "send": send, "shown": shown, "message": message, "own": own,
-                                    "people": people})
+                                    "people": people, "bar": bar, "bar_text": bar_text, "bar_button": bar_button})
     root.mainloop()
     return 0

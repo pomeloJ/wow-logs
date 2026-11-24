@@ -42,6 +42,13 @@ cd agent && ../.venv/bin/python AdventureSync.pyw
 Python 與插件）會上傳並出現在 `/setup`，對方下載後點兩下就能用。不同系統要各自在該系統上編譯。
 檔案沒有簽署，Windows 第一次開啟會顯示 SmartScreen 警告（「其他資訊 → 仍要執行」），少數防毒軟體也可能誤判。
 
+**新版通知**：同步程式開啟時、之後每 6 小時，會問伺服器的 `/api/v1/setup`（不需要權杖）有沒有比自己新的版本，
+有的話視窗最上面會出現「有新版本」和一個按鈕。Windows 的單一檔案版按下去會把新檔下載到舊檔旁邊
+（檔名帶版本，例如 `AdventureSync-windows-x64-0.3.0.exe`）、開啟新版、關掉自己，舊檔可以刪；
+macOS 與原始碼版則是用瀏覽器下載，自己換開新的。**發新版的步驟**：改 `agent/adventuresync/__init__.py` 的
+`__version__`，再執行 `python scripts/build-client.py --upload`（版本會跟著檔案一起上傳）；原始碼版的版本
+在重新部署伺服器後更新。直接用 scp 把檔案丟進 `data/builds/` 的話伺服器不知道它的版本，舊版就不會收到通知。
+
 **Windows 上的指令**（PowerShell）：`py -3.11 -m venv .venv`、`.venv\Scripts\python -m pip install -r agent\requirements.txt`、
 `cd agent; ..\.venv\Scripts\python -m adventuresync`（加上 `run`、`validate` 等就是不開視窗的用法）。
 遊戲資料夾留空時，會依序找登錄檔記載的安裝位置與每顆硬碟上常見的資料夾。

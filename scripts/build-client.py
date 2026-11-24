@@ -14,6 +14,7 @@ Needs PyInstaller in the Python that runs this:  python -m pip install pyinstall
 """
 import argparse
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -40,18 +41,25 @@ def build() -> Path:
     else:                                            # the .app is a folder: hand it out zipped
         out = Path(shutil.make_archive(str(ROOT / "dist" / f"AdventureSync-macos-{arch}"), "zip",
                                        ROOT / "dist", "AdventureSync.app"))
-    print(f"built {out} ({out.stat().st_size / 1048576:.1f} MB)")
+    print(f"built {out} (version {version()}, {out.stat().st_size / 1048576:.1f} MB)")
     return out
+
+
+def version() -> str:
+    """The version written in the program's source: uploaded with the build, so that copies
+    already handed out can tell their users a newer one is on the server."""
+    source = (ROOT / "agent" / "adventuresync" / "__init__.py").read_text(encoding="utf-8")
+    return re.search(r'__version__\s*=\s*"([^"]+)"', source).group(1)
 
 
 def upload(path: Path, url: str, token: str) -> None:
     import httpx
     with open(path, "rb") as f:
-        r = httpx.put(f"{url.rstrip('/')}/api/v1/builds/{path.name}", content=f, timeout=600,
+        r = httpx.put(f"{url.rstrip('/')}/api/v1/builds/{path.name}", content=f, timeout=600, params={"version": version()},
                       headers={"Authorization": f"Bearer {token}", "User-Agent": "AdventureSync/0.1"})
     if r.status_code != 200:
         sys.exit(f"upload failed: HTTP {r.status_code} {r.text[:200]}")
-    print(f"uploaded: {url.rstrip('/')}/setup now offers {path.name}")
+    print(f"uploaded: {url.rstrip('/')}/setup now offers {path.name} (version {version()})")
 
 
 def main() -> None:
