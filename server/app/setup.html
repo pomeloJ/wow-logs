@@ -97,20 +97,24 @@ $("open").textContent = windows ? "Windows 會提醒這是未簽署的程式：�
 // The big button is the ready-made program for this computer; everything else is a small link below it.
 function show(r) {
   const builds = r.builds || [], mine = builds.find(b => (windows && kind(b.name) === "Windows") || (mac && kind(b.name) === "macOS"));
-  const link = b => "/download/builds/" + encodeURIComponent(b.name), ver = v => v ? " " + v : "";
+  // A file keeps its name from one version to the next. The version in the address makes sure it is this
+  // version that arrives, not a copy of an older one kept by something in front of the server.
+  const fresh = (v, n) => v ? "?v=" + encodeURIComponent(v + (n ? "-" + n : "")) : "";
+  const link = b => "/download/builds/" + encodeURIComponent(b.name) + fresh(b.version || b.updated, b.size), ver = v => v ? " " + v : "";
+  const source = "/download/client-source.zip" + fresh(r.source_version), addon = "/download/addon.zip" + fresh(r.addon_version);
   if (mine) {
     $("main").href = link(mine); $("main").textContent = `下載 ${kind(mine.name)} 版`;
     $("about").textContent = `版本${ver(mine.version) || " —"}　${size(mine.size)}　不需要安裝其他東西`;
   } else if (r.source) {
-    $("main").textContent = "下載原始碼版";
+    $("main").href = source; $("main").textContent = "下載原始碼版";
     $("about").replaceChildren(`${windows || mac ? "這台伺服器還沒有" + (windows ? " Windows" : " macOS") + " 的免安裝版。" : ""}原始碼版需要先裝 `,
       el("a", { href: "https://www.python.org/downloads/", rel: "noreferrer", text: "Python 3.11 以上" }), "。");
   } else {
     $("main").remove(); $("about").textContent = "這台伺服器上目前沒有可以下載的程式。";
   }
   const rest = builds.filter(b => b !== mine).map(b => el("li", null, el("a", { href: link(b), text: (kind(b.name) || b.name) + " 版" }), el("small", { text: ver(b.version) })));
-  if (r.source && mine) rest.push(el("li", null, el("a", { href: "/download/client-source.zip", text: "原始碼版" }), el("small", { text: `${ver(r.source_version)}（需要 Python）` })));
-  rest.push(el("li", null, el("a", { href: "/download/addon.zip", text: "只要遊戲插件" }), el("small", { text: ver(r.addon_version) })));
+  if (r.source && mine) rest.push(el("li", null, el("a", { href: source, text: "原始碼版" }), el("small", { text: `${ver(r.source_version)}（需要 Python）` })));
+  rest.push(el("li", null, el("a", { href: addon, text: "只要遊戲插件" }), el("small", { text: ver(r.addon_version) })));
   $("others").replaceChildren(...rest);
 }
 fetch("/api/v1/setup").then(r => r.json()).then(show).catch(() => show({ builds: [], source: true }));

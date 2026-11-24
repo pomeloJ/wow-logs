@@ -192,6 +192,9 @@ def test_setup_page_and_client_downloads(tmp_path):
     assert put().status_code == 200 and web.get("/api/v1/setup").json()["builds"][0]["version"] is None
     assert put(version="1.2.4").status_code == 200
     got = web.get("/download/builds/AdventureSync-windows-x64.exe")
+    # downloads keep their name from version to version: nothing in between may keep a copy
+    assert got.headers["cache-control"] == "no-store" and web.get("/download/addon.zip").headers["cache-control"] == "no-store"
+    assert web.get("/download/builds/AdventureSync-windows-x64.exe?v=1.2.4-5002").content == got.content
     assert got.content[:2] == b"MZ" and "attachment" in got.headers["content-disposition"]
     assert web.get("/download/builds/nope.exe").status_code == 404
     assert web.delete("/api/v1/builds/AdventureSync-windows-x64.exe", headers=w).status_code == 200

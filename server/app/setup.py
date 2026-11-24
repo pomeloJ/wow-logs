@@ -26,6 +26,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ALLOWED = (".py", ".pyw", ".lua", ".toc", ".txt", ".xml")
 BUILD_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.(exe|zip|dmg|pkg|gz)$")
 MAX_BUILD = 150 * 1024 * 1024
+# Sent with every download. A file keeps its name from one version to the next, so a copy kept
+# by something in front of the server (Cloudflare keeps .exe and .zip) would be the old version.
+FRESH = {"Cache-Control": "no-store"}
 VERSION = re.compile(r"^\d+(\.\d+){0,3}$")
 
 
@@ -128,7 +131,7 @@ def register(app, can_write, builds_dir: str, client_dir: Optional[str] = None) 
         if not src:
             raise HTTPException(404, "the program's files are not on this server")
         return Response(bundle(src, whole), media_type="application/zip",
-                        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+                        headers={"Content-Disposition": f'attachment; filename="{filename}"', **FRESH})
 
     @app.get("/setup", include_in_schema=False)
     def setup_page():
@@ -154,7 +157,7 @@ def register(app, can_write, builds_dir: str, client_dir: Optional[str] = None) 
         path = os.path.join(builds_dir, name)
         if not BUILD_NAME.match(name) or not os.path.isfile(path):
             raise HTTPException(404, "no such file")
-        return FileResponse(path, media_type="application/octet-stream", filename=name)
+        return FileResponse(path, media_type="application/octet-stream", filename=name, headers=FRESH)
 
     @app.put("/api/v1/builds/{name}", dependencies=[Depends(can_write)])
     async def put_build(name: str, request: Request, version: Optional[str] = None):

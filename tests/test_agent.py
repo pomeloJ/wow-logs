@@ -111,7 +111,7 @@ def test_newer_version_is_found_fetched_and_named_after_its_version(tmp_path, mo
     # run from source: only the source's own version counts, and the server has the same one
     assert update.check("http://hub", web) is None
     found = update.check("http://hub/", web, current="0.0.1")
-    assert (found["kind"], found["version"], found["url"]) == ("source", __version__, "http://hub/download/client-source.zip")
+    assert (found["kind"], found["version"], found["url"]) == ("source", __version__, f"http://hub/download/client-source.zip?v={__version__}")
     assert not update.can_fetch(found)
     # as the one-file Windows program: the build for this kind of computer, when it is newer
     monkeypatch.setattr(update.sys, "frozen", True, raising=False)
@@ -127,7 +127,8 @@ def test_newer_version_is_found_fetched_and_named_after_its_version(tmp_path, mo
     assert update.check("http://hub", web, current="0.10.0") is None and update.check("http://hub", web, current="0.11") is None
     found = update.check("http://hub", web, current="0.9.5")
     assert (found["kind"], found["version"], found["size"]) == ("build", "0.10.0", 70002) and update.can_fetch(found)
-    assert found["url"] == "http://hub/download/builds/AdventureSync-windows-x64.exe"
+    # the address names the version, so a copy of an older one kept along the way is never what arrives
+    assert found["url"] == "http://hub/download/builds/AdventureSync-windows-x64.exe?v=0.10.0-70002"
     seen = []
     path = update.fetch(found, tmp_path, lambda got, size: seen.append((got, size)), client=web)
     assert path == tmp_path / "AdventureSync-windows-x64-0.10.0.exe" and path.read_bytes() == b"MZ" + b"n" * 70000

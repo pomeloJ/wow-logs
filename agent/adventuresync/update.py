@@ -32,6 +32,16 @@ def as_numbers(version: Any) -> Tuple[int, ...]:
     return tuple(int(n) for n in text.split(".")) if re.fullmatch(r"\d+(\.\d+){0,3}", text) else ()
 
 
+def fresh(version: Any, size: Any = None) -> str:
+    """What to put after a download's address so that it is this version that arrives.
+
+    A build keeps its file name from one version to the next. Something between the program and
+    the server that keeps copies of files (Cloudflare does, for .exe and .zip) would go on
+    handing out the old one under that name; it keeps a copy per whole address, so an address
+    that names the version gets that version."""
+    return f"?v={version}" + (f"-{size}" if size else "") if version else ""
+
+
 def packed() -> bool:
     """Running as a ready-made one-file program, not from source with Python."""
     return bool(getattr(sys, "frozen", False))
@@ -70,10 +80,10 @@ def check(url: str, client: Optional[Any] = None, current: str = __version__) ->
             return None
         best = max(newer, key=lambda b: as_numbers(b["version"]))
         return {"version": best["version"], "name": best["name"], "size": best.get("size"), "kind": "build",
-                "url": f"{base}/download/builds/{best['name']}"}
+                "url": f"{base}/download/builds/{best['name']}{fresh(best['version'], best.get('size'))}"}
     if as_numbers(offered.get("source_version")) > mine:
         return {"version": offered["source_version"], "name": "AdventureSync-source.zip", "size": None, "kind": "source",
-                "url": f"{base}/download/client-source.zip"}
+                "url": f"{base}/download/client-source.zip{fresh(offered['source_version'])}"}
     return None
 
 
@@ -179,7 +189,7 @@ def check_addon(url: str, addon_dirs: List[Path], client: Optional[Any] = None) 
     if not old:
         return None
     return {"version": offered, "installed": min((a["version"] or "?" for a in old), key=as_numbers),
-            "folders": [a["folder"] for a in old], "url": f"{base}/download/addon.zip"}
+            "folders": [a["folder"] for a in old], "url": f"{base}/download/addon.zip{fresh(offered)}"}
 
 
 def addon_files(data: bytes) -> Dict[str, bytes]:
