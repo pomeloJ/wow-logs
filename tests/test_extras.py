@@ -298,3 +298,15 @@ def test_every_hit_miss_and_heal_is_sent_as_a_row(tmp_path):
     assert (heal["way"], heal["who"], heal["amount"], heal["raw"], heal["crit"], heal["kind"]) == ("heal", "", 70, 90, 1, "heal")
     assert extras.process_combat_logs(g, DB, q, uploader=up) == 0 and len(up.sent) == 1     # not sent twice
     assert path.exists()
+
+
+def test_combat_log_that_was_off_while_playing_is_noticed(tmp_path):
+    import os
+    assert extras.combat_log_state(tmp_path, saved_at=1000.0) == {"last": None, "missed": True}
+    assert extras.combat_log_state(tmp_path) == {"last": None, "missed": False}       # never played: nothing to say
+    (tmp_path / "Logs").mkdir()
+    f = tmp_path / "Logs" / "WoWCombatLog-112526_200000.txt"
+    f.write_text("x")
+    os.utime(f, (50000, 50000))
+    assert extras.combat_log_state(tmp_path, saved_at=50000 + 600) == {"last": 50000.0, "missed": False}
+    assert extras.combat_log_state(tmp_path, saved_at=50000 + 7200)["missed"] is True

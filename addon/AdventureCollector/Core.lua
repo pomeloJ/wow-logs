@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.1.0"
+local VERSION = "0.1.1"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -14,6 +14,8 @@ local DEFAULTS = {
     maxEvents = 5000,      -- oldest events are dropped beyond this
     showButton = true,     -- on-screen "save now" button
     requestPlayed = true,  -- ask for /played once per login (prints two chat lines)
+    combatLogRemind = true, -- say so in chat when the game's combat log is off
+    combatLogAuto = false,  -- switch the game's combat log on at login instead of only saying so
 }
 
 local db, charId, myGuid
@@ -59,6 +61,41 @@ end
 local function say(msg)
     print("|cff33ff99AdventureCollector|r: " .. tostring(msg))
 end
+
+-- ------------------------------------------------------------ combat log reminder
+-- Damage figures and kills inside dungeons come from the file the game writes while its own
+-- combat log is on (/combatlog). Nothing else tells the player it is off, and a session
+-- played without it has no figures at all, so say so: at login, and again on joining a group
+-- or entering a dungeon.
+local combatLogSaid
+
+-- true or false; nil when the client does not say (no such call, or it was refused).
+local function combatLogOn()
+    if not db or db.settings.combatLogCheck == false or type(LoggingCombat) ~= "function" then return nil end
+    local ok, on = pcall(LoggingCombat)
+    if not ok or isSecret(on) then return nil end
+    return on and true or false
+end
+
+local function checkCombatLog(again)
+    local on = combatLogOn()
+    if on ~= false then return on end
+    if db.settings.combatLogAuto then
+        pcall(LoggingCombat, true)
+        if combatLogOn() then
+            say("已替你開啟戰鬥紀錄（/combatlog），這次遊玩會有傷害統計。")
+            return true
+        end
+    end
+    if not db.settings.combatLogRemind then return false end
+    local t = now()
+    if again and combatLogSaid and t - combatLogSaid < 600 then return false end
+    combatLogSaid = t
+    say("|cffff5555戰鬥紀錄沒有開|r，現在打的不會有傷害統計。輸入 |cffffff00/combatlog|r 開啟；"
+        .. "想要每次登入自動開，輸入 |cffffff00/adventure combatlog auto|r")
+    return false
+end
+ns.checkCombatLog = checkCombatLog
 
 local function newInstallationId()
     local function hex() return string.format("%08x", math.random(0, 2147483646)) end
@@ -480,9 +517,11 @@ function handlers.PLAYER_LOGIN()
             ns.initCounters()
             ns.syncGroup()          -- still grouped after a reload, or left while offline
             if db.settings.requestPlayed then safe(RequestTimePlayed) end
+            checkCombatLog()
         end)
     else
         samplePosition(true)
+        checkCombatLog()
     end
     startTicker()
     pcall(ns.createButton) -- UI problems must never stop data collection
@@ -794,7 +833,7 @@ function ns.groupTick()
     sampleGroup()
     checkDeaths()
 end
-function handlers.GROUP_JOINED() syncGroup() end
+function handlers.GROUP_JOINED() syncGroup() checkCombatLog(true) end
 function handlers.GROUP_LEFT() syncGroup() end
 
 function handlers.PARTY_KILL(attackerGUID, targetGUID)
@@ -896,6 +935,7 @@ local function checkInstance()
     end
     if id then
         addEvent("INSTANCE_ENTERED", { instance_id = id, name = name, instance_type = kind, difficulty = difficulty })
+        checkCombatLog(true)
     end
     currentInstance, currentInstanceName = id, name
 end
@@ -1175,6 +1215,9 @@ local function onBlocked(kind, addon, func)
         end
         db.settings.matePositions = false
     end
+    if type(func) == "string" and func:find("LoggingCombat") then
+        db.settings.combatLogCheck = false         -- this client refuses the question: never ask again
+    end
 end
 function handlers.ADDON_ACTION_BLOCKED(addon, func) onBlocked("blocked", addon, func) end
 function handlers.ADDON_ACTION_FORBIDDEN(addon, func) onBlocked("forbidden", addon, func) end
@@ -1211,6 +1254,8 @@ local function status()
     say("events this session: " .. sessionEvents .. "  stored: " .. #db.events
         .. "  next seq: " .. db.nextSequence)
     say("character id: " .. tostring(charId))
+    local logging = combatLogOn()
+    if logging ~= nil then say("戰鬥紀錄 (/combatlog): " .. (logging and "已開啟" or "沒有開，不會有傷害統計")) end
 end
 
 SLASH_ADVENTURECOLLECTOR1 = "/adventure"
@@ -1229,6 +1274,22 @@ SlashCmdList.ADVENTURECOLLECTOR = function(msg)
         saveNow()
     elseif msg == "mapshot" then
         mapShot()
+    elseif msg:match("^combatlog") then
+        if not db then return end
+        local what = msg:match("^combatlog%s+(%S+)")
+        if what == "auto" then
+            db.settings.combatLogAuto = not db.settings.combatLogAuto
+            say(db.settings.combatLogAuto and "之後每次登入會自動開啟戰鬥紀錄" or "不再自動開啟戰鬥紀錄")
+            if db.settings.combatLogAuto then checkCombatLog() end
+        elseif what == "quiet" then
+            db.settings.combatLogRemind = not db.settings.combatLogRemind
+            say(db.settings.combatLogRemind and "戰鬥紀錄沒開時會提醒" or "戰鬥紀錄沒開時不再提醒")
+        else
+            local on = combatLogOn()
+            if on == nil then say("這個遊戲版本不讓插件知道戰鬥紀錄有沒有開，請自己輸入 /combatlog 確認")
+            elseif on then say("戰鬥紀錄已開啟")
+            else combatLogSaid = nil checkCombatLog() end
+        end
     elseif msg == "button" then
         if db then
             db.settings.showButton = not db.settings.showButton
@@ -1239,6 +1300,7 @@ SlashCmdList.ADVENTURECOLLECTOR = function(msg)
         end
     elseif msg == "help" then
         say("/adventure [status] - 狀態;  /adventure save - 立即存檔;  /adventure mapshot - 截目前地圖當底圖;  /adventure chat - 聊天紀錄設定;  "
+            .. "/adventure combatlog - 戰鬥紀錄有沒有開 (auto: 每次登入自動開, quiet: 不提醒);  "
             .. "/adventure button - 顯示/隱藏存檔按鈕;  "
             .. "/adventure on|off - 啟用/暫停")
     else

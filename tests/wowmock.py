@@ -37,6 +37,12 @@ end
 function UnitIsDeadOrGhost(unit) local m = mate(unit) return m and m.dead or false end
 function CombatLogGetCurrentEventInfo() return unpack(MOCK.cleu or {}, 1, 16) end
 function IsInGroup() return MOCK.grouped or false end
+-- The game's own combat log: asked with no argument, switched with one.
+function LoggingCombat(on)
+    if MOCK.nologging then error("refused") end
+    if on ~= nil then MOCK.logging = on and true or false end
+    return MOCK.logging or false
+end
 function IsInRaid() return false end
 function GetNumGroupMembers() return MOCK.grouped and (MOCK.groupSize or #MOCK.party + 1) or 0 end
 function UnitIsGroupLeader() return MOCK.leader or false end

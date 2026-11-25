@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import __version__, update
+from . import __version__, extras, update
 from .core import (DB_GLOBAL, Config, Queue, Uploader, find_saved_variables, load_config, read_stable, save_config,
                    scan, wow_roots)
 
@@ -112,7 +112,16 @@ class Worker(threading.Thread):
         self.reports.put(report)
 
     def _status(self, store: Queue, cfg: Config) -> None:
-        self._say(counts=store.counts(), files=[str(f) for f in find_saved_variables(cfg.wow_path)], auto=self.auto)
+        files = find_saved_variables(cfg.wow_path)
+        # The newest save decides: that is the game folder being played in.
+        combat = None
+        try:
+            newest = max(files, key=lambda f: f.stat().st_mtime, default=None)
+            if newest is not None:
+                combat = extras.combat_log_state(newest.parents[4], newest.stat().st_mtime)
+        except OSError:
+            pass
+        self._say(counts=store.counts(), files=[str(f) for f in files], auto=self.auto, combat=combat)
 
     def run(self) -> None:
         store: Optional[Queue] = None
@@ -424,7 +433,7 @@ def main(config: Optional[str] = None) -> int:
     status.grid(row=7, column=0, columnspan=3, sticky="ew")
     status.columnconfigure(1, weight=1)
     shown = {}
-    for row, (key, text) in enumerate((("connected", "伺服器"), ("auto", "自動同步"), ("addon", "遊戲插件"), ("files", "遊戲存檔"), ("pending", "等待上傳"),
+    for row, (key, text) in enumerate((("connected", "伺服器"), ("auto", "自動同步"), ("addon", "遊戲插件"), ("files", "遊戲存檔"), ("combat", "戰鬥紀錄"), ("pending", "等待上傳"),
                                        ("uploaded", "已上傳"), ("rejected", "被拒絕"), ("waiting", "傳不上去的角色"), ("synced", "上次同步"))):
         ttk.Label(status, text=text).grid(row=row, column=0, sticky="w", padx=(0, 14), pady=1)
         shown[key] = ttk.Label(status, text="—", wraplength=px(380), justify="left")
@@ -484,6 +493,13 @@ def main(config: Optional[str] = None) -> int:
                     shown["rejected"].configure(text=f"{c.get('rejected', 0)} 筆")
                     shown["files"].configure(text="\n".join(r["files"]) if r["files"] else "找不到：請先安裝插件，進遊戲後按一次「存檔」")
                     shown["auto"].configure(text="進行中" if r["auto"] else "未啟動")
+                    combat = r.get("combat")
+                    if combat is not None:
+                        when = time.strftime("%m/%d %H:%M", time.localtime(combat["last"])) if combat["last"] else ""
+                        shown["combat"].configure(
+                            foreground="#c0392b" if combat["missed"] else "",
+                            text=(f"最後寫入 {when}" if not combat["missed"] else
+                                  (f"上次遊玩時沒有開（最後寫入 {when}）" if when else "沒有開過") + "：在遊戲輸入 /combatlog 才有傷害統計"))
                     auto_button.configure(text="停止自動同步" if r["auto"] else "開始自動同步")
         except queues.Empty:
             pass

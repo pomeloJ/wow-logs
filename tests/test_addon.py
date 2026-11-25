@@ -566,6 +566,35 @@ def test_combat_log_is_not_used_and_pet_kills_count():
     assert [k.killed_by for k in of(g, "MOB_KILLED")] == ["鈴", None]
 
 
+def test_says_when_the_combat_log_is_off_and_can_switch_it_on():
+    said = lambda g: [line for line in g.mock.out.values() if "戰鬥紀錄" in line]   # noqa: E731
+    g = Game()
+    g.login()
+    assert len(said(g)) == 1 and "/combatlog" in said(g)[0]              # off at login: said once
+    g.fire("GROUP_JOINED")
+    assert len(said(g)) == 1                                             # not again within ten minutes
+    g.mock.time += 601
+    g.fire("GROUP_JOINED")
+    assert len(said(g)) == 2
+    g.mock.logging = True                                                # the player typed /combatlog
+    g.mock.time += 601
+    g.fire("GROUP_JOINED")
+    assert len(said(g)) == 2 and "已開啟" in g.slash("combatlog")[-1]
+    # asked to do it itself: switched on there and then, and at every login after
+    g.mock.logging = False
+    g.slash("combatlog auto")
+    assert g.mock.logging is True and g.db.settings.combatLogAuto is True
+    g.mock.logging = False
+    g.fire("PLAYER_LOGIN")
+    assert g.mock.logging is True and "已替你開啟" in said(g)[-1]
+    # on already, told to keep quiet, or a client that will not say: nothing is said
+    for prepare in ("MOCK.logging = true", "AdventureCollectorDB = { settings = { combatLogRemind = false } }", "MOCK.nologging = true"):
+        g = Game()
+        g.lua.execute(prepare)
+        g.login()
+        assert not said(g), prepare
+
+
 def test_blocked_calls_are_recorded_even_before_login():
     g = Game()
     g.load_addon()

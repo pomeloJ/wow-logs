@@ -531,6 +531,22 @@ def recorded_kills(queue) -> Dict[int, List[float]]:
     return out
 
 
+def combat_log_state(game_dir: Path, saved_at: Optional[float] = None, slack: float = 3600) -> Dict[str, Any]:
+    """Whether the game's combat log looks switched on: {"last": when it was last written to, or
+    None when there is no such file, "missed": True when the game was played well after that}.
+
+    saved_at is when the addon last saved, which the game does on logging out. A log that
+    stopped long before that was off for the end of that session at least; one that stopped
+    a little before may only mean the last fights were a while before logging out."""
+    last = None
+    try:
+        for f in (game_dir / "Logs").glob("WoWCombatLog*.txt"):
+            last = max(last or 0, f.stat().st_mtime)
+    except OSError:
+        pass
+    return {"last": last, "missed": bool(saved_at) and (last is None or saved_at - last > slack)}
+
+
 def process_combat_logs(game_dir: Path, db: Any, queue, idle_after: float = 120,
                         saved_at: Optional[float] = None, uploader=None) -> int:
     """Read what was appended to the game's combat log files. Returns events queued.
