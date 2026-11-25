@@ -119,9 +119,10 @@ def test_save_now_button_and_command():
     g = Game()
     g.login()
     b = g.mock.button
-    assert b.text == f"存檔 ({len(g.events())})"      # shows events since last save
+    assert b.text == f"|cffff3333!|r 存檔 ({len(g.events())})"    # a "!" while the combat log is off
+    g.mock.logging = True
     g.tick(60)
-    assert b.text == f"存檔 ({len(g.events())})"
+    assert b.text == f"存檔 ({len(g.events())})"      # shows events since last save
     b.scripts.OnClick(b)
     assert g.mock.reloads == 1
     g.slash("save")
@@ -644,7 +645,11 @@ def test_a_dialog_pops_up_when_the_combat_log_is_off_and_its_button_switches_it_
     assert g.lua.eval("#SHOWN") == 1                       # no more often than the line of chat
     box.OnAccept()
     assert g.mock.logging is True
-    g.mock.logging = False
+    assert "/combatlog" in box.text                        # the command is on the dialog too
+    # a client that will not let the addon do it: the command is put in the chat box instead
+    g.lua.execute("LoggingCombat = function(on) return false end function ChatFrame_OpenChat(t) TYPED = t end")
+    box.OnAccept()
+    assert g.lua.eval("TYPED") == "/combatlog" and "Enter" in list(g.mock.out.values())[-1]
     box.OnAlt()                                            # "do not remind me again"
     g.mock.time += 601
     g.fire("GROUP_JOINED")

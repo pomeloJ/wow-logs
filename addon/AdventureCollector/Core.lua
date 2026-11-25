@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.1.2"
+local VERSION = "0.1.3"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -27,8 +27,12 @@ local last = { map = nil, x = nil, y = nil, t = 0 }
 local ticker
 local saveButton
 
+local combatLogOn   -- defined with the combat log reminder below
 local function updateButton()
-    if saveButton then saveButton:SetText("存檔 (" .. sessionEvents .. ")") end
+    if not saveButton then return end
+    -- A red "!" for as long as the game's combat log is off (and reminders are wanted).
+    local off = combatLogOn and db and db.settings.combatLogRemind and combatLogOn() == false
+    saveButton:SetText((off and "|cffff3333!|r " or "") .. "存檔 (" .. sessionEvents .. ")")
 end
 
 -- ------------------------------------------------------------ helpers
@@ -70,7 +74,7 @@ end
 local combatLogSaid
 
 -- true or false; nil when the client does not say (no such call, or it was refused).
-local function combatLogOn()
+function combatLogOn()
     if not db or db.settings.combatLogCheck == false or type(LoggingCombat) ~= "function" then return nil end
     local ok, on = pcall(LoggingCombat)
     if not ok or isSecret(on) then return nil end
@@ -86,16 +90,24 @@ local function combatLogPopup()
     end
     if type(StaticPopupDialogs) ~= "table" or type(StaticPopup_Show) ~= "function" then return end
     StaticPopupDialogs[POPUP] = StaticPopupDialogs[POPUP] or {
-        text = "戰鬥紀錄沒有開啟。\n\n傷害統計、技能分析與副本內的擊殺都靠它，沒開就不會記錄。",
+        text = "戰鬥紀錄沒有開啟。\n\n傷害統計、技能分析與副本內的擊殺都靠它，沒開就不會記錄。"
+            .. "\n\n按「開啟戰鬥紀錄」，或在聊天輸入框輸入：\n|cffffff00/combatlog|r",
         button1 = "開啟戰鬥紀錄", button2 = "先不要", button3 = "不再提醒",
         OnAccept = function()
             pcall(LoggingCombat, true)
-            if combatLogOn() then say("戰鬥紀錄已開啟")
-            else say("沒辦法由插件開啟戰鬥紀錄，請輸入 |cffffff00/combatlog|r") end
+            if combatLogOn() then say("戰鬥紀錄已開啟") updateButton() return end
+            -- This client will not let an addon switch it on: put the command in the chat box,
+            -- so that all that is left to do is press Enter.
+            if type(ChatFrame_OpenChat) == "function" and pcall(ChatFrame_OpenChat, "/combatlog") then
+                say("插件沒辦法代你開啟：指令已經放進聊天輸入框，|cffffff00按 Enter|r 就會開啟。")
+            else
+                say("插件沒辦法代你開啟，請在聊天輸入框輸入 |cffffff00/combatlog|r 再按 Enter。")
+            end
         end,
         OnAlt = function()
             if db then db.settings.combatLogRemind = false end
             say("戰鬥紀錄沒開時不再提醒。要恢復：|cffffff00/adventure combatlog quiet|r")
+            updateButton()
         end,
         timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
     }

@@ -164,7 +164,7 @@ def test_setup_page_and_client_downloads(tmp_path):
     page = web.get("/setup")
     assert page.status_code == 200 and "AdventureSync" in page.text
     from adventuresync import __version__
-    assert web.get("/api/v1/setup").json() == {"source": True, "source_version": __version__, "addon_version": "0.1.2", "builds": []}
+    assert web.get("/api/v1/setup").json() == {"source": True, "source_version": __version__, "addon_version": "0.1.3", "builds": []}
     src = zipfile.ZipFile(io.BytesIO(web.get("/download/client-source.zip").content))
     names = set(src.namelist())
     assert {"AdventureSync/adventuresync/core.py", "AdventureSync/adventuresync/gui.py", "AdventureSync/AdventureSync.pyw",
