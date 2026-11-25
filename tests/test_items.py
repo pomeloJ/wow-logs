@@ -101,3 +101,27 @@ def test_two_handed_main_hand_blocks_the_off_hand(client):
     sword = by["短劍"]                              # a one-hander is compared with the main hand
     assert sword["slot_name"] == "主手" and sword["equipped"]["name"] == "橡木槌"
     assert sword["stat_diff"] == {"damage_per_second": -4.21, "strength": -5}
+
+
+def test_the_bank_as_it_was_last_seen(client):
+    snapshot(client, "c2")
+    assert client.get("/api/v1/characters/c2/bank", headers=READ).json()["bank"] is None      # never opened
+    assert client.get("/api/v1/characters/c2/items", headers=READ).json()["bank"] is None
+    snapshot(client, bank={"slots": 30, "free": 27, "seen_at": 1795000000, "items": [
+        {"item_id": 2, "name": "輕皮", "count": 40, "quality": 1, "sell_price": 15},
+        {"item_id": 3000, "name": "流浪者外衣", "count": 1, "quality": 2, "item_level": 24, "sell_price": 410,
+         "stats": {"armor": 88}},
+        {"item_id": 9, "name": "任務信件", "count": 1, "quality": 1}]})
+    r = client.get("/api/v1/characters/c1/bank", headers=READ).json()
+    bank = r["bank"]
+    assert (bank["slots"], bank["free"], bank["value"], bank["seen_at"]) == (30, 27, 1010, "2026-11-18T11:06:40Z")
+    assert [(i["name"], i["count"], i["value"]) for i in bank["items"]] == [
+        ("流浪者外衣", 1, 410), ("輕皮", 40, 600), ("任務信件", 1, 0)]                      # best quality first
+    assert client.get("/api/v1/characters/c1/items", headers=READ).json()["bank"] == bank
+    # limited to the character a token is for, like everything else about a character
+    tok = client.post("/api/v1/characters/c1/voice-token", headers=AUTH).json()["token"]
+    S = {"Authorization": f"Bearer {tok}"}
+    assert client.get("/api/v1/characters/c1/bank", headers=S).status_code == 200
+    assert client.get("/api/v1/characters/c2/bank", headers=S).status_code == 403
+    assert client.get("/api/v1/characters/c1/bank").status_code == 401
+    assert "/api/v1/characters/{character_id}/bank" in client.get("/openapi.json").json()["paths"]

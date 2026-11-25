@@ -5,6 +5,7 @@ so they are the real values for this game version. Meant for tools (voice, MCP, 
 that need to answer "what am I wearing", "what is it worth" and "which one is better".
 """
 import json
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, HTTPException
@@ -135,6 +136,7 @@ def build(d: Dict[str, Any], names: Optional[Dict[int, str]] = None) -> Dict[str
         })
     has_stats = any(g["stats"] for g in equipment) or any(b["stats"] for b in bags)
     return {
+        "bank": bank(d, names),
         "level": level, "class": cls, "money": d.get("money"),
         "bag_slots": (d.get("bags") or {}).get("slots"), "bag_free": (d.get("bags") or {}).get("free"),
         "bag_value": total if priced else None, "junk_value": junk if priced else None,
@@ -143,11 +145,33 @@ def build(d: Dict[str, Any], names: Optional[Dict[int, str]] = None) -> Dict[str
     }
 
 
+def bank(d: Dict[str, Any], names: Optional[Dict[int, str]] = None) -> Optional[Dict[str, Any]]:
+    """What is in the bank, as it was the last time its window was open. None when never seen."""
+    b = d.get("bank")
+    if not isinstance(b, dict):
+        return None
+    names = names or {}
+    rows, total, priced = [], 0, False
+    for it in b.get("items") or []:
+        n = it.get("count") or 1
+        price = it.get("sell_price")
+        priced = priced or isinstance(price, (int, float))
+        value = (price or 0) * n
+        total += value
+        rows.append({"item_id": it.get("item_id"), "name": it.get("name") or names.get(it.get("item_id")),
+                     "quality": it.get("quality"), "count": n, "item_level": it.get("item_level"),
+                     "req_level": it.get("req_level"), "type": it.get("item_type"), "subtype": it.get("item_subtype"),
+                     "stats": it.get("stats") if isinstance(it.get("stats"), dict) else None,
+                     "sell_price": price, "value": value})
+    seen = b.get("seen_at")
+    return {"seen_at": datetime.fromtimestamp(seen, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            if isinstance(seen, (int, float)) else None,
+            "slots": b.get("slots"), "free": b.get("free"), "value": total if priced else None,
+            "items": sorted(rows, key=lambda r: (-(r["quality"] or 0), -r["value"], -r["count"]))}
+
+
 def register(app, db, can_read, world=None) -> None:
-    @app.get("/api/v1/characters/{character_id}/items")
-    def character_items(character_id: str, scope: Optional[str] = Depends(can_read)):
-        """Gear and bags with stats, vendor value, and how each wearable bag item compares
-        with what is worn in its slot. `has_stats` is false until a recent addon has run."""
+    def snapshot(character_id: str, scope: Optional[str]):
         if scope is not None and character_id != scope:
             raise HTTPException(403, "this link only covers one character")
         with db() as conn:
@@ -155,8 +179,27 @@ def register(app, db, can_read, world=None) -> None:
                                 "WHERE character_id=?", (character_id,)).fetchone()
         if not snap:
             raise HTTPException(404, "snapshot not found")
-        d = json.loads(snap["payload_json"])
+        return snap["captured_at"], json.loads(snap["payload_json"])
+
+    @app.get("/api/v1/characters/{character_id}/bank")
+    def character_bank(character_id: str, scope: Optional[str] = Depends(can_read)):
+        """What the character keeps in the bank: every item with its count and vendor value.
+        The game only shows the bank while its window is open, so this is the bank as it was at
+        `seen_at`, not now. `bank` is null when the character has not opened the bank since the
+        addon learned to record it."""
+        captured, d = snapshot(character_id, scope)
+        ids: List[int] = [e["item_id"] for e in (d.get("bank") or {}).get("items") or []
+                          if not e.get("name") and isinstance(e.get("item_id"), int)]
+        return {"character_id": character_id, "captured_at": captured,
+                "bank": bank(d, world.item_names(ids) if world and ids else {})}
+
+    @app.get("/api/v1/characters/{character_id}/items")
+    def character_items(character_id: str, scope: Optional[str] = Depends(can_read)):
+        """Gear and bags with stats, vendor value, and how each wearable bag item compares
+        with what is worn in its slot. `has_stats` is false until a recent addon has run.
+        `bank` is the bank as last seen (see `/bank`), or null."""
+        captured, d = snapshot(character_id, scope)
         ids: List[int] = [e["item_id"] for e in d.get("equipment") or []
                           if not e.get("name") and isinstance(e.get("item_id"), int)]
         names = world.item_names(ids) if world and ids else {}
-        return {"character_id": character_id, "captured_at": snap["captured_at"], **build(d, names)}
+        return {"character_id": character_id, "captured_at": captured, **build(d, names)}

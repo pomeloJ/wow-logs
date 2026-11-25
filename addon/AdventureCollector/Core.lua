@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.1.9"
+local VERSION = "0.2.0"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -312,10 +312,12 @@ function scanners.equipment()
     return out
 end
 
-function scanners.bags()
+-- What is in these containers: stacks of one item added up.
+local function scanContainers(first, final, list)
     if type(C_Container) ~= "table" then return nil end
     local byId, items, total, free = {}, {}, 0, 0
-    for bag = 0, 4 do
+    for i = first, final do
+        local bag = list and list[i] or i
         local n = plain(safe(C_Container.GetContainerNumSlots, bag))
         if type(n) == "number" then
             total = total + n
@@ -342,6 +344,8 @@ function scanners.bags()
     end
     return { slots = total, free = free, items = items }
 end
+
+function scanners.bags() return scanContainers(0, 4) end
 
 -- Every quest this character has ever turned in (ids, sorted), including ones done before
 -- the addon was installed. The client offers this under one of two names.
@@ -605,7 +609,6 @@ local function here(payload)
     return payload
 end
 
-function handlers.BAG_UPDATE_DELAYED() dirty.bags = true end
 -- The client loads item data lazily; rescan once it arrives so prices and stats fill in.
 function handlers.GET_ITEM_INFO_RECEIVED() dirty.equipment, dirty.bags = true, true end
 function handlers.PLAYER_EQUIPMENT_CHANGED() dirty.equipment, dirty.stats = true, true end
@@ -914,6 +917,57 @@ local function extra()
     return db.extra[charId]
 end
 
+-- ------------------------------------------------------------ bank
+-- The game only says what is in the bank while its window is open. So it is read then, on
+-- every change while it stays open, and kept in the saved table with the time it was seen:
+-- every snapshot carries the bank as it was the last time the player stood at a banker.
+local bankOpen, bankSaid
+
+-- The bank itself and the bags bought for it. Their numbers differ between clients, so they
+-- are taken by name where the client names them; a number that is no container has no slots.
+local function bankContainers()
+    local list, seen = {}, {}
+    local function add(bag)
+        if type(bag) == "number" and (bag < 0 or bag > 4) and not seen[bag] then seen[bag] = true list[#list + 1] = bag end
+    end
+    local index = type(Enum) == "table" and Enum.BagIndex
+    if type(index) == "table" then
+        add(index.Bank)
+        for i = 1, 8 do add(index["BankBag_" .. i]) add(index["CharacterBankTab_" .. i]) end
+    end
+    if #list == 0 then
+        add(-1)
+        for bag = 5, 11 do add(bag) end
+    end
+    return list
+end
+
+local function scanBank()
+    if not bankOpen or not db or not charId then return end
+    local list = bankContainers()
+    local bank = safe(scanContainers, 1, #list, list)
+    -- Nothing readable (the window closed meanwhile, or this client keeps the bank elsewhere):
+    -- keep what was seen before instead of recording an empty bank.
+    if type(bank) ~= "table" or bank.slots == 0 then
+        if type(db.debug) == "table" then db.debug.bank = "no slots in: " .. table.concat(list, ",") end
+        return
+    end
+    bank.seen_at = now()
+    extra().bank = bank
+    if not bankSaid then
+        bankSaid = true
+        say("已記錄銀行：" .. #bank.items .. " 種物品，空位 " .. bank.free .. "/" .. bank.slots .. "。按「存檔」後會上傳。")
+    end
+end
+
+function handlers.BANKFRAME_CLOSED() bankOpen = nil end
+function handlers.PLAYERBANKSLOTS_CHANGED() scanBank() end
+function handlers.PLAYERBANKBAGSLOTS_CHANGED() scanBank() end
+function handlers.BAG_UPDATE_DELAYED() dirty.bags = true scanBank() end
+-- Item names and prices arrive late: read the open bank again when they do.
+local itemInfoArrived = handlers.GET_ITEM_INFO_RECEIVED
+function handlers.GET_ITEM_INFO_RECEIVED() itemInfoArrived() scanBank() end
+
 function handlers.UPDATE_FACTION() dirty.reputations = true end
 
 function handlers.UNIT_STATS(unit)
@@ -1027,7 +1081,11 @@ end
 function handlers.MERCHANT_SHOW() interaction("merchant") end
 function handlers.TRAINER_SHOW() interaction("trainer") end
 function handlers.MAIL_SHOW() interaction("mailbox") end
-function handlers.BANKFRAME_OPENED() interaction("bank") end
+function handlers.BANKFRAME_OPENED()
+    interaction("bank")
+    bankOpen, bankSaid = true, nil
+    scanBank()
+end
 function handlers.AUCTION_HOUSE_SHOW() interaction("auction") end
 
 function handlers.TAXIMAP_OPENED()

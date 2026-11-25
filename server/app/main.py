@@ -113,7 +113,7 @@ limited token ever shows chat messages. `GET /api/v1/token` says what a token is
 **Where to start.** `GET /api/v1/characters` lists the characters; their `id` is the
 `character_id` everything else asks for. For a tool that answers questions:
 
-* how the character is doing now: `/characters/{id}/snapshot`, `/items`, `/quests`
+* how the character is doing now: `/characters/{id}/snapshot`, `/items`, `/bank`, `/quests`
 * what happened lately: `/stats/activity`, `/events`
 * group play: `/characters/{id}/groups`, then `/groups/{group_id}` (or `latest`) and its `/skills` and `/analysis`
 * combat outside a group: `/characters/{id}/combat/skills` and `/combat/analysis`
@@ -401,7 +401,7 @@ def create_app(
 
     @app.get("/api/v1/characters/{character_id}/snapshot")
     def get_snapshot(character_id: str, scope: Optional[str] = Depends(can_read)):
-        """The character as the addon last saw it: position, money, experience, gear, bags, quest log,
+        """The character as the addon last saw it: position, money, experience, gear, bags, bank (as last seen), quest log,
         professions, reputations, stats, flight points and completed quests. `captured_at` says how old it is."""
         allow(scope, character_id)
         with db() as conn:

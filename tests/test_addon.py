@@ -673,3 +673,33 @@ def test_loot_messages_say_how_the_item_arrived():
     g.fire("CHAT_MSG_LOOT", roll, "", "", "", "", "", 0, 0, "", 0, 0, "Player-1-A")
     g.fire("CHAT_MSG_LOOT", roll)
     assert len(of(g, "ITEM_LOOTED")) == 3 and len(of(g, "PARTY_LOOT")) == 2
+
+
+def test_the_bank_is_read_while_its_window_is_open_and_kept_afterwards():
+    g = Game()
+    g.login()
+    assert g.db.characters[CHAR].data.bank is None                       # never stood at a banker
+    g.lua.execute('MOCK.bags[-1] = { { itemID = 2589, stackCount = 20, quality = 1, itemName = "亞麻布" }, false } '
+                  'MOCK.bags[5] = { { itemID = 2589, stackCount = 5, quality = 1, itemName = "亞麻布" }, '
+                  '{ itemID = 4306, stackCount = 3, quality = 1, itemName = "絲綢" } }')
+    g.tick(15)
+    assert g.db.characters[CHAR].data.bank is None                       # in the game, but the window is shut
+    g.fire("BANKFRAME_OPENED")
+    assert "已記錄銀行：2 種物品" in list(g.mock.out.values())[-1]
+    g.tick(60)
+    bank = g.db.characters[CHAR].data.bank
+    assert bank.slots == 4 and bank.seen_at == g.mock.time - 60
+    assert {i.item_id: i.count for i in lua_list(bank["items"])} == {2589: 25, 4306: 3}
+    assert {i.item_id for i in lua_list(g.db.characters[CHAR].data.bags["items"])} == {2589, 6948}   # bags untouched
+    g.lua.execute("MOCK.bags[5][2].stackCount = 9")                      # something put in while it is open
+    said = len(g.mock.out)
+    g.fire("BAG_UPDATE_DELAYED")
+    assert {i.item_id: i.count for i in lua_list(g.db.extra[CHAR].bank["items"])}[4306] == 9 and len(g.mock.out) == said
+    # shut: the game no longer says what is in it, and what was seen stays, also after a reload
+    g.fire("BANKFRAME_CLOSED")
+    g.lua.execute("MOCK.bags[-1] = nil MOCK.bags[5] = nil")
+    g.fire("BAG_UPDATE_DELAYED")
+    g.tick(60)
+    assert g.db.characters[CHAR].data.bank.slots == 4
+    g.fire("BANKFRAME_OPENED")                                           # open, yet nothing readable: kept too
+    assert g.db.extra[CHAR].bank.slots == 4 and "no slots" in g.db.debug.bank

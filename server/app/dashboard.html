@@ -1137,7 +1137,7 @@ async function load(quiet) {
     try { groups = (await get(`/groups?character_id=${cid}`)).items; } catch (e) { /* shown as "none" */ }
     state.pins = [];
     if (W.ok) {
-      const ids = [...new Set([...list(d.equipment), ...list(d.bags && d.bags.items)].map(i => i.item_id).filter(Boolean))];
+      const ids = [...new Set([...list(d.equipment), ...list(d.bags && d.bags.items), ...list(d.bank && d.bank.items)].map(i => i.item_id).filter(Boolean))];
       try {
         if (ids.length) { const nm = await get("/world/names?items=" + ids.join(",")); itemNames = nm.items; neededBy = nm.needed_by || {}; }
         state.pins = (await get(`/world/quest-pins?character_id=${cid}`)).items;
@@ -1250,6 +1250,16 @@ async function load(quiet) {
     if (d.bags) bagCard.append(el("div", { class: "small", text: priced
       ? `全部賣給商店約值 ${money(bagValue)}` + (junkValue ? `，其中灰色垃圾 ${money(junkValue)}` : "") + "。價格是賣給 NPC 的金額，不是拍賣場行情。"
       : "還沒有賣價資料：更新插件後重新登入並存檔一次就會出現。" }));
+    // The bank is only known from the last time its window was open in the game.
+    const bank = d.bank && typeof d.bank === "object" ? d.bank : null;
+    const bankItems = list(bank && bank.items).slice().sort((a, b) => (b.quality || 0) - (a.quality || 0) || worth(b) - worth(a) || b.count - a.count);
+    const bankSeen = bank && bank.seen_at ? new Date(bank.seen_at * 1000).toISOString() : null;
+    const bankCard = section("c-full", "銀行", bank ? `空位 ${bank.free} / ${bank.slots}　${bankItems.length} 種物品` : "", bankItems.map(i =>
+      itemRow(i, [el("span", { class: "grow wname q" + (i.quality ?? 1), text: i.name || itemNames[i.item_id] || "物品 #" + i.item_id }),
+        el("span", { class: "num", title: i.sell_price ? `單價 ${money(i.sell_price)}` : "", text: "×" + i.count + (worth(i) ? "　" + shortMoney(worth(i)) : "") })])),
+      bank ? "銀行是空的。" : "還沒有銀行資料。遊戲只在銀行視窗開著的時候才看得到裡面：到銀行開一次，再按「存檔」。");
+    if (bank) bankCard.append(el("div", { class: "small", text: (bankSeen ? `這是 ${ago(bankSeen)}打開銀行時看到的內容` : "這是上次打開銀行時看到的內容")
+      + "，之後沒開銀行的變動不會出現。" + (bankItems.some(i => i.sell_price) ? `全部賣給商店約值 ${money(bankItems.reduce((s, i) => s + worth(i), 0))}。` : "") }));
     const equipCard = section("c-half", "裝備", tip.slice(3), equip.map(i =>
       itemRow(i, [el("span", { class: "num", text: SLOT[i.slot] || i.slot }),
         el("span", { class: "grow wname q" + (i.quality ?? 1), text: i.name || itemNames[i.item_id] || "物品 #" + i.item_id }),
@@ -1487,7 +1497,7 @@ async function load(quiet) {
       fillZone();
     }
     const layout = { home: [summaryCard, evCard, nearCard, monsterCard, itemCard, groupCard], map: [mapCard, fpCard], quests: [questCard, zonesCard, zoneCard],
-      items: [equipCard, bagCard], char: [charCard, attrCard, profCard, repCard], album: [albumCard], data: [W.ok ? searchCard() : null, statCard, foot] };
+      items: [equipCard, bagCard, bankCard], char: [charCard, attrCard, profCard, repCard], album: [albumCard], data: [W.ok ? searchCard() : null, statCard, foot] };
     const cards = [];
     for (const [name, nodes] of Object.entries(layout)) for (const n of nodes) if (n) { n.dataset.tab = name; cards.push(n); }
     const bar = el("nav", { class: "tabs", role: "tablist", "aria-label": "區塊" });
