@@ -25,6 +25,8 @@ HIDDEN = ("LOCATION_SAMPLE", "CHAT_MESSAGE", "MAP_SCREENSHOT", "PARTY_POSITIONS"
           "GROUP_ENCOUNTER")
 HIGHLIGHTS = ("LEVEL_UP", "ACHIEVEMENT_EARNED", "PLAYER_DIED", "PARTY_MEMBER_DIED", "GROUP_MEMBER_LEVEL_UP",
               "INSTANCE_ENTERED", "ENCOUNTER_END")
+SOLO_GAP = 20 * 60 * 1000          # ms without a hit after which a stretch of fighting alone is over
+SOLO_SHORTEST = 60 * 1000          # shorter than this is not worth a page
 RANK_NAMES = {"elite": "精英", "rare_elite": "稀有精英", "boss": "首領", "rare": "稀有"}
 
 
@@ -99,6 +101,55 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
             s["members"] = list(s["members"].values())
             s["duration"] = int((_dt(s["ended_at"]) - _dt(s["started_at"])).total_seconds())
         return out
+
+    def solo_sessions(conn, character_id: str, groups: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+        """Stretches of fighting outside any group, oldest first, shaped like group sessions.
+
+        They come from the combat log's hits, dealt and taken (a buff going up alone is no
+        fight): a stretch runs for as long as no more than
+        SOLO_GAP passes between two hits, and whatever of it lies inside a group session is
+        cut away. One is named after the moment it starts, so it keeps its name (and its
+        link) while it grows."""
+        edges = conn.execute(
+            "SELECT ts, prev, nxt FROM (SELECT ts, LAG(ts) OVER (ORDER BY ts) prev, LEAD(ts) OVER (ORDER BY ts) nxt "
+            "FROM combat_hits WHERE character_id=? AND way IN ('out','in')) WHERE prev IS NULL OR nxt IS NULL OR ts-prev>? OR nxt-ts>?",
+            (character_id, SOLO_GAP, SOLO_GAP)).fetchall()
+        spans, start = [], None
+        for e in edges:
+            if e["prev"] is None or e["ts"] - e["prev"] > SOLO_GAP:
+                start = e["ts"]
+            if e["nxt"] is None or e["nxt"] - e["ts"] > SOLO_GAP:
+                spans.append([start if start is not None else e["ts"], e["ts"]])
+                start = None
+        busy = sorted((_ms(g["started_at"]), _ms(g["ended_at"]) + 999)
+                      for g in (groups if groups is not None else sessions(conn, character_id)))
+        newest = spans[-1][1] if spans else 0
+        out: List[Dict[str, Any]] = []
+        for a, b in spans:
+            for ga, gb in busy:                     # keep what is before a group session, go on after it
+                if gb < a or ga > b:
+                    continue
+                if ga - a >= SOLO_SHORTEST:
+                    out.append((a, ga - 1000))
+                a = gb + 1
+            if b - a >= SOLO_SHORTEST:
+                out.append((a, b))
+        found = []
+        for a, b in out:
+            started = datetime.fromtimestamp(a // 1000, timezone.utc)
+            ended = datetime.fromtimestamp(-(-b // 1000), timezone.utc)
+            found.append({"group_id": "solo-%d" % (a // 1000), "character_id": character_id, "solo": True,
+                          "started_at": started.strftime("%Y-%m-%dT%H:%M:%SZ"), "ended_at": ended.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                          # still going while the newest hit is its last one and that was a moment ago
+                          "ongoing": b == newest and datetime.now(timezone.utc).timestamp() * 1000 - b < SOLO_GAP,
+                          "raid": False, "leader": False, "zone_name": None, "members": [],
+                          "duration": int((ended - started).total_seconds())})
+        return found
+
+    def every(conn, character_id: str) -> List[Dict[str, Any]]:
+        """Group sessions and stretches alone."""
+        groups = sessions(conn, character_id)
+        return groups + solo_sessions(conn, character_id, groups)
 
     def token_for(conn, s: Dict[str, Any]) -> str:
         row = conn.execute("SELECT token FROM group_shares WHERE group_id=?", (s["group_id"],)).fetchone()
@@ -263,6 +314,7 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
         hours = max(s["duration"], 1) / 3600
         out = {k: s[k] for k in ("group_id", "started_at", "ended_at", "ongoing", "duration", "raid",
                                  "leader", "members")}
+        out["solo"] = bool(s.get("solo"))
         out.update({
             "owner": {"name": me, "class": who["class"] if who else None, "level": who["level"] if who else None},
             "zones": zones, "instances": instances,
@@ -305,10 +357,21 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
 
     def brief(conn, s: Dict[str, Any]) -> Dict[str, Any]:
         act = activity(s["character_id"], _dt(s["started_at"]), _dt(s["ended_at"]))
-        return {**{k: s[k] for k in ("group_id", "started_at", "ended_at", "ongoing", "duration", "raid",
-                                     "zone_name", "members")},
-                "kills": act["kills"], "xp": act["xp"], "items_looted": act["items_looted"],
-                "token": token_for(conn, s)}
+        out = {**{k: s[k] for k in ("group_id", "started_at", "ended_at", "ongoing", "duration", "raid",
+                                    "zone_name", "members")},
+               "kills": act["kills"], "xp": act["xp"], "items_looted": act["items_looted"],
+               "token": token_for(conn, s)}
+        if s.get("solo"):
+            # where it was, and how much was dealt: what tells one stretch alone from another
+            a, b = _ms(s["started_at"]), _ms(s["ended_at"]) + 999
+            zone = conn.execute("SELECT payload_json FROM events WHERE character_id=? AND timestamp>=? AND timestamp<=? "
+                                "AND payload_json LIKE '%zone_name%' ORDER BY timestamp LIMIT 1",
+                                (s["character_id"], s["started_at"], s["ended_at"])).fetchone()
+            dealt = conn.execute("SELECT COALESCE(SUM(amount),0) n FROM combat_hits WHERE character_id=? AND ts>=? AND ts<=? "
+                                 "AND way='out'", (s["character_id"], a, b)).fetchone()["n"]
+            out.update(solo=True, zone_name=json.loads(zone["payload_json"]).get("zone_name") if zone else None,
+                       damage=int(dealt))
+        return out
 
     @app.get("/api/v1/groups")
     def list_groups(character_id: str, scope: Optional[str] = Depends(can_read)):
@@ -354,6 +417,10 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
         found = sessions(conn, character_id)
         if group_id == "latest" and found:
             return found[-1]
+        if group_id.startswith("solo"):
+            found = solo_sessions(conn, character_id, found)
+            if group_id == "solo-latest" and found:
+                return found[-1]
         for s in found:
             if s["group_id"] == group_id:
                 return s
@@ -396,6 +463,23 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
         mine(scope, character_id)
         with db() as conn:
             items = [brief(conn, s) for s in sessions(conn, character_id)][::-1][:limit]
+        for item in items:
+            item["page"] = f"/party/{item['token']}"
+        return {"items": items}
+
+    @app.get("/api/v1/characters/{character_id}/solo")
+    def character_solo(character_id: str, limit: int = Query(20, ge=1, le=200), scope: Optional[str] = Depends(can_read)):
+        """The character's stretches of fighting alone, newest first (needs the combat log).
+
+        Everything fought outside a group, cut into stretches wherever twenty minutes pass
+        without a hit. Each has a `group_id` that starts with `solo-`, when it ran, where, and
+        totals for kills, experience, loot and damage dealt. That `group_id` (or `solo-latest`)
+        works with every `/groups/{group_id}...` endpoint: the session in full, `/fight`,
+        `/skills` and `/analysis` answer for a stretch alone exactly as for a group session,
+        with the character (and pet) as the only member. `page` is its page, as for a group."""
+        mine(scope, character_id)
+        with db() as conn:
+            items = [brief(conn, s) for s in solo_sessions(conn, character_id)[::-1][:limit]]
         for item in items:
             item["page"] = f"/party/{item['token']}"
         return {"items": items}
@@ -579,7 +663,7 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
     def by_token(conn, token: str) -> Dict[str, Any]:
         row = conn.execute("SELECT group_id, character_id FROM group_shares WHERE token=?", (token,)).fetchone()
         if row:
-            for s in sessions(conn, row["character_id"]):
+            for s in (every if row["group_id"].startswith("solo") else sessions)(conn, row["character_id"]):
                 if s["group_id"] == row["group_id"]:
                     return s
         raise HTTPException(404, "no such group session")

@@ -379,3 +379,48 @@ def test_research_on_targets_pets_and_costs(client):
     assert (ac[0]["enemy"], ac[0]["n"], ac[0]["armor"], ac[0]["reduced"]) == ("迪菲亞盜賊", 25, 400, 0.15) and ac[0]["ci"][0] < ac[0]["avg"] < ac[0]["ci"][1]
     db = client.get("/api/v1/combat/npcs?character_id=c1", headers=READ).json()["items"]
     assert db[0]["name"] == "迪菲亞盜賊" and client.get("/api/v1/combat/npcs?character_id=c1").status_code == 401
+
+
+def test_fighting_alone_is_cut_into_sessions_with_the_same_pages_as_a_group(client):
+    seed(client)                                                # a group session from T0 to T0+20 min
+    at = lambda minutes: int((T0 + timedelta(minutes=minutes)).timestamp() * 1000)     # noqa: E731
+    hit = lambda pos, minutes, amount, crit=0: [                                       # noqa: E731
+        pos, at(minutes), "out", "", 0, "x", "迪菲亞盜賊", 589, 1, "月火術", 1, "range", amount, None, -1, 0, 0, 0, crit, 0, 0, None,
+        None, None, None, None, None]
+    rows = [hit(1, -60, 100), hit(2, -55, 120), hit(3, -50, 300, 1),          # alone, an hour before the group
+            hit(4, -8, 50), hit(5, 5, 70), hit(6, 15, 80), hit(7, 28, 90), hit(8, 35, 110),   # into the group and out again
+            hit(9, 200, 40)]                                                  # one stray hit: too short to be a session
+    assert client.post("/api/v1/combat/hits", headers=AUTH, json={"character_id": "c1", "source": "l", "rows": rows}).status_code == 200
+    solo = client.get("/api/v1/characters/c1/solo", headers=READ).json()["items"]
+    assert [(s["started_at"][11:16], s["ended_at"][11:16], s["damage"]) for s in solo] == [
+        ("12:20", "12:35", 200), ("11:52", "11:59", 50), ("11:00", "11:10", 520)]        # newest first; the group's part cut out
+    assert all(s["group_id"].startswith("solo-") and s["members"] == [] and s["page"] == "/party/" + s["token"] for s in solo)
+    assert solo[0]["zone_name"] == "西部荒野" and solo[0]["kills"] == 1               # 組隊後的怪, killed at T0+30
+    # the group's own list is as before, and its numbers do not take in what was fought alone
+    groups = client.get("/api/v1/groups?character_id=c1", headers=READ).json()["items"]
+    assert len(groups) == 1 and not groups[0]["group_id"].startswith("solo")
+    # the page: the same answers as a group session's, with one member
+    first = solo[-1]
+    d = client.get(f"/api/v1/shared/party/{first['token']}").json()
+    assert d["solo"] is True and d["members"] == [] and d["owner"]["name"] == "小德"
+    moon = d["skills"][0]
+    assert (moon["who"], moon["spell"], moon["hits"], moon["total"], moon["crit"]["n"]) == ("小德", "月火術", 3, 520, 1)
+    assert client.get(f"/api/v1/shared/party/{first['token']}/skills").json()["skills"][0]["total"] == 520
+    assert client.get(f"/api/v1/shared/party/{first['token']}/research").status_code == 200
+    assert client.get(f"/api/v1/shared/party/{groups[0]['token']}").json()["solo"] is False
+    # for tools: the same endpoints as a group session, by its id or as the newest
+    base = "/api/v1/characters/c1/groups/"
+    assert client.get(base + first["group_id"], headers=READ).json()["solo"] is True
+    assert client.get(base + "solo-latest", headers=READ).json()["group_id"] == solo[0]["group_id"]
+    assert client.get(base + first["group_id"] + "/skills", headers=READ).json()["skills"][0]["total"] == 520
+    assert client.get(base + first["group_id"] + "/analysis?parts=defence", headers=READ).status_code == 200
+    assert client.get(base + "latest", headers=READ).json()["solo"] is False
+    assert client.get(base + "solo-1", headers=READ).status_code == 404
+    # it keeps its link while it grows
+    more = [hit(10, -45, 60)]
+    client.post("/api/v1/combat/hits", headers=AUTH, json={"character_id": "c1", "source": "l", "rows": more})
+    again = client.get("/api/v1/characters/c1/solo", headers=READ).json()["items"][-1]
+    assert (again["token"], again["damage"], again["ended_at"][11:16]) == (first["token"], 580, "11:15")
+    # someone else's token does not get in
+    assert client.get("/api/v1/characters/c1/solo").status_code == 401
+    assert "/api/v1/characters/{character_id}/solo" in client.get("/openapi.json").json()["paths"]

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>組隊紀錄</title>
+<title>冒險紀錄</title>
 <style>
 :root { --bg: #f4f1ea; --panel: #fffdf8; --ink: #2a2520; --muted: #7a7065; --line: #e2dbcd;
   --accent: #b5651d; --accent-soft: #f0dcc4; --ok: #3d7a4a; --mark-mix: 74%; --mark-with: #2a2010; --alt-with: #000; --alt-ink: #fff; }
@@ -188,7 +188,7 @@ details.boss[open] .name::after { content: "▾"; }
 </style>
 </head>
 <body>
-<main id="app"><div class="loading" role="status"><i></i>載入組隊紀錄中…</div></main>
+<main id="app"><div class="loading" role="status"><i></i>載入紀錄中…</div></main>
 <script>
 "use strict";
 const token = location.pathname.split("/").filter(Boolean).pop();
@@ -1142,20 +1142,20 @@ function xpCard(d) {
 
 function render(d) {
   const names = [d.owner.name, ...d.members.map(m => m.name)];
-  document.title = `${names.join("、")} 的組隊紀錄`;
+  document.title = d.solo ? `${d.owner.name} 的練功紀錄` : `${names.join("、")} 的組隊紀錄`;
   const where = [...d.instances, ...d.zones.filter(z => !d.instances.includes(z))].slice(0, 3).join("、") || "冒險";
   const member = (m, me) => el("span", { class: "chip" + (m.left ? " left" : "") }, (() => { const i = el("i"); if (COLOR[m.class]) i.style.background = COLOR[m.class]; return i; })(),
     m.name, el("small", { text: [m.level ? m.level + " 級" : null, CLASS[m.class] || m.class, me ? "紀錄者" : null].filter(Boolean).join(" ") }));
   const hero = el("section", { class: "card hero" },
-    el("h1", null, where + "　" + (d.raid ? "團隊" : `${names.length} 人小隊`), d.ongoing ? el("span", { class: "live", text: "進行中" }) : null),
+    el("h1", null, where + "　" + (d.solo ? "單人練功" : d.raid ? "團隊" : `${names.length} 人小隊`), d.ongoing ? el("span", { class: "live", text: "進行中" }) : null),
     el("div", { class: "sub", text: `${day(d.started_at)}　${hm(d.started_at)} – ${d.ongoing ? "現在" : hm(d.ended_at)}　共 ${dur(d.duration)}` }),
     el("div", { class: "chips" }, member(d.owner, true), ...d.members.map(m => member(m, false))));
   const s = d.stats, tile = (n, label) => el("div", { class: "tile" }, el("b", { text: n }), el("span", { text: label }));
   const hours = d.duration / 3600;
   const tiles = el("section", { class: "card c-full" }, el("h2", { text: "這次的成果" }), el("div", { class: "tiles" },
-    tile(dur(d.duration), "組隊時間"), tile(s.kills.toLocaleString(), "擊殺"), tile(s.xp.toLocaleString(), `${d.owner.name} 獲得經驗`),
+    tile(dur(d.duration), d.solo ? "練功時間" : "組隊時間"), tile(s.kills.toLocaleString(), "擊殺"), tile(s.xp.toLocaleString(), `${d.owner.name} 獲得經驗`),
     tile(s.items_looted.toLocaleString(), "拾取物品"), s.loot_value ? tile(money(s.loot_value), "拾取物賣店價值") : null,
-    tile((d.deaths_by.reduce((n, x) => n + x.deaths, 0) || d.deaths).toLocaleString(), "全隊死亡次數"), d.quests_completed ? tile(d.quests_completed, "完成任務") : null,
+    tile((d.deaths_by.reduce((n, x) => n + x.deaths, 0) || d.deaths).toLocaleString(), d.solo ? "死亡次數" : "全隊死亡次數"), d.quests_completed ? tile(d.quests_completed, "完成任務") : null,
     d.level_ups ? tile(d.level_ups, "升級") : null,
     hours >= 0.1 && s.xp ? tile(Math.round(s.xp / hours).toLocaleString(), "每小時經驗") : null,
     s.money_in ? tile(money(s.money_in), `${d.owner.name} 金錢收入`) : null));
@@ -1173,7 +1173,7 @@ function render(d) {
     mine.length ? el("ul", { class: "lines" }, ...mine.slice(0, 12).map(lootRow)) : el("div", { class: "small", text: "沒有拾取紀錄。" }));
   for (const m of d.member_loot) lootCard.append(el("div", { class: "subhead", text: `${m.name}（${m.count} 件` + (m.value ? `，賣店約 ${money(m.value)}` : "") + "）" }),
     el("ul", { class: "lines" }, ...m.items.map(lootRow)));
-  if (!d.member_loot.length) lootCard.append(el("div", { class: "small", text: "隊友的拾取要用新版插件記錄，之後的組隊才會出現。" }));
+  if (!d.member_loot.length && !d.solo) lootCard.append(el("div", { class: "small", text: "隊友的拾取要用新版插件記錄，之後的組隊才會出現。" }));
   // Damage and healing, when the client let the addon read the combat log.
   const meter = (title, rows, unit) => rank(title, rows.map(r => ({ name: r.name, n: r.amount, color: colorOf[r.name],
     extra: `（${Math.round(r.amount / (rows.reduce((a, x) => a + x.amount, 0) || 1) * 100)}%）`,
@@ -1210,7 +1210,7 @@ function render(d) {
   if (!rows.length) list.append(el("li", null, el("span"), el("span", { class: "small", text: "沒有事件。" })));
   // Every card gets a short name; the names become a row of jump links that stays on screen.
   // Cards belong to one of three views; each view has its own row of jump links.
-  const parts = [["成果", tiles, "o"], ["稱號", awardsCard(d, P), "o"], ["傷害", raceCard(d, P), "o"], ["統計", meterCard(d, P), "o"], ["首領", bossCard(d, P), "o"],
+  const parts = [["成果", tiles, "o"], ["稱號", d.solo ? null : awardsCard(d, P), "o"], ["傷害", raceCard(d, P), "o"], ["統計", meterCard(d, P), "o"], ["首領", bossCard(d, P), "o"],
     ["敵人", threatCard(d), "o"], ["節奏", paceCard(d), "o"], ["經驗", xpCard(d), "o"], ["精華", hlCard, "o"], ["補刀", killCard, "o"], ["怪物", monsterCard, "o"], ["傷害", dmgCard, "o"], ["治療", healCard, "o"],
     ["相簿", albumCard(d), "o"], ["地圖", mapCard(d), "o"], ["經過", evCard, "o"], ["戰利品", lootCard, "o"], ["任務", questCard, "o"],
     ["技能", kitCard(d, P), "a"], ["分析", skillCard(d, P), "a"], ["比較", matrixCard(d, P), "a"], ["時間軸", dpsCard(d, P), "a"], ["寵物", petCard(d, P), "a"]].filter(([, card]) => card);
@@ -1240,7 +1240,7 @@ function render(d) {
   const jump = openSkill; if (jump) openSkill = (who, k) => { if (view !== "a") go("a"); jump(who, k); };
   app.replaceChildren(hero, tabs, nav, grid,
     el("div", { class: "small c-full", text: `這是 ${d.owner.name} 的插件記錄的內容：擊殺是補最後一擊的次數；經驗、金錢與任務只有 ${d.owner.name} 自己的；傷害、治療與首領戰來自 ${d.owner.name} 電腦上的戰鬥紀錄檔，隊友要在 ${d.owner.name} 附近才記得到。不包含任何聊天內容。`
-      + (d.ongoing ? "組隊還在進行，資料會在遊戲存檔後更新。" : "") }));
+      + (d.ongoing ? (d.solo ? "這段練功還在進行" : "組隊還在進行") + "，資料會在遊戲存檔後更新。" : "") }));
   if (["a", "r"].includes(location.hash.slice(1)) && parts.some(p => p[2] === location.hash.slice(1))) view = location.hash.slice(1);
   place();
   // The research cards need their own, heavier, numbers: fetched once the page is up.
@@ -1255,7 +1255,7 @@ function render(d) {
   if ((d.skills || []).length) app.append(el("div", { class: "small" }, el("a", { href: API + "/hits.csv", text: "下載這場的逐筆戰鬥紀錄（CSV，可用試算表開啟）" }), "　", el("a", { href: API + "/hits.json", text: "JSON" })));
 }
 
-fetch(API).then(r => r.ok ? r.json() : Promise.reject(new Error(r.status === 404 ? "找不到這場組隊紀錄，連結可能有誤。" : "伺服器回應 " + r.status)))
+fetch(API).then(r => r.ok ? r.json() : Promise.reject(new Error(r.status === 404 ? "找不到這場紀錄，連結可能有誤。" : "伺服器回應 " + r.status)))
   .then(render)
   .catch(e => app.replaceChildren(el("div", { class: "loading", text: e.message === "Failed to fetch" ? "連不上伺服器，請稍後再試。" : e.message })));
 </script>

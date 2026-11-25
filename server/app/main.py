@@ -116,6 +116,7 @@ limited token ever shows chat messages. `GET /api/v1/token` says what a token is
 * how the character is doing now: `/characters/{id}/snapshot`, `/items`, `/bank`, `/quests`
 * what happened lately: `/stats/activity`, `/events`
 * group play: `/characters/{id}/groups`, then `/groups/{group_id}` (or `latest`) and its `/skills` and `/analysis`
+* fighting alone: `/characters/{id}/solo` lists the stretches; their ids work with the same `/groups/{group_id}...` endpoints
 * combat outside a group: `/characters/{id}/combat/skills` and `/combat/analysis`
 * the game world (quests, monsters, items): everything under `/world`
 
@@ -124,7 +125,7 @@ Damage figures exist only where the game's combat log was switched on while play
 """
 SECTIONS = [
     ("角色 Characters", "Who the characters are and what they carry, wear and have to do."),
-    ("組隊 Groups", "Party and raid sessions: who was there, what was killed and looted, how the fights went."),
+    ("組隊 Groups", "Party and raid sessions, and stretches of fighting alone: who was there, what was killed and looted, how the fights went."),
     ("戰鬥分析 Combat", "Ability statistics and the deeper questions, from the game's combat log."),
     ("事件與統計 Events", "What happened and when, and totals over a stretch of time."),
     ("世界資料 World", "Static game data: quests, monsters, items, where things are."),
@@ -139,7 +140,7 @@ def section_of(path: str, method: str) -> str:
     names = {name.split()[1]: name for name, _ in SECTIONS}
     if method.lower() != "get":
         return names["Uploads"]
-    for piece, name in (("/groups", "Groups"), ("/shared/party", "Groups"), ("/combat", "Combat"), ("/world", "World"),
+    for piece, name in (("/solo", "Groups"), ("/groups", "Groups"), ("/shared/party", "Groups"), ("/combat", "Combat"), ("/world", "World"),
                         ("/screenshots", "Images"), ("/maps", "Images"), ("/characters", "Characters"),
                         ("/events", "Events"), ("/locations", "Events"), ("/stats", "Events")):
         if piece in path:
