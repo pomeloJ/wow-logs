@@ -573,8 +573,8 @@ def test_says_when_the_combat_log_is_off_on_coming_into_the_game_and_only_then()
     g.lua.execute(box)
     g.login()
     dialog = g.lua.eval("StaticPopupDialogs.ADVENTURECOLLECTOR_COMBATLOG")
-    assert len(said(g)) == 1 and "/combatlog" in said(g)[0]              # a line of chat
-    assert g.lua.eval("#SHOWN") == 1 and "/combatlog" in dialog.text     # and a dialog, with the command on it
+    assert len(said(g)) == 1 and "請確認" in said(g)[0] and "沒有開" not in said(g)[0]   # asked, not asserted
+    assert g.lua.eval("#SHOWN") == 1 and "請確認" in dialog.text         # and a dialog that asks too
     # Seen in the game: a while after the log is on the client answers "off" all the same.
     # So nothing asks again during play, whatever happens.
     g.mock.time += 3600
@@ -588,7 +588,7 @@ def test_says_when_the_combat_log_is_off_on_coming_into_the_game_and_only_then()
     g.fire("PLAYER_ENTERING_WORLD", False, True)
     g.fire("PLAYER_LOGIN")
     assert not said(g) and g.lua.eval("#SHOWN") == 0
-    assert "沒有開" in g.slash("combatlog")[-1]                           # asked for: answered all the same
+    assert "請確認" in g.slash("combatlog")[-1]                           # asked for: answered all the same
     # on already, told to keep quiet, or a client that will not say: nothing is said
     for prepare in ("MOCK.logging = true", "AdventureCollectorDB = { settings = { combatLogRemind = false } }", "MOCK.nologging = true"):
         g = Game()

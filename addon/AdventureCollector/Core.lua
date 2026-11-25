@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.1.8"
+local VERSION = "0.1.9"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -102,15 +102,18 @@ end
 local POPUP = "ADVENTURECOLLECTOR_COMBATLOG"
 function combatLogPopup()
     if type(UIErrorsFrame) == "table" and type(UIErrorsFrame.AddMessage) == "function" then
-        pcall(UIErrorsFrame.AddMessage, UIErrorsFrame, "戰鬥紀錄沒有開：不會有傷害統計", 1, 0.3, 0.3)
+        pcall(UIErrorsFrame.AddMessage, UIErrorsFrame, "請確認戰鬥紀錄已開啟", 1, 0.82, 0)
     end
     if type(StaticPopupDialogs) ~= "table" or type(StaticPopup_Show) ~= "function" then return end
     StaticPopupDialogs[POPUP] = StaticPopupDialogs[POPUP] or {
-        text = "戰鬥紀錄沒有開啟。\n\n傷害統計、技能分析與副本內的擊殺都靠它，沒開就不會記錄。"
-            .. "\n\n按「開啟戰鬥紀錄」，或在聊天輸入框輸入：\n|cffffff00/combatlog|r",
-        button1 = "開啟戰鬥紀錄", button2 = "先不要", button3 = "不再提醒",
+        -- Asked, not asserted: this client's answer is not always right, the log may well be on.
+        -- The button only ever switches it on; the command would switch a running log off.
+        text = "請確認戰鬥紀錄是否已開啟。\n\n傷害統計、技能分析與副本內的擊殺都靠它，沒開就不會記錄。"
+            .. "\n\n按「確認開啟」就會開著，已經開著也沒關係。\n\n"
+            .. "自己輸入 |cffffff00/combatlog|r 是切換：原本開著會變成關閉。",
+        button1 = "確認開啟", button2 = "略過", button3 = "不再提醒",
         OnAccept = function()
-            if switchCombatLogOn() then say("戰鬥紀錄已開啟，不用再輸入指令。") return end
+            if switchCombatLogOn() then say("戰鬥紀錄已確認開啟，不用再輸入指令。") return end
             -- This client will not let an addon switch it on: put the command in the chat box,
             -- so that all that is left to do is press Enter.
             if type(ChatFrame_OpenChat) == "function" and pcall(ChatFrame_OpenChat, "/combatlog") then
@@ -121,7 +124,7 @@ function combatLogPopup()
         end,
         OnAlt = function()
             if db then db.settings.combatLogRemind = false end
-            say("戰鬥紀錄沒開時不再提醒。要恢復：|cffffff00/adventure combatlog quiet|r")
+            say("進遊戲時不再提醒確認戰鬥紀錄。要恢復：|cffffff00/adventure combatlog quiet|r")
         end,
         timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
     }
@@ -138,7 +141,7 @@ local function checkCombatLog(again)
         end
     end
     if not db.settings.combatLogRemind or (reloaded and not again) then return false end
-    say("|cffff5555戰鬥紀錄沒有開|r，現在打的不會有傷害統計。輸入 |cffffff00/combatlog|r 開啟；"
+    say("|cffffd100請確認戰鬥紀錄是否已開啟|r，沒開就不會有傷害統計。按視窗上的「確認開啟」；"
         .. "想要每次登入自動開，輸入 |cffffff00/adventure combatlog auto|r")
     combatLogPopup()
     return false
@@ -1305,7 +1308,7 @@ local function status()
         .. "  next seq: " .. db.nextSequence)
     say("character id: " .. tostring(charId))
     local logging = combatLogOn()
-    if logging ~= nil then say("戰鬥紀錄 (/combatlog): " .. (logging and "已開啟" or "沒有開，不會有傷害統計")) end
+    if logging ~= nil then say("戰鬥紀錄 (/combatlog): " .. (logging and "已開啟" or "可能沒有開（遊戲的回報不一定準）")) end
 end
 
 SLASH_ADVENTURECOLLECTOR1 = "/adventure"
@@ -1333,7 +1336,7 @@ SlashCmdList.ADVENTURECOLLECTOR = function(msg)
             if db.settings.combatLogAuto then checkCombatLog() end
         elseif what == "quiet" then
             db.settings.combatLogRemind = not db.settings.combatLogRemind
-            say(db.settings.combatLogRemind and "戰鬥紀錄沒開時會提醒" or "戰鬥紀錄沒開時不再提醒")
+            say(db.settings.combatLogRemind and "進遊戲時會提醒確認戰鬥紀錄" or "進遊戲時不再提醒確認戰鬥紀錄")
         else
             local on = combatLogOn()
             if on == nil then say("這個遊戲版本不讓插件知道戰鬥紀錄有沒有開，請自己輸入 /combatlog 確認")
@@ -1350,7 +1353,7 @@ SlashCmdList.ADVENTURECOLLECTOR = function(msg)
         end
     elseif msg == "help" then
         say("/adventure [status] - 狀態;  /adventure save - 立即存檔;  /adventure mapshot - 截目前地圖當底圖;  /adventure chat - 聊天紀錄設定;  "
-            .. "/adventure combatlog - 戰鬥紀錄有沒有開 (auto: 每次登入自動開, quiet: 不提醒);  "
+            .. "/adventure combatlog - 確認戰鬥紀錄 (auto: 每次登入自動開, quiet: 不提醒);  "
             .. "/adventure button - 顯示/隱藏存檔按鈕;  "
             .. "/adventure on|off - 啟用/暫停")
     else
