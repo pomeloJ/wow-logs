@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.1.6"
+local VERSION = "0.1.7"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -549,10 +549,8 @@ local handlers = {}
 -- button there and then, not at the next thing recorded.
 function handlers.CHAT_MSG_SYSTEM(text)
     if isSecret(text) or type(text) ~= "string" then return end
-    if text == COMBATLOGDISABLED or text == COMBATLOGENABLED then
-        if text == COMBATLOGDISABLED then combatLogAsked = nil end
-        updateButton()
-    end
+    if text == COMBATLOGDISABLED then combatLogAsked = nil end
+    updateButton()
 end
 
 function handlers.ADDON_LOADED(name)
@@ -1179,14 +1177,21 @@ function ns.createButton()
         if type(point) == "string" then db.settings.buttonPos = { point = point, x = x, y = y } end
     end)
     b:SetScript("OnClick", saveNow)
+    -- Look again every second: the combat log is switched by typing a command, which is nothing
+    -- the addon records, and standing still nothing else would bring the sign up to date.
+    local waited = 0
+    b:SetScript("OnUpdate", function(_, elapsed)
+        waited = waited + (tonumber(elapsed) or 0)
+        if waited >= 1 then waited = 0 updateButton() end
+    end)
     saveButton = b
-    -- The sign that the combat log is off: its own little dark plate with an alert icon, to the
-    -- right of the button and moving with it. A click brings the dialog back. If this client
+    -- The sign that the combat log is off: its own little dark plate with an alert icon,
+    -- above the button and moving with it. A click brings the dialog back. If this client
     -- cannot build it, the button's text carries a mark instead.
     pcall(function()
         local sign = CreateFrame("Button", "AdventureCollectorCombatLogSign", b)
         sign:SetSize(118, 24)
-        sign:SetPoint("LEFT", b, "RIGHT", 4, 0)
+        sign:SetPoint("BOTTOMLEFT", b, "TOPLEFT", 0, 3)
         local back = sign:CreateTexture(nil, "BACKGROUND")
         back:SetAllPoints(sign)
         back:SetColorTexture(0, 0, 0, 0.8)

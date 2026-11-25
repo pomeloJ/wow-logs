@@ -691,6 +691,11 @@ def test_the_save_button_gets_its_mark_back_when_the_player_switches_the_combat_
     g.mock.logging = True
     g.fire("CHAT_MSG_SYSTEM", "戰鬥記錄功能已經啟動。")
     assert not marked()
-    g.mock.logging = False                                               # off without a word from the game:
-    g.tick(60)
-    assert marked()                                                      # seen at the next thing recorded
+    # Seen in the game: what it says on switching is not a fixed text, and standing in an inn
+    # nothing is recorded. The button looks again by itself, every second.
+    for on in (False, True):
+        g.mock.logging = on
+        g.mock.button.scripts.OnUpdate(g.mock.button, 0.4)
+        assert marked() is on
+        g.mock.button.scripts.OnUpdate(g.mock.button, 0.7)
+        assert marked() is not on
