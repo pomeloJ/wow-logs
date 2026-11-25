@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.1.3"
+local VERSION = "0.1.4"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -71,14 +71,30 @@ end
 -- combat log is on (/combatlog). Nothing else tells the player it is off, and a session
 -- played without it has no figures at all, so say so: at login, and again on joining a group
 -- or entering a dungeon.
-local combatLogSaid
+local combatLogSaid, combatLogAsked
 
 -- true or false; nil when the client does not say (no such call, or it was refused).
 function combatLogOn()
     if not db or db.settings.combatLogCheck == false or type(LoggingCombat) ~= "function" then return nil end
     local ok, on = pcall(LoggingCombat)
     if not ok or isSecret(on) then return nil end
-    return on and true or false
+    return (on or combatLogAsked) and true or false
+end
+
+-- Switch the game's combat log on. true: it is on. false: the game refused, the player has to
+-- type the command. Seen in the game: the switch works, yet asking straight afterwards still
+-- answers "off" -- and typing /combatlog then switches it off again. So a switch the game took
+-- without complaint counts as on for the rest of this session, whatever it answers.
+local function switchCombatLogOn()
+    local ok, answer = pcall(LoggingCombat, true)
+    local read = combatLogOn()
+    if db and type(db.debug) == "table" then      -- what this client really answers, to read back later
+        db.debug.combat_log_switch = { ok = ok, answer = isSecret(answer) and "secret" or tostring(answer),
+                                       read = tostring(read), at = now() }
+    end
+    if not ok or db.settings.combatLogCheck == false then return false end
+    combatLogAsked = true
+    return true
 end
 
 -- A line of chat scrolls away in a busy group, so the same thing is also put up as a dialog
@@ -94,8 +110,7 @@ local function combatLogPopup()
             .. "\n\n按「開啟戰鬥紀錄」，或在聊天輸入框輸入：\n|cffffff00/combatlog|r",
         button1 = "開啟戰鬥紀錄", button2 = "先不要", button3 = "不再提醒",
         OnAccept = function()
-            pcall(LoggingCombat, true)
-            if combatLogOn() then say("戰鬥紀錄已開啟") updateButton() return end
+            if switchCombatLogOn() then say("戰鬥紀錄已開啟，不用再輸入指令。") updateButton() return end
             -- This client will not let an addon switch it on: put the command in the chat box,
             -- so that all that is left to do is press Enter.
             if type(ChatFrame_OpenChat) == "function" and pcall(ChatFrame_OpenChat, "/combatlog") then
@@ -118,8 +133,7 @@ local function checkCombatLog(again)
     local on = combatLogOn()
     if on ~= false then return on end
     if db.settings.combatLogAuto then
-        pcall(LoggingCombat, true)
-        if combatLogOn() then
+        if switchCombatLogOn() then
             say("已替你開啟戰鬥紀錄（/combatlog），這次遊玩會有傷害統計。")
             return true
         end

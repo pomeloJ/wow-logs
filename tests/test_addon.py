@@ -585,8 +585,9 @@ def test_says_when_the_combat_log_is_off_and_can_switch_it_on():
     g.mock.logging = False
     g.slash("combatlog auto")
     assert g.mock.logging is True and g.db.settings.combatLogAuto is True
-    g.mock.logging = False
-    g.fire("PLAYER_LOGIN")
+    g = Game()                                                           # the next time the game is started
+    g.lua.execute("AdventureCollectorDB = { settings = { combatLogAuto = true } }")
+    g.login()
     assert g.mock.logging is True and "已替你開啟" in said(g)[-1]
     # on already, told to keep quiet, or a client that will not say: nothing is said
     for prepare in ("MOCK.logging = true", "AdventureCollectorDB = { settings = { combatLogRemind = false } }", "MOCK.nologging = true"):
@@ -647,7 +648,8 @@ def test_a_dialog_pops_up_when_the_combat_log_is_off_and_its_button_switches_it_
     assert g.mock.logging is True
     assert "/combatlog" in box.text                        # the command is on the dialog too
     # a client that will not let the addon do it: the command is put in the chat box instead
-    g.lua.execute("LoggingCombat = function(on) return false end function ChatFrame_OpenChat(t) TYPED = t end")
+    g.lua.execute("LoggingCombat = function(on) if on ~= nil then error('refused') end return false end "
+                  "function ChatFrame_OpenChat(t) TYPED = t end")
     box.OnAccept()
     assert g.lua.eval("TYPED") == "/combatlog" and "Enter" in list(g.mock.out.values())[-1]
     box.OnAlt()                                            # "do not remind me again"
@@ -659,3 +661,17 @@ def test_a_dialog_pops_up_when_the_combat_log_is_off_and_its_button_switches_it_
     g.lua.execute("MOCK.logging = true StaticPopupDialogs = {} SHOWN = {} function StaticPopup_Show(w) SHOWN[#SHOWN + 1] = w end")
     g.login()
     assert g.lua.eval("#SHOWN") == 0
+
+
+def test_a_switch_the_game_took_counts_as_on_even_when_it_still_answers_off():
+    # Seen in the game: the button switched the log on, the game still answered "off", the command
+    # was put in the chat box, and pressing Enter switched the log off again.
+    g = Game()
+    g.lua.execute("StaticPopupDialogs = {} function StaticPopup_Show() end function ChatFrame_OpenChat(t) TYPED = t end "
+                  "LoggingCombat = function(on) if on then SWITCHED = true end return false end")
+    g.login()
+    assert g.mock.button.text.startswith("|cffff3333!")
+    g.lua.eval("StaticPopupDialogs.ADVENTURECOLLECTOR_COMBATLOG").OnAccept()
+    assert g.lua.eval("SWITCHED") is True and g.lua.eval("TYPED") is None
+    assert "不用再輸入" in list(g.mock.out.values())[-1] and not g.mock.button.text.startswith("|cffff3333!")
+    assert g.db.debug.combat_log_switch.answer == "false"
