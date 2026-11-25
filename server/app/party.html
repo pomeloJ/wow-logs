@@ -193,6 +193,15 @@ details.boss[open] .name::after { content: "▾"; }
 "use strict";
 const token = location.pathname.split("/").filter(Boolean).pop();
 const API = "/api/v1/shared/party/" + encodeURIComponent(token);
+// Through the public address every request costs a few hundred milliseconds of travel, however
+// small. These two have fixed addresses and are wanted as soon as the page is drawn, so they are
+// asked for together with the session itself instead of after it. Unused when the session has no
+// combat log; then they are small and quick.
+const early = {};
+for (const part of ["research", "skills"]) {
+  early[part] = fetch(`${API}/${part}`).then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)));
+  early[part].catch(() => {});                 // a failure is handled where it is used
+}
 const app = document.getElementById("app");
 const CLASS = { WARRIOR: "戰士", PALADIN: "聖騎士", HUNTER: "獵人", ROGUE: "盜賊", PRIEST: "牧師", SHAMAN: "薩滿", MAGE: "法師", WARLOCK: "術士", DRUID: "德魯伊" };
 const COLOR = { WARRIOR: "#C69B6D", PALADIN: "#F48CBA", HUNTER: "#AAD372", ROGUE: "#E6D94C", PRIEST: "#C9CED6", SHAMAN: "#2E8BE6", MAGE: "#3FC7EB", WARLOCK: "#8788EE", DRUID: "#FF7C0A" };
@@ -741,7 +750,7 @@ function skillCard(d, P) {
   const legend2 = () => el("div", { class: "legend" }, el("span", null, el("i", { class: "dot seg-normal" }), "普通命中"), el("span", null, el("i", { class: "dot seg-crit" }), "致命一擊"));
   const refetch = () => fetch(`${API}/skills` + (scope() ? "?" + scope() : "")).then(r => r.json()).then(r => { all = r.skills; fill(); show(); });
   target.addEventListener("change", refetch); span.addEventListener("change", refetch);
-  fetch(`${API}/skills`).then(r => r.json()).then(r => target.append(...r.enemies.map(e => el("option", { value: e.name, text: `${e.name}　${short(e.damage)}` })))).catch(() => {});
+  early.skills.then(r => target.append(...r.enemies.map(e => el("option", { value: e.name, text: `${e.name}　${short(e.damage)}` })))).catch(() => {});
   show();
   const card = el("section", { class: "card c-full" }, el("h2", { text: "技能分析" }), el("div", { class: "pick" }, select, target, d.encounters.length ? span : null), people, body, spread,
     el("div", { class: "small", text: "每一筆命中、致命與未命中都來自戰鬥紀錄檔。致命一擊率是「命中的次數裡有幾次致命」；持續傷害與反傷不會致命。次數少的技能，百分比會很跳，參考就好。" }));
@@ -1244,7 +1253,7 @@ function render(d) {
   if (["a", "r"].includes(location.hash.slice(1)) && parts.some(p => p[2] === location.hash.slice(1))) view = location.hash.slice(1);
   place();
   // The research cards need their own, heavier, numbers: fetched once the page is up.
-  if ((d.skills || []).length) fetch(`${API}/research`).then(r => r.json()).then(R => {
+  if ((d.skills || []).length) early.research.then(R => {
     const more = [["治療", healCard2(R, P), "a"], ["活躍", activityCard(R, P), "a"],
       ["防禦", defenceCard(R, P), "r"], ["怪物", npcCard(R), "r"], ["跨目標", acrossCard(d, P), "r"], ["等級差", gapCard(R), "r"], ["持續傷害", dotCard(R, P), "r"], ["隊員防禦", guardCard(R, P), "r"],
       ["增益", buffCard(R, P), "r"], ["寵物", petFightCard(R, P), "r"], ["射擊", shotCard(R, P), "r"], ["資源", costCard(R, P), "r"]].filter(([, card]) => card);
