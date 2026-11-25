@@ -675,3 +675,22 @@ def test_a_switch_the_game_took_counts_as_on_even_when_it_still_answers_off():
     assert g.lua.eval("SWITCHED") is True and g.lua.eval("TYPED") is None
     assert "不用再輸入" in list(g.mock.out.values())[-1] and not g.mock.button.text.startswith("|cffff3333!")
     assert g.db.debug.combat_log_switch.answer == "false"
+
+
+def test_the_save_button_gets_its_mark_back_when_the_player_switches_the_combat_log_off():
+    g = Game()
+    g.lua.execute("StaticPopupDialogs = {} function StaticPopup_Show() end "
+                  "COMBATLOGDISABLED = '戰鬥記錄功能已經停止。' COMBATLOGENABLED = '戰鬥記錄功能已經啟動。'")
+    g.login()
+    marked = lambda: g.mock.button.text.startswith("|cffff3333!")        # noqa: E731
+    g.lua.eval("StaticPopupDialogs.ADVENTURECOLLECTOR_COMBATLOG").OnAccept()
+    assert g.mock.logging is True and not marked()
+    g.mock.logging = False                                               # the player types /combatlog
+    g.fire("CHAT_MSG_SYSTEM", "戰鬥記錄功能已經停止。")
+    assert marked()                                                      # at once, though switched on a moment ago
+    g.mock.logging = True
+    g.fire("CHAT_MSG_SYSTEM", "戰鬥記錄功能已經啟動。")
+    assert not marked()
+    g.mock.logging = False                                               # off without a word from the game:
+    g.tick(60)
+    assert marked()                                                      # seen at the next thing recorded

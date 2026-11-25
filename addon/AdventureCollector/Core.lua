@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.1.4"
+local VERSION = "0.1.5"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -78,13 +78,14 @@ function combatLogOn()
     if not db or db.settings.combatLogCheck == false or type(LoggingCombat) ~= "function" then return nil end
     local ok, on = pcall(LoggingCombat)
     if not ok or isSecret(on) then return nil end
-    return (on or combatLogAsked) and true or false
+    return (on or (combatLogAsked and now() - combatLogAsked < 10)) and true or false
 end
 
 -- Switch the game's combat log on. true: it is on. false: the game refused, the player has to
 -- type the command. Seen in the game: the switch works, yet asking straight afterwards still
 -- answers "off" -- and typing /combatlog then switches it off again. So a switch the game took
--- without complaint counts as on for the rest of this session, whatever it answers.
+-- without complaint counts as on for the next few seconds, whatever it answers; after that the
+-- game's own answer is believed again, which is how a log the player switches off shows up.
 local function switchCombatLogOn()
     local ok, answer = pcall(LoggingCombat, true)
     local read = combatLogOn()
@@ -93,7 +94,7 @@ local function switchCombatLogOn()
                                        read = tostring(read), at = now() }
     end
     if not ok or db.settings.combatLogCheck == false then return false end
-    combatLogAsked = true
+    combatLogAsked = now()
     return true
 end
 
@@ -537,6 +538,16 @@ end
 
 -- ------------------------------------------------------------ events
 local handlers = {}
+
+-- The game says so in chat when the player types /combatlog: show or clear the "!" on the save
+-- button there and then, not at the next thing recorded.
+function handlers.CHAT_MSG_SYSTEM(text)
+    if isSecret(text) or type(text) ~= "string" then return end
+    if text == COMBATLOGDISABLED or text == COMBATLOGENABLED then
+        if text == COMBATLOGDISABLED then combatLogAsked = nil end
+        updateButton()
+    end
+end
 
 function handlers.ADDON_LOADED(name)
     if name == ADDON_NAME then initDB() end
