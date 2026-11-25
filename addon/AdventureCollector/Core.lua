@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.1.7"
+local VERSION = "0.1.8"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -25,20 +25,11 @@ local groupGuids, groupUnits, petOwners = {}, {}, {}
 local sessionEvents = 0
 local last = { map = nil, x = nil, y = nil, t = 0 }
 local ticker
-local saveButton, combatBadge
+local saveButton
 
 local combatLogOn, combatLogPopup   -- defined with the combat log reminder below
 local function updateButton()
-    if not saveButton then return end
-    -- For as long as the game's combat log is off (and reminders are wanted): a blinking yellow
-    -- sign beside the button. The button itself is red, so a mark in its own text does not show.
-    local off = combatLogOn and db and db.settings.combatLogRemind and combatLogOn() == false
-    if combatBadge then
-        if off then combatBadge:Show() else combatBadge:Hide() end
-        saveButton:SetText("存檔 (" .. sessionEvents .. ")")
-    else
-        saveButton:SetText((off and "|cffffff00!|r " or "") .. "存檔 (" .. sessionEvents .. ")")
-    end
+    if saveButton then saveButton:SetText("存檔 (" .. sessionEvents .. ")") end
 end
 
 -- ------------------------------------------------------------ helpers
@@ -75,9 +66,11 @@ end
 -- ------------------------------------------------------------ combat log reminder
 -- Damage figures and kills inside dungeons come from the file the game writes while its own
 -- combat log is on (/combatlog). Nothing else tells the player it is off, and a session
--- played without it has no figures at all, so say so: at login, and again on joining a group
--- or entering a dungeon.
-local combatLogSaid, combatLogAsked
+-- played without it has no figures at all, so say so on coming into the game.
+-- Only then: seen in the game, a while after the log is switched on the client answers "off"
+-- although the file is being written, so nothing may keep asking and nagging during play.
+-- Saving reloads the interface, which is not coming into the game: no reminder after that.
+local combatLogAsked, reloaded
 
 -- true or false; nil when the client does not say (no such call, or it was refused).
 function combatLogOn()
@@ -117,7 +110,7 @@ function combatLogPopup()
             .. "\n\n按「開啟戰鬥紀錄」，或在聊天輸入框輸入：\n|cffffff00/combatlog|r",
         button1 = "開啟戰鬥紀錄", button2 = "先不要", button3 = "不再提醒",
         OnAccept = function()
-            if switchCombatLogOn() then say("戰鬥紀錄已開啟，不用再輸入指令。") updateButton() return end
+            if switchCombatLogOn() then say("戰鬥紀錄已開啟，不用再輸入指令。") return end
             -- This client will not let an addon switch it on: put the command in the chat box,
             -- so that all that is left to do is press Enter.
             if type(ChatFrame_OpenChat) == "function" and pcall(ChatFrame_OpenChat, "/combatlog") then
@@ -129,7 +122,6 @@ function combatLogPopup()
         OnAlt = function()
             if db then db.settings.combatLogRemind = false end
             say("戰鬥紀錄沒開時不再提醒。要恢復：|cffffff00/adventure combatlog quiet|r")
-            updateButton()
         end,
         timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
     }
@@ -145,10 +137,7 @@ local function checkCombatLog(again)
             return true
         end
     end
-    if not db.settings.combatLogRemind then return false end
-    local t = now()
-    if again and combatLogSaid and t - combatLogSaid < 600 then return false end
-    combatLogSaid = t
+    if not db.settings.combatLogRemind or (reloaded and not again) then return false end
     say("|cffff5555戰鬥紀錄沒有開|r，現在打的不會有傷害統計。輸入 |cffffff00/combatlog|r 開啟；"
         .. "想要每次登入自動開，輸入 |cffffff00/adventure combatlog auto|r")
     combatLogPopup()
@@ -545,14 +534,6 @@ end
 -- ------------------------------------------------------------ events
 local handlers = {}
 
--- The game says so in chat when the player types /combatlog: show or clear the "!" on the save
--- button there and then, not at the next thing recorded.
-function handlers.CHAT_MSG_SYSTEM(text)
-    if isSecret(text) or type(text) ~= "string" then return end
-    if text == COMBATLOGDISABLED then combatLogAsked = nil end
-    updateButton()
-end
-
 function handlers.ADDON_LOADED(name)
     if name == ADDON_NAME then initDB() end
 end
@@ -900,7 +881,7 @@ function ns.groupTick()
     sampleGroup()
     checkDeaths()
 end
-function handlers.GROUP_JOINED() syncGroup() checkCombatLog(true) end
+function handlers.GROUP_JOINED() syncGroup() end
 function handlers.GROUP_LEFT() syncGroup() end
 
 function handlers.PARTY_KILL(attackerGUID, targetGUID)
@@ -1002,13 +983,15 @@ local function checkInstance()
     end
     if id then
         addEvent("INSTANCE_ENTERED", { instance_id = id, name = name, instance_type = kind, difficulty = difficulty })
-        checkCombatLog(true)
     end
     currentInstance, currentInstanceName = id, name
 end
 ns.checkInstance = checkInstance
 
-function handlers.PLAYER_ENTERING_WORLD() checkInstance() end
+function handlers.PLAYER_ENTERING_WORLD(_, reloading)
+    if reloading == true then reloaded = true end
+    checkInstance()
+end
 
 function handlers.ENCOUNTER_END(encounterID, name, _, groupSize, success)
     if not charId then return end
@@ -1177,42 +1160,7 @@ function ns.createButton()
         if type(point) == "string" then db.settings.buttonPos = { point = point, x = x, y = y } end
     end)
     b:SetScript("OnClick", saveNow)
-    -- Look again every second: the combat log is switched by typing a command, which is nothing
-    -- the addon records, and standing still nothing else would bring the sign up to date.
-    local waited = 0
-    b:SetScript("OnUpdate", function(_, elapsed)
-        waited = waited + (tonumber(elapsed) or 0)
-        if waited >= 1 then waited = 0 updateButton() end
-    end)
     saveButton = b
-    -- The sign that the combat log is off: its own little dark plate with an alert icon,
-    -- above the button and moving with it. A click brings the dialog back. If this client
-    -- cannot build it, the button's text carries a mark instead.
-    pcall(function()
-        local sign = CreateFrame("Button", "AdventureCollectorCombatLogSign", b)
-        sign:SetSize(118, 24)
-        sign:SetPoint("BOTTOMLEFT", b, "TOPLEFT", 0, 3)
-        local back = sign:CreateTexture(nil, "BACKGROUND")
-        back:SetAllPoints(sign)
-        back:SetColorTexture(0, 0, 0, 0.8)
-        local icon = sign:CreateTexture(nil, "ARTWORK")
-        icon:SetSize(20, 20)
-        icon:SetPoint("LEFT", sign, "LEFT", 3, 0)
-        icon:SetTexture("Interface\\DialogFrame\\UI-Dialog-Icon-AlertNew")
-        local label = sign:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        label:SetPoint("LEFT", icon, "RIGHT", 3, 0)
-        label:SetText("|cffffe000戰鬥紀錄未開|r")
-        local blink = sign:CreateAnimationGroup()
-        local fade = blink:CreateAnimation("Alpha")
-        fade:SetFromAlpha(1)
-        fade:SetToAlpha(0.35)
-        fade:SetDuration(0.7)
-        blink:SetLooping("BOUNCE")
-        blink:Play()
-        sign:SetScript("OnClick", function() combatLogPopup() end)
-        sign:Hide()
-        combatBadge = sign
-    end)
     updateButton()
     if not db.settings.showButton then b:Hide() end
 end
@@ -1390,7 +1338,7 @@ SlashCmdList.ADVENTURECOLLECTOR = function(msg)
             local on = combatLogOn()
             if on == nil then say("這個遊戲版本不讓插件知道戰鬥紀錄有沒有開，請自己輸入 /combatlog 確認")
             elseif on then say("戰鬥紀錄已開啟")
-            else combatLogSaid = nil checkCombatLog() end
+            else checkCombatLog(true) end
         end
     elseif msg == "button" then
         if db then

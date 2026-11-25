@@ -119,10 +119,9 @@ def test_save_now_button_and_command():
     g = Game()
     g.login()
     b = g.mock.button
-    assert g.mock.sign.shown is True                 # a sign beside it while the combat log is off
-    g.mock.logging = True
+    assert b.text == f"存檔 ({len(g.events())})"      # shows events since last save
     g.tick(60)
-    assert b.text == f"存檔 ({len(g.events())})" and g.mock.sign.shown is False     # shows events since last save
+    assert b.text == f"存檔 ({len(g.events())})"
     b.scripts.OnClick(b)
     assert g.mock.reloads == 1
     g.slash("save")
@@ -567,34 +566,74 @@ def test_combat_log_is_not_used_and_pet_kills_count():
     assert [k.killed_by for k in of(g, "MOB_KILLED")] == ["鈴", None]
 
 
-def test_says_when_the_combat_log_is_off_and_can_switch_it_on():
+def test_says_when_the_combat_log_is_off_on_coming_into_the_game_and_only_then():
     said = lambda g: [line for line in g.mock.out.values() if "戰鬥紀錄" in line]   # noqa: E731
+    box = "StaticPopupDialogs = {} SHOWN = {} function StaticPopup_Show(which) SHOWN[#SHOWN + 1] = which end "
+    g = Game()
+    g.lua.execute(box)
+    g.login()
+    dialog = g.lua.eval("StaticPopupDialogs.ADVENTURECOLLECTOR_COMBATLOG")
+    assert len(said(g)) == 1 and "/combatlog" in said(g)[0]              # a line of chat
+    assert g.lua.eval("#SHOWN") == 1 and "/combatlog" in dialog.text     # and a dialog, with the command on it
+    # Seen in the game: a while after the log is on the client answers "off" all the same.
+    # So nothing asks again during play, whatever happens.
+    g.mock.time += 3600
+    g.fire("GROUP_JOINED")
+    g.tick(60)
+    assert len(said(g)) == 1 and g.lua.eval("#SHOWN") == 1 and g.mock.button.text.startswith("存檔")
+    # saving reloads the interface: that is not coming into the game
+    g = Game()
+    g.lua.execute(box)
+    g.load_addon()
+    g.fire("PLAYER_ENTERING_WORLD", False, True)
+    g.fire("PLAYER_LOGIN")
+    assert not said(g) and g.lua.eval("#SHOWN") == 0
+    assert "沒有開" in g.slash("combatlog")[-1]                           # asked for: answered all the same
+    # on already, told to keep quiet, or a client that will not say: nothing is said
+    for prepare in ("MOCK.logging = true", "AdventureCollectorDB = { settings = { combatLogRemind = false } }", "MOCK.nologging = true"):
+        g = Game()
+        g.lua.execute(box + prepare)
+        g.login()
+        assert not said(g) and g.lua.eval("#SHOWN") == 0, prepare
+
+
+def test_the_dialogs_button_switches_the_combat_log_on_and_never_off():
+    box = "StaticPopupDialogs = {} function StaticPopup_Show() end function ChatFrame_OpenChat(t) TYPED = t end "
+    last = lambda g: list(g.mock.out.values())[-1]                       # noqa: E731
+    g = Game()
+    g.lua.execute(box)
+    g.login()
+    dialog = g.lua.eval("StaticPopupDialogs.ADVENTURECOLLECTOR_COMBATLOG")
+    dialog.OnAccept()
+    assert g.mock.logging is True and "不用再輸入" in last(g) and g.lua.eval("TYPED") is None
+    assert g.db.debug.combat_log_switch.answer == "true"
+    # Seen in the game: the switch worked, the game still answered "off", the command was put in
+    # the chat box, and pressing Enter switched the log off again. A switch the game took is on.
+    g = Game()
+    g.lua.execute(box + "LoggingCombat = function(on) if on then SWITCHED = true end return false end")
+    g.login()
+    g.lua.eval("StaticPopupDialogs.ADVENTURECOLLECTOR_COMBATLOG").OnAccept()
+    assert g.lua.eval("SWITCHED") is True and g.lua.eval("TYPED") is None and "不用再輸入" in last(g)
+    # only a client that refuses gets the command typed in for it
+    g = Game()
+    g.lua.execute(box + "LoggingCombat = function(on) if on ~= nil then error('refused') end return false end")
+    g.login()
+    dialog = g.lua.eval("StaticPopupDialogs.ADVENTURECOLLECTOR_COMBATLOG")
+    dialog.OnAccept()
+    assert g.lua.eval("TYPED") == "/combatlog" and "Enter" in last(g)
+    dialog.OnAlt()                                                       # "do not remind me again"
+    assert g.db.settings.combatLogRemind is False
+
+
+def test_the_combat_log_can_be_switched_on_at_every_login():
     g = Game()
     g.login()
-    assert len(said(g)) == 1 and "/combatlog" in said(g)[0]              # off at login: said once
-    g.fire("GROUP_JOINED")
-    assert len(said(g)) == 1                                             # not again within ten minutes
-    g.mock.time += 601
-    g.fire("GROUP_JOINED")
-    assert len(said(g)) == 2
-    g.mock.logging = True                                                # the player typed /combatlog
-    g.mock.time += 601
-    g.fire("GROUP_JOINED")
-    assert len(said(g)) == 2 and "已開啟" in g.slash("combatlog")[-1]
-    # asked to do it itself: switched on there and then, and at every login after
-    g.mock.logging = False
     g.slash("combatlog auto")
     assert g.mock.logging is True and g.db.settings.combatLogAuto is True
     g = Game()                                                           # the next time the game is started
     g.lua.execute("AdventureCollectorDB = { settings = { combatLogAuto = true } }")
     g.login()
-    assert g.mock.logging is True and "已替你開啟" in said(g)[-1]
-    # on already, told to keep quiet, or a client that will not say: nothing is said
-    for prepare in ("MOCK.logging = true", "AdventureCollectorDB = { settings = { combatLogRemind = false } }", "MOCK.nologging = true"):
-        g = Game()
-        g.lua.execute(prepare)
-        g.login()
-        assert not said(g), prepare
+    assert g.mock.logging is True and "已替你開啟" in list(g.mock.out.values())[-1]
 
 
 def test_blocked_calls_are_recorded_even_before_login():
@@ -634,68 +673,3 @@ def test_loot_messages_say_how_the_item_arrived():
     g.fire("CHAT_MSG_LOOT", roll, "", "", "", "", "", 0, 0, "", 0, 0, "Player-1-A")
     g.fire("CHAT_MSG_LOOT", roll)
     assert len(of(g, "ITEM_LOOTED")) == 3 and len(of(g, "PARTY_LOOT")) == 2
-
-
-def test_a_dialog_pops_up_when_the_combat_log_is_off_and_its_button_switches_it_on():
-    g = Game()
-    g.lua.execute("StaticPopupDialogs = {} SHOWN = {} function StaticPopup_Show(which) SHOWN[#SHOWN + 1] = which end")
-    g.login()
-    box = g.lua.eval("StaticPopupDialogs.ADVENTURECOLLECTOR_COMBATLOG")
-    assert g.lua.eval("#SHOWN") == 1 and "戰鬥紀錄" in box.text
-    g.fire("GROUP_JOINED")
-    assert g.lua.eval("#SHOWN") == 1                       # no more often than the line of chat
-    box.OnAccept()
-    assert g.mock.logging is True
-    assert "/combatlog" in box.text                        # the command is on the dialog too
-    # a client that will not let the addon do it: the command is put in the chat box instead
-    g.lua.execute("LoggingCombat = function(on) if on ~= nil then error('refused') end return false end "
-                  "function ChatFrame_OpenChat(t) TYPED = t end")
-    box.OnAccept()
-    assert g.lua.eval("TYPED") == "/combatlog" and "Enter" in list(g.mock.out.values())[-1]
-    box.OnAlt()                                            # "do not remind me again"
-    g.mock.time += 601
-    g.fire("GROUP_JOINED")
-    assert g.db.settings.combatLogRemind is False and g.lua.eval("#SHOWN") == 1
-    # switched on already: no dialog
-    g = Game()
-    g.lua.execute("MOCK.logging = true StaticPopupDialogs = {} SHOWN = {} function StaticPopup_Show(w) SHOWN[#SHOWN + 1] = w end")
-    g.login()
-    assert g.lua.eval("#SHOWN") == 0
-
-
-def test_a_switch_the_game_took_counts_as_on_even_when_it_still_answers_off():
-    # Seen in the game: the button switched the log on, the game still answered "off", the command
-    # was put in the chat box, and pressing Enter switched the log off again.
-    g = Game()
-    g.lua.execute("StaticPopupDialogs = {} function StaticPopup_Show() end function ChatFrame_OpenChat(t) TYPED = t end "
-                  "LoggingCombat = function(on) if on then SWITCHED = true end return false end")
-    g.login()
-    assert g.mock.sign.shown
-    g.lua.eval("StaticPopupDialogs.ADVENTURECOLLECTOR_COMBATLOG").OnAccept()
-    assert g.lua.eval("SWITCHED") is True and g.lua.eval("TYPED") is None
-    assert "不用再輸入" in list(g.mock.out.values())[-1] and not g.mock.sign.shown
-    assert g.db.debug.combat_log_switch.answer == "false"
-
-
-def test_the_save_button_gets_its_mark_back_when_the_player_switches_the_combat_log_off():
-    g = Game()
-    g.lua.execute("StaticPopupDialogs = {} function StaticPopup_Show() end "
-                  "COMBATLOGDISABLED = '戰鬥記錄功能已經停止。' COMBATLOGENABLED = '戰鬥記錄功能已經啟動。'")
-    g.login()
-    marked = lambda: g.mock.sign.shown                                   # noqa: E731
-    g.lua.eval("StaticPopupDialogs.ADVENTURECOLLECTOR_COMBATLOG").OnAccept()
-    assert g.mock.logging is True and not marked()
-    g.mock.logging = False                                               # the player types /combatlog
-    g.fire("CHAT_MSG_SYSTEM", "戰鬥記錄功能已經停止。")
-    assert marked()                                                      # at once, though switched on a moment ago
-    g.mock.logging = True
-    g.fire("CHAT_MSG_SYSTEM", "戰鬥記錄功能已經啟動。")
-    assert not marked()
-    # Seen in the game: what it says on switching is not a fixed text, and standing in an inn
-    # nothing is recorded. The button looks again by itself, every second.
-    for on in (False, True):
-        g.mock.logging = on
-        g.mock.button.scripts.OnUpdate(g.mock.button, 0.4)
-        assert marked() is on
-        g.mock.button.scripts.OnUpdate(g.mock.button, 0.7)
-        assert marked() is not on
