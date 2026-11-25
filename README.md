@@ -60,7 +60,7 @@ cd agent && ../.venv/bin/python AdventureSync.pyw      # Windows：..\.venv\Scri
 
 畫面上方有可拖動的「存檔 (N)」按鈕。遊戲只在登出或重新載入介面時才把資料寫到磁碟，所以**按了存檔，同步程式才讀得到新資料**。
 
-要有傷害統計與副本內的擊殺，先輸入 `/combatlog` 開啟遊戲的戰鬥紀錄。
+要有傷害統計與副本內的擊殺，先輸入 `/combatlog` 開啟遊戲的戰鬥紀錄。沒開的時候，插件會在登入、加入隊伍、進副本時跳出視窗提醒，視窗上的按鈕可以直接開啟。
 
 | 指令 | 作用 |
 | --- | --- |
@@ -69,6 +69,7 @@ cd agent && ../.venv/bin/python AdventureSync.pyw      # Windows：..\.venv\Scri
 | `/adventure button` | 顯示或隱藏存檔按鈕 |
 | `/adventure on` / `off` | 啟用或暫停記錄 |
 | `/adventure chat <頻道\|all> on\|off` | 聊天紀錄，預設全部關閉 |
+| `/adventure combatlog` | 戰鬥紀錄有沒有開；加 `auto` 每次登入自動開，加 `quiet` 不再提醒 |
 | `/adventure mapshot` | 把目前的世界地圖截下來當網頁底圖 |
 
 ## 給其他人用

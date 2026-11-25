@@ -632,3 +632,25 @@ def test_loot_messages_say_how_the_item_arrived():
     g.fire("CHAT_MSG_LOOT", roll, "", "", "", "", "", 0, 0, "", 0, 0, "Player-1-A")
     g.fire("CHAT_MSG_LOOT", roll)
     assert len(of(g, "ITEM_LOOTED")) == 3 and len(of(g, "PARTY_LOOT")) == 2
+
+
+def test_a_dialog_pops_up_when_the_combat_log_is_off_and_its_button_switches_it_on():
+    g = Game()
+    g.lua.execute("StaticPopupDialogs = {} SHOWN = {} function StaticPopup_Show(which) SHOWN[#SHOWN + 1] = which end")
+    g.login()
+    box = g.lua.eval("StaticPopupDialogs.ADVENTURECOLLECTOR_COMBATLOG")
+    assert g.lua.eval("#SHOWN") == 1 and "戰鬥紀錄" in box.text
+    g.fire("GROUP_JOINED")
+    assert g.lua.eval("#SHOWN") == 1                       # no more often than the line of chat
+    box.OnAccept()
+    assert g.mock.logging is True
+    g.mock.logging = False
+    box.OnAlt()                                            # "do not remind me again"
+    g.mock.time += 601
+    g.fire("GROUP_JOINED")
+    assert g.db.settings.combatLogRemind is False and g.lua.eval("#SHOWN") == 1
+    # switched on already: no dialog
+    g = Game()
+    g.lua.execute("MOCK.logging = true StaticPopupDialogs = {} SHOWN = {} function StaticPopup_Show(w) SHOWN[#SHOWN + 1] = w end")
+    g.login()
+    assert g.lua.eval("#SHOWN") == 0

@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.1.1"
+local VERSION = "0.1.2"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -77,6 +77,31 @@ local function combatLogOn()
     return on and true or false
 end
 
+-- A line of chat scrolls away in a busy group, so the same thing is also put up as a dialog
+-- with a button that switches the combat log on. Nothing here may stop the reminder itself.
+local POPUP = "ADVENTURECOLLECTOR_COMBATLOG"
+local function combatLogPopup()
+    if type(UIErrorsFrame) == "table" and type(UIErrorsFrame.AddMessage) == "function" then
+        pcall(UIErrorsFrame.AddMessage, UIErrorsFrame, "戰鬥紀錄沒有開：不會有傷害統計", 1, 0.3, 0.3)
+    end
+    if type(StaticPopupDialogs) ~= "table" or type(StaticPopup_Show) ~= "function" then return end
+    StaticPopupDialogs[POPUP] = StaticPopupDialogs[POPUP] or {
+        text = "戰鬥紀錄沒有開啟。\n\n傷害統計、技能分析與副本內的擊殺都靠它，沒開就不會記錄。",
+        button1 = "開啟戰鬥紀錄", button2 = "先不要", button3 = "不再提醒",
+        OnAccept = function()
+            pcall(LoggingCombat, true)
+            if combatLogOn() then say("戰鬥紀錄已開啟")
+            else say("沒辦法由插件開啟戰鬥紀錄，請輸入 |cffffff00/combatlog|r") end
+        end,
+        OnAlt = function()
+            if db then db.settings.combatLogRemind = false end
+            say("戰鬥紀錄沒開時不再提醒。要恢復：|cffffff00/adventure combatlog quiet|r")
+        end,
+        timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+    }
+    pcall(StaticPopup_Show, POPUP)
+end
+
 local function checkCombatLog(again)
     local on = combatLogOn()
     if on ~= false then return on end
@@ -93,6 +118,7 @@ local function checkCombatLog(again)
     combatLogSaid = t
     say("|cffff5555戰鬥紀錄沒有開|r，現在打的不會有傷害統計。輸入 |cffffff00/combatlog|r 開啟；"
         .. "想要每次登入自動開，輸入 |cffffff00/adventure combatlog auto|r")
+    combatLogPopup()
     return false
 end
 ns.checkCombatLog = checkCombatLog
