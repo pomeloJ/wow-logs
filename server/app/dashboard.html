@@ -1103,10 +1103,14 @@ async function load(quiet) {
   if (!quiet) busy.classList.add("on");
   const slow = setTimeout(() => { const n = document.getElementById("slow"); if (n) n.hidden = false; }, 4000);
   try {
-    const chars = (await get("/characters")).items;
-    const stats = await get("/stats/summary");
+    // Requests are sent together, not one after another. Seen through the public address,
+    // each one costs a few hundred milliseconds of travel however small it is; a dozen in a
+    // row kept the page empty for about five seconds. Only what needs an earlier answer waits:
+    // the character list (for the character), and the snapshot (for its items and position).
+    const optional = (promise, fallback) => promise.catch(() => fallback);   // missing parts are shown as "none"
+    const [chars, stats, maps] = await Promise.all([get("/characters").then(r => r.items), get("/stats/summary"), get("/maps")]);
     R.markers.clear();
-    state.maps = Object.fromEntries((await get("/maps")).items.map(m => [m.map_id, m]));
+    state.maps = Object.fromEntries(maps.items.map(m => [m.map_id, m]));
     document.getElementById("logout").hidden = false;
     if (!chars.length) {
       app.replaceChildren(el("div", { class: "card msg", text: "伺服器還沒有收到任何角色資料。" }));
@@ -1114,38 +1118,55 @@ async function load(quiet) {
     }
     if (!chars.some(c => c.id === state.charId)) state.charId = chars[0].id;
     const cid = encodeURIComponent(state.charId);
-    const [snap, locs, events] = await Promise.all([
-      get(`/characters/${cid}/snapshot`), get(`/locations?character_id=${cid}&limit=1000`),
-      get(`/events?character_id=${cid}&limit=100` + (state.filter === "activity" ? "&exclude_type=LOCATION_SAMPLE,PARTY_POSITIONS,GROUP_METER,GROUP_ENCOUNTER"
-        : state.filter === "all" ? "" : "&event_type=" + encodeURIComponent(state.filter)))]);
-    state.locs = locs.items;
-    // Older positions too, so a time range can reach back (five pages at most).
-    for (let cursor = locs.next_cursor, page = 1; cursor && page < 5; page++) {
-      const more = await get(`/locations?character_id=${cid}&limit=1000&cursor=${encodeURIComponent(cursor)}`);
-      state.locs = state.locs.concat(more.items);
-      cursor = more.next_cursor;
-    }
     const since = state.range === "today" ? new Date(new Date().setHours(0, 0, 0, 0))
       : state.range === "week" ? new Date(Date.now() - 7 * 86400000) : null;
-    const act = await get(`/stats/activity?character_id=${cid}` + (since ? "&start_time=" + encodeURIComponent(since.toISOString()) : ""));
+    // Older positions too, so a time range can reach back (five pages at most). Each page
+    // names the next, so these follow one another, alongside everything else.
+    const positions = (async () => {
+      const first = await get(`/locations?character_id=${cid}&limit=1000`);
+      let all = first.items;
+      for (let cursor = first.next_cursor, page = 1; cursor && page < 5; page++) {
+        const more = await get(`/locations?character_id=${cid}&limit=1000&cursor=${encodeURIComponent(cursor)}`);
+        all = all.concat(more.items);
+        cursor = more.next_cursor;
+      }
+      return all;
+    })();
+    // World data is optional: asked for now, used only when the server has it.
+    const world = optional(get("/world/sources"), { available: false, items: [] });
+    const snapshot = get(`/characters/${cid}/snapshot`);
+    // Names of the items worn and carried, and the quest givers nearby: these need the snapshot
+    // and nothing else, so they are asked for the moment it arrives.
+    const fromSnapshot = Promise.all([snapshot, world]).then(([snap, w]) => {
+      const d = snap.data;
+      if (!w.available) return [null, []];
+      const ids = [...new Set([...list(d.equipment), ...list(d.bags && d.bags.items), ...list(d.bank && d.bank.items)].map(i => i.item_id).filter(Boolean))];
+      return Promise.all([
+        ids.length ? optional(get("/world/names?items=" + ids.join(",")), null) : null,
+        d.map_id && typeof d.x === "number"
+          ? optional(get(`/world/nearby?map_id=${d.map_id}&x=${d.x}&y=${d.y}&radius=10&quest_only=true&limit=12`).then(r => r.items), []) : [],
+      ]);
+    });
+    const [snap, locs, events, act, ws, shots, groups, solos, pins, zones, [nm, near]] = await Promise.all([
+      snapshot, positions,
+      get(`/events?character_id=${cid}&limit=100` + (state.filter === "activity" ? "&exclude_type=LOCATION_SAMPLE,PARTY_POSITIONS,GROUP_METER,GROUP_ENCOUNTER"
+        : state.filter === "all" ? "" : "&event_type=" + encodeURIComponent(state.filter))),
+      get(`/stats/activity?character_id=${cid}` + (since ? "&start_time=" + encodeURIComponent(since.toISOString()) : "")),
+      world,
+      // screenshots are only fetched while the album has a tab: hidden means not loaded either
+      TABS.some(t => t[0] === "album") ? optional(get(`/screenshots?character_id=${cid}&limit=120`), { total: 0, items: [] }) : { total: 0, items: [] },
+      optional(get(`/groups?character_id=${cid}`).then(r => r.items), []),
+      optional(get(`/characters/${encodeURIComponent(cid)}/solo?limit=30`).then(r => r.items), []),
+      world.then(w => w.available ? optional(get(`/world/quest-pins?character_id=${cid}`).then(r => r.items), []) : []),
+      world.then(w => w.available ? optional(get(`/world/quest-zones?character_id=${cid}`), null) : null),
+      fromSnapshot,
+    ]);
+    state.locs = locs;
+    W.ok = !!ws.available; W.src = ws.items[0] || null;
     const d = snap.data;
     state.me = { map_id: d.map_id, x: d.x, y: d.y };
-    try { const ws = await get("/world/sources"); W.ok = ws.available; W.src = ws.items[0] || null; } catch (e) { W.ok = false; }
-    let itemNames = {}, near = [], neededBy = {}, zones = null, groups = [], solos = [], shots = { total: 0, items: [] };
-    // screenshots are only fetched while the album has a tab: hidden means not loaded either
-    if (TABS.some(t => t[0] === "album")) try { shots = await get(`/screenshots?character_id=${cid}&limit=120`); } catch (e) { /* shown as "none" */ }
-    try { groups = (await get(`/groups?character_id=${cid}`)).items; } catch (e) { /* shown as "none" */ }
-    try { solos = (await get(`/characters/${encodeURIComponent(cid)}/solo?limit=30`)).items; } catch (e) { /* shown as "none" */ }
-    state.pins = [];
-    if (W.ok) {
-      const ids = [...new Set([...list(d.equipment), ...list(d.bags && d.bags.items), ...list(d.bank && d.bank.items)].map(i => i.item_id).filter(Boolean))];
-      try {
-        if (ids.length) { const nm = await get("/world/names?items=" + ids.join(",")); itemNames = nm.items; neededBy = nm.needed_by || {}; }
-        state.pins = (await get(`/world/quest-pins?character_id=${cid}`)).items;
-        zones = await get(`/world/quest-zones?character_id=${cid}`);
-        if (d.map_id && typeof d.x === "number") near = (await get(`/world/nearby?map_id=${d.map_id}&x=${d.x}&y=${d.y}&radius=10&quest_only=true&limit=12`)).items;
-      } catch (e) { /* world data is optional */ }
-    }
+    state.pins = pins;
+    const itemNames = nm ? nm.items : {}, neededBy = (nm && nm.needed_by) || {};
 
     const stale = Date.now() - new Date(snap.captured_at).getTime() > 3600000;
     document.getElementById("sync").replaceChildren(
