@@ -119,10 +119,10 @@ def test_save_now_button_and_command():
     g = Game()
     g.login()
     b = g.mock.button
-    assert b.text == f"|cffff3333!|r 存檔 ({len(g.events())})"    # a "!" while the combat log is off
+    assert g.mock.sign.shown is True                 # a sign beside it while the combat log is off
     g.mock.logging = True
     g.tick(60)
-    assert b.text == f"存檔 ({len(g.events())})"      # shows events since last save
+    assert b.text == f"存檔 ({len(g.events())})" and g.mock.sign.shown is False     # shows events since last save
     b.scripts.OnClick(b)
     assert g.mock.reloads == 1
     g.slash("save")
@@ -670,10 +670,10 @@ def test_a_switch_the_game_took_counts_as_on_even_when_it_still_answers_off():
     g.lua.execute("StaticPopupDialogs = {} function StaticPopup_Show() end function ChatFrame_OpenChat(t) TYPED = t end "
                   "LoggingCombat = function(on) if on then SWITCHED = true end return false end")
     g.login()
-    assert g.mock.button.text.startswith("|cffff3333!")
+    assert g.mock.sign.shown
     g.lua.eval("StaticPopupDialogs.ADVENTURECOLLECTOR_COMBATLOG").OnAccept()
     assert g.lua.eval("SWITCHED") is True and g.lua.eval("TYPED") is None
-    assert "不用再輸入" in list(g.mock.out.values())[-1] and not g.mock.button.text.startswith("|cffff3333!")
+    assert "不用再輸入" in list(g.mock.out.values())[-1] and not g.mock.sign.shown
     assert g.db.debug.combat_log_switch.answer == "false"
 
 
@@ -682,7 +682,7 @@ def test_the_save_button_gets_its_mark_back_when_the_player_switches_the_combat_
     g.lua.execute("StaticPopupDialogs = {} function StaticPopup_Show() end "
                   "COMBATLOGDISABLED = '戰鬥記錄功能已經停止。' COMBATLOGENABLED = '戰鬥記錄功能已經啟動。'")
     g.login()
-    marked = lambda: g.mock.button.text.startswith("|cffff3333!")        # noqa: E731
+    marked = lambda: g.mock.sign.shown                                   # noqa: E731
     g.lua.eval("StaticPopupDialogs.ADVENTURECOLLECTOR_COMBATLOG").OnAccept()
     assert g.mock.logging is True and not marked()
     g.mock.logging = False                                               # the player types /combatlog

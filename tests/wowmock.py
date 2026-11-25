@@ -173,10 +173,13 @@ function GetProfessions() return 1, nil, nil, 4 end
 function GetProfessionInfo(i) if i == 1 then return "草藥學", 0, 75, 150 end return "釣魚", 0, 20, 75 end
 function InCombatLockdown() return MOCK.combat or false end
 function ReloadUI() MOCK.reloads = (MOCK.reloads or 0) + 1 end
-function CreateFrame(kind)
+function CreateFrame(kind, name)
     -- Unknown widget methods are no-ops, like a permissive stand-in for the real UI.
+    -- What they return (a texture, a font string, an animation) is as permissive again.
+    local part
+    part = setmetatable({}, { __index = function() return function() return part end end })
     local f = setmetatable({ events = {}, scripts = {}, shown = true },
-        { __index = function() return function() end end })
+        { __index = function() return function() return part end end })
     function f:RegisterEvent(e)
         if MOCK.refuse and MOCK.refuse[e] then error("unknown event " .. e) end
         self.events[e] = true
@@ -191,7 +194,8 @@ function CreateFrame(kind)
         self.scripts[name] = fn
         if name == "OnEvent" then MOCK.onEvent = fn end
     end
-    if kind == "Button" then MOCK.button = f else MOCK.frame = f end
+    if name == "AdventureCollectorCombatLogSign" then MOCK.sign = f
+    elseif kind == "Button" then MOCK.button = f else MOCK.frame = f end
     return f
 end
 function fire(e, ...) MOCK.onEvent(MOCK.frame, e, ...) end

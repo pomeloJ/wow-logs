@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.1.5"
+local VERSION = "0.1.6"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -25,14 +25,20 @@ local groupGuids, groupUnits, petOwners = {}, {}, {}
 local sessionEvents = 0
 local last = { map = nil, x = nil, y = nil, t = 0 }
 local ticker
-local saveButton
+local saveButton, combatBadge
 
-local combatLogOn   -- defined with the combat log reminder below
+local combatLogOn, combatLogPopup   -- defined with the combat log reminder below
 local function updateButton()
     if not saveButton then return end
-    -- A red "!" for as long as the game's combat log is off (and reminders are wanted).
+    -- For as long as the game's combat log is off (and reminders are wanted): a blinking yellow
+    -- sign beside the button. The button itself is red, so a mark in its own text does not show.
     local off = combatLogOn and db and db.settings.combatLogRemind and combatLogOn() == false
-    saveButton:SetText((off and "|cffff3333!|r " or "") .. "存檔 (" .. sessionEvents .. ")")
+    if combatBadge then
+        if off then combatBadge:Show() else combatBadge:Hide() end
+        saveButton:SetText("存檔 (" .. sessionEvents .. ")")
+    else
+        saveButton:SetText((off and "|cffffff00!|r " or "") .. "存檔 (" .. sessionEvents .. ")")
+    end
 end
 
 -- ------------------------------------------------------------ helpers
@@ -101,7 +107,7 @@ end
 -- A line of chat scrolls away in a busy group, so the same thing is also put up as a dialog
 -- with a button that switches the combat log on. Nothing here may stop the reminder itself.
 local POPUP = "ADVENTURECOLLECTOR_COMBATLOG"
-local function combatLogPopup()
+function combatLogPopup()
     if type(UIErrorsFrame) == "table" and type(UIErrorsFrame.AddMessage) == "function" then
         pcall(UIErrorsFrame.AddMessage, UIErrorsFrame, "戰鬥紀錄沒有開：不會有傷害統計", 1, 0.3, 0.3)
     end
@@ -1174,6 +1180,34 @@ function ns.createButton()
     end)
     b:SetScript("OnClick", saveNow)
     saveButton = b
+    -- The sign that the combat log is off: its own little dark plate with an alert icon, to the
+    -- right of the button and moving with it. A click brings the dialog back. If this client
+    -- cannot build it, the button's text carries a mark instead.
+    pcall(function()
+        local sign = CreateFrame("Button", "AdventureCollectorCombatLogSign", b)
+        sign:SetSize(118, 24)
+        sign:SetPoint("LEFT", b, "RIGHT", 4, 0)
+        local back = sign:CreateTexture(nil, "BACKGROUND")
+        back:SetAllPoints(sign)
+        back:SetColorTexture(0, 0, 0, 0.8)
+        local icon = sign:CreateTexture(nil, "ARTWORK")
+        icon:SetSize(20, 20)
+        icon:SetPoint("LEFT", sign, "LEFT", 3, 0)
+        icon:SetTexture("Interface\\DialogFrame\\UI-Dialog-Icon-AlertNew")
+        local label = sign:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        label:SetPoint("LEFT", icon, "RIGHT", 3, 0)
+        label:SetText("|cffffe000戰鬥紀錄未開|r")
+        local blink = sign:CreateAnimationGroup()
+        local fade = blink:CreateAnimation("Alpha")
+        fade:SetFromAlpha(1)
+        fade:SetToAlpha(0.35)
+        fade:SetDuration(0.7)
+        blink:SetLooping("BOUNCE")
+        blink:Play()
+        sign:SetScript("OnClick", function() combatLogPopup() end)
+        sign:Hide()
+        combatBadge = sign
+    end)
     updateButton()
     if not db.settings.showButton then b:Hide() end
 end
