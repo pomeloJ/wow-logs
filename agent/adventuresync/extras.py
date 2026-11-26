@@ -10,6 +10,7 @@
 
 Both keep their progress in the queue database, so nothing is sent twice.
 """
+import bisect
 import csv
 import io
 import json
@@ -576,20 +577,60 @@ def recorded_kills(queue) -> Dict[int, List[float]]:
     return out
 
 
-def combat_log_state(game_dir: Path, saved_at: Optional[float] = None, slack: float = 3600) -> Dict[str, Any]:
-    """Whether the game's combat log looks switched on: {"last": when it was last written to, or
-    None when there is no such file, "missed": True when the game was played well after that}.
+SEEN = "combatseen"         # kv: times (5-second steps) the player's own doings were read from the log
 
-    saved_at is when the addon last saved, which the game does on logging out. A log that
-    stopped long before that was off for the end of that session at least; one that stopped
-    a little before may only mean the last fights were a while before logging out."""
-    last = None
-    try:
-        for f in (game_dir / "Logs").glob("WoWCombatLog*.txt"):
-            last = max(last or 0, f.stat().st_mtime)
-    except OSError:
-        pass
-    return {"last": last, "missed": bool(saved_at) and (last is None or saved_at - last > slack)}
+
+def note_seen(queue, rows: List[List[Any]], keep: float = 7 * 86400) -> None:
+    """Remember when the log showed the player doing something (or having it done to them)."""
+    mine = {int(r[1] // 5000) * 5 for r in rows if len(r) > 3 and r[3] == "" and isinstance(r[1], (int, float))}
+    if not mine:
+        return
+    seen = set(kv_get(queue, SEEN, [])) | mine
+    newest = max(seen)
+    kv_set(queue, SEEN, sorted(t for t in seen if t >= newest - keep))
+
+
+def combat_log_check(queue, now: Optional[float] = None, live: float = 900, recent: float = 12 * 3600) -> Dict[str, Any]:
+    """Is the game's combat log giving us the player's fights?
+
+    Checked against the fights the addon itself recorded (it does that with the log on or
+    off): a fight with nothing from the log in its time means the log was off. Between saves
+    the addon has not said anything yet, so something of the player's read from the log in
+    the last minutes counts as proof too. State "ok", "missing", or "waiting" (no fight to
+    judge by in the last hours: maybe nothing was fought yet, maybe the log is off)."""
+    now = time.time() if now is None else now
+    # Fights from before this program started keeping track have nothing to be checked against.
+    since = kv_get(queue, SEEN + "-since")
+    if since is None:
+        since = now
+        kv_set(queue, SEEN + "-since", since)
+    seen = kv_get(queue, SEEN, [])
+    fights = []
+    for (text,) in queue.conn.execute("SELECT payload_json FROM pending_events WHERE payload_json LIKE '%COMBAT%' "
+                                      "ORDER BY created_at DESC LIMIT 500"):
+        try:
+            e = json.loads(text)
+            if e.get("event_type") != "COMBAT":
+                continue
+            end = datetime.strptime(e["timestamp"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+            if now - end <= recent and end >= since:
+                fights.append((end, float((e.get("payload") or {}).get("duration") or 0)))
+        except (ValueError, KeyError, TypeError):
+            pass
+    fights.sort()
+
+    def covered(end: float, seconds: float) -> bool:
+        k = bisect.bisect_left(seen, end - seconds - 10)
+        return k < len(seen) and seen[k] <= end + 10
+
+    missed = [end for end, seconds in fights if not covered(end, seconds)]
+    out = {"last_seen": seen[-1] if seen else None, "fights": len(fights), "missed": len(missed),
+           "newest_fight": fights[-1][0] if fights else None}
+    if seen and now - seen[-1] <= live:
+        return {**out, "state": "ok"}
+    if fights:
+        return {**out, "state": "ok" if covered(*fights[-1]) else "missing"}
+    return {**out, "state": "waiting"}
 
 
 def process_combat_logs(game_dir: Path, db: Any, queue, idle_after: float = 120,
@@ -631,6 +672,7 @@ def process_combat_logs(game_dir: Path, db: Any, queue, idle_after: float = 120,
             meter.close()
         character = meter.me or (fallback if fallback and fallback.startswith("Player-") else None)
         if meter.rows:
+            note_seen(queue, meter.rows)
             # Every hit goes to the server as it is. Until that has worked, nothing about this
             # part of the file is remembered, so it is read again on the next scan.
             if not character:

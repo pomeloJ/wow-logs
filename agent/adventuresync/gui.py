@@ -136,14 +136,10 @@ class Worker(threading.Thread):
 
     def _status(self, store: Queue, cfg: Config) -> None:
         files = find_saved_variables(cfg.wow_path)
-        # The newest save decides: that is the game folder being played in.
-        combat = None
         try:
-            newest = max(files, key=lambda f: f.stat().st_mtime, default=None)
-            if newest is not None:
-                combat = extras.combat_log_state(newest.parents[4], newest.stat().st_mtime)
-        except OSError:
-            pass
+            combat = extras.combat_log_check(store)
+        except Exception:                                   # a status line must never stop syncing
+            combat = None
         self._say(counts=store.counts(), files=[str(f) for f in files], auto=self.auto, combat=combat)
 
     def run(self) -> None:
@@ -329,6 +325,20 @@ def ago_text(epoch: Any, suffix: str = "存檔") -> str:
     if s < 86400:
         return f"{round(s / 3600)} 小時前{suffix}"
     return f"{round(s / 86400)} 天前{suffix}"
+
+
+def combat_text(c: Dict[str, Any]) -> Dict[str, Any]:
+    """The 戰鬥紀錄 line: a green tick while the player's fights come through, otherwise a warning."""
+    hm = lambda t: time.strftime("%H:%M", time.localtime(t))      # noqa: E731
+    how = "遊戲裡可能沒開：按進遊戲時提醒視窗的「確認開啟」，或在遊戲輸入 /adventure combatlog auto 讓它每次登入自動開。"
+    if c["state"] == "ok":
+        text = f"✓ 有收到你的戰鬥（最後一筆 {hm(c['last_seen'])}）"
+        if c["missed"]:
+            text += f"\n這幾小時有 {c['missed']} 場戰鬥沒有紀錄，可能是那時還沒開。"
+        return {"text": text, "foreground": OK}
+    if c["state"] == "missing":
+        return {"text": f"✗ {hm(c['newest_fight'])} 的戰鬥沒有收到戰鬥紀錄。\n" + how, "foreground": BAD}
+    return {"text": "⚠ 還沒收到這次遊玩的戰鬥。打到怪後這裡會出現綠色勾勾；打了還是沒有，就是" + how, "foreground": WARN}
 
 
 def main(config: Optional[str] = None) -> int:
@@ -875,11 +885,7 @@ def main(config: Optional[str] = None) -> int:
                     shown["files"].configure(text="\n".join(r["files"]) if r["files"] else "找不到：請先安裝插件，進遊戲後按一次「存檔」")
                     combat = r.get("combat")
                     if combat is not None:
-                        when = time.strftime("%m/%d %H:%M", time.localtime(combat["last"])) if combat["last"] else ""
-                        shown["combat"].configure(
-                            foreground=BAD if combat["missed"] else INK,
-                            text=(f"最後寫入 {when}" if not combat["missed"] else
-                                  (f"上次遊玩時沒有開（最後寫入 {when}）" if when else "沒有開過") + "：在遊戲輸入 /combatlog 才有傷害統計"))
+                        shown["combat"].configure(**combat_text(combat))
                     show_auto(bool(r["auto"]))
         except queues.Empty:
             pass

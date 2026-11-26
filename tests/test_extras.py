@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import datetime, timezone
 
 from PIL import Image
 
@@ -347,16 +348,41 @@ def test_every_hit_miss_and_heal_is_sent_as_a_row(tmp_path):
     assert path.exists()
 
 
-def test_combat_log_that_was_off_while_playing_is_noticed(tmp_path):
-    import os
-    assert extras.combat_log_state(tmp_path, saved_at=1000.0) == {"last": None, "missed": True}
-    assert extras.combat_log_state(tmp_path) == {"last": None, "missed": False}       # never played: nothing to say
-    (tmp_path / "Logs").mkdir()
-    f = tmp_path / "Logs" / "WoWCombatLog-112526_200000.txt"
-    f.write_text("x")
-    os.utime(f, (50000, 50000))
-    assert extras.combat_log_state(tmp_path, saved_at=50000 + 600) == {"last": 50000.0, "missed": False}
-    assert extras.combat_log_state(tmp_path, saved_at=50000 + 7200)["missed"] is True
+def test_the_sync_program_says_whether_the_players_fights_come_through_the_combat_log():
+    import json as js
+    from adventuresync.gui import combat_text
+    q = Queue(":memory:")
+    now = 1795700000.0
+
+    def fight(end, seconds, n):
+        at = datetime.fromtimestamp(end, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        q.add_events([{"event_id": f"a:{n}", "character_id": "Player-1-1", "event_type": "COMBAT", "timestamp": at,
+                       "payload": {"duration": seconds}}])
+
+    def mine(*times):                                   # rows read from the log: [pos, ms, way, who, ...]
+        extras.note_seen(q, [[0, int(t * 1000), "out", ""] for t in times] + [[0, int(times[0] * 1000), "out", "小鈴"]])
+
+    fight(now - 9000, 20, 0)                            # before this version kept track: not held against anyone
+    c = extras.combat_log_check(q, now - 5000)
+    assert c["state"] == "waiting" and "⚠" in combat_text(c)["text"]                 # nothing fought yet: still reminded
+    fight(now - 3000, 20, 1)                            # the addon saw a fight; the log had nothing then
+    c = extras.combat_log_check(q, now)
+    assert (c["state"], c["missed"]) == ("missing", 1) and "✗" in combat_text(c)["text"]
+    assert "/adventure combatlog auto" in combat_text(c)["text"]
+    mine(now - 1200)                                    # switched on, and the player hit something
+    fight(now - 1190, 15, 2)
+    c = extras.combat_log_check(q, now)
+    assert (c["state"], c["fights"], c["missed"]) == ("ok", 2, 1)                     # the newest fight is covered
+    text = combat_text(c)
+    assert text["text"].startswith("✓") and "1 場戰鬥沒有紀錄" in text["text"]
+    mine(now - 60)                                      # in the middle of a fight, before any save: proof enough
+    fight(now - 600, 20, 3)                             # a fight the log missed, yet something came in since
+    assert extras.combat_log_check(q, now)["state"] == "ok"
+    assert extras.combat_log_check(q, now + 3600)["state"] == "missing"               # but later, that fight decides
+    # only the player's own rows count, and they are kept as 5-second steps
+    assert all(t % 5 == 0 for t in js.loads(q.conn.execute("SELECT value FROM kv WHERE key='combatseen'").fetchone()[0]))
+    # fights from long ago say nothing about today's play
+    assert extras.combat_log_check(q, now + 2 * 86400)["state"] == "waiting"
 
 
 def test_an_unchanged_folder_costs_one_look(tmp_path, monkeypatch):
