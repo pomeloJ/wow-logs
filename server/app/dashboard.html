@@ -212,6 +212,25 @@ button.link { background: none; color: var(--muted); padding: 0; font-size: 13px
 .google { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
 .gbtn { display: inline-block; padding: 7px 16px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); text-decoration: none; }
 .gbtn:hover { border-color: var(--accent); }
+.shade { position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, .45); display: flex; align-items: flex-start;
+  justify-content: center; padding: 6vh 16px; overflow-y: auto; }
+.sheet { width: 100%; max-width: 620px; }
+.sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.sheet-head h2 { margin: 0; font-size: 16px; color: var(--ink); letter-spacing: 0; }
+.tk { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 14px; }
+.tk h3 { font-size: 14px; margin: 0 0 4px; }
+.tk .tkhint { font-size: 13px; color: var(--muted); margin: 0 0 10px; }
+.tk code { font-size: 13px; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 3px 7px; overflow-wrap: anywhere; }
+.tk .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px dashed var(--line); }
+.tk .row:last-of-type { border-bottom: 0; }
+.tk .row .what { flex: 1 1 160px; min-width: 0; }
+.tk .row .what small { display: block; color: var(--muted); font-size: 12px; }
+.tk button.small { padding: 4px 10px; font-size: 13px; background: var(--bg); color: var(--ink); border: 1px solid var(--line); }
+.tk button.small:hover { border-color: var(--accent); }
+.tk button.small.danger { color: var(--warn); }
+.tk form { display: flex; gap: 8px; margin-top: 10px; align-items: center; } .tk form input { margin: 0; flex: 1 1 auto; min-width: 0; }
+.tk form button { flex: none; white-space: nowrap; }
+.tk .say { font-size: 13px; min-height: 1.2em; margin-top: 6px; color: var(--warn); }
 .beta { margin-left: 8px; padding: 1px 6px; border-radius: 4px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 600; letter-spacing: .04em; vertical-align: 1px; }
 </style>
 </head>
@@ -220,6 +239,7 @@ button.link { background: none; color: var(--muted); padding: 0; font-size: 13px
   <header>
     <h1>Adventure Hub</h1>
     <span class="sync" id="sync"></span>
+    <button class="link" id="tokens" hidden>管理權杖</button>
     <button class="link" id="logout" hidden>登出</button>
   </header>
   <div id="busy" role="progressbar" aria-label="載入中"></div>
@@ -320,6 +340,7 @@ const pos = d => (typeof d.x === "number" && typeof d.y === "number") ? `${d.x.t
 function showLogin(failed, me) {
   session = false;
   document.getElementById("logout").hidden = true;
+  document.getElementById("tokens").hidden = true;
   document.getElementById("sync").textContent = "";
   const binding = !!(me && me.account && !me.link);
   const input = el("input", { type: "password", placeholder: "Token", autocomplete: "off" });
@@ -373,6 +394,81 @@ async function googleBox(form, me) {
     box.append(el("a", { class: "gbtn", href: "/auth/google/start?next=/" }, "用 Google 登入", el("span", { class: "beta", text: "BETA" })));
   }
   form.append(box);
+}
+
+// ---- the signed-in person's tokens: the one their sync program uses, and read-only ones to share
+document.getElementById("tokens").addEventListener("click", () => tokensPanel());
+
+async function tokensPanel() {
+  const shade = el("div", { class: "shade" });
+  const box = el("div", { class: "card sheet", role: "dialog", "aria-modal": "true", "aria-label": "管理權杖" });
+  shade.append(box);
+  const close = () => { shade.remove(); document.removeEventListener("keydown", esc); };
+  const esc = e => { if (e.key === "Escape") close(); };
+  shade.addEventListener("click", e => { if (e.target === shade) close(); });
+  document.addEventListener("keydown", esc);
+  document.body.append(shade);
+  const call = async (method, path, body) => {
+    const r = await fetch(API + "/me/tokens" + (path || ""), { method, body: body ? JSON.stringify(body) : undefined,
+      headers: body ? { "Content-Type": "application/json" } : {} });
+    if (!r.ok) throw new Error(r.status === 409 ? "分享權杖已達上限，先刪掉不用的。" : r.status === 401 ? "Google 登入已過期，請重新登入。"
+      : r.status === 403 ? "這個 Google 帳號還沒綁定權杖。" : "伺服器回應 " + r.status);
+    return r.json();
+  };
+  const copy = (text, label) => {
+    const b = el("button", { type: "button", class: "small", text: label });
+    b.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(text); b.textContent = "已複製"; setTimeout(() => { b.textContent = label; }, 1400); }
+      catch (e) { window.prompt("複製這段", text); }
+    });
+    return b;
+  };
+  const when = iso => iso ? full(iso) : "還沒用過";
+  const shut = el("button", { type: "button", class: "link", text: "關閉" });
+  shut.addEventListener("click", close);
+  const draw = d => {
+    const say = el("div", { class: "say", role: "status" });
+    // the sync token: shown and copied, never deleted or replaced here, so a running sync program never stops
+    const sync = el("section", { class: "tk" }, el("h3", { text: "同步權杖" }));
+    if (d.sync) {
+      const code = el("code", { text: "•".repeat(12) });
+      const show = el("button", { type: "button", class: "small", text: "顯示" });
+      show.addEventListener("click", () => { const hidden = show.textContent === "顯示"; code.textContent = hidden ? d.sync.token : "•".repeat(12); show.textContent = hidden ? "隱藏" : "顯示"; });
+      sync.append(el("p", { class: "tkhint", text: "填在同步程式裡，用來上傳你的角色。只給自己用，不要分享給別人。這裡不能刪除或更換，正在運作的同步程式不會受影響。" }),
+        el("div", { class: "row" }, el("div", { class: "what" }, code,
+          el("small", { text: (d.sync.characters.length ? "名下角色：" + d.sync.characters.join("、") : "還沒上傳過角色") + "　·　最後上傳：" + when(d.sync.last_used_at) })),
+          show, copy(d.sync.token, "複製")));
+    } else {
+      sync.append(el("p", { class: "tkhint", text: "這個帳號綁定的是伺服器本身的權杖，同步用的權杖不會在網頁上顯示。" }));
+    }
+    // read-only tokens to share: made, copied as a link, and deleted here
+    const share = el("section", { class: "tk" }, el("h3", { text: "分享用權杖（只能看）" }),
+      el("p", { class: "tkhint", text: "給別人看你的冒險紀錄：只能看、不能上傳，也看不到聊天內容。不想給看了就刪掉，立刻失效。之後可以設定每個權杖能看到哪些區塊。" }));
+    if (!d.view.length) share.append(el("p", { class: "tkhint", text: "還沒有分享用權杖。" }));
+    for (const v of d.view) {
+      const link = location.origin + "/#token=" + encodeURIComponent(v.token);
+      const drop = el("button", { type: "button", class: "small danger", text: "刪除" });
+      drop.addEventListener("click", async () => {
+        if (drop.textContent !== "確定刪除？") { drop.textContent = "確定刪除？"; setTimeout(() => { drop.textContent = "刪除"; }, 4000); return; }
+        try { draw(await call("DELETE", "/" + encodeURIComponent(v.token))); } catch (e) { say.textContent = e.message; }
+      });
+      share.append(el("div", { class: "row" }, el("div", { class: "what" }, el("b", { text: v.label || "（沒有名稱）" }),
+        el("small", { text: `建立於 ${full(v.created_at)}　·　最後使用：${when(v.last_used_at)}` })),
+        copy(link, "複製分享連結"), copy(v.token, "複製權杖"), drop));
+    }
+    const name = el("input", { type: "text", maxlength: "40", placeholder: "給誰的，例如：公會朋友", autocomplete: "off" });
+    const form = el("form", null, name, el("button", { text: "建立" }));
+    form.addEventListener("submit", async e => {
+      e.preventDefault();
+      try { draw(await call("POST", "", { label: name.value.trim() })); } catch (err) { say.textContent = err.message; }
+    });
+    if (d.view.length < d.max_view) share.append(form);
+    share.append(say);
+    box.replaceChildren(el("div", { class: "sheet-head" }, el("h2", { text: "管理權杖" }), shut), sync, share);
+  };
+  box.replaceChildren(el("div", { class: "loading", role: "status" }, el("i"), "讀取中…"));
+  try { draw(await call("GET")); }
+  catch (e) { box.replaceChildren(el("div", { class: "sheet-head" }, el("h2", { text: "管理權杖" }), shut), el("p", { class: "detail", text: e.message })); }
 }
 
 document.getElementById("logout").addEventListener("click", async () => {
@@ -1159,6 +1255,7 @@ async function load(quiet) {
     if (!(me && me.link)) return showLogin(false, me);
     session = true;
   }
+  document.getElementById("tokens").hidden = !session;   // only a Google account bound to a token manages tokens
   const busy = document.getElementById("busy");
   if (!quiet) busy.classList.add("on");
   const slow = setTimeout(() => { const n = document.getElementById("slow"); if (n) n.hidden = false; }, 4000);

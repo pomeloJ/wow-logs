@@ -226,3 +226,66 @@ def test_what_cannot_be_bound(tmp_path):
     web.post("/auth/logout")
     assert web.post("/api/v1/me/link", json={"token": READ_TOKEN}).status_code == 401       # signed out
     assert seen(web) == 401
+
+
+# ---------------------------------------------------------------- a bound account's own tokens
+def test_a_bound_account_manages_its_sharing_tokens(tmp_path):
+    web = signed_in(tmp_path)
+    mine = web.post("/api/v1/admin/tokens", json={"label": "小明"}).json()["token"]
+    upload(web, mine, "char-mine")
+    upload(web, TOKEN, "char-other")
+    # signed in but not bound: a Google account alone makes no tokens
+    assert web.get("/api/v1/me/tokens").status_code == 403
+    assert web.post("/api/v1/me/tokens", json={"label": "x"}).status_code == 403
+    web.post("/api/v1/me/link", json={"token": mine})
+    held = web.get("/api/v1/me/tokens").json()
+    assert held["sync"]["token"] == mine and held["sync"]["characters"] == ["char-mine"] and held["view"] == []
+    made = web.post("/api/v1/me/tokens", json={"label": "給朋友"}).json()
+    share = made["made"]
+    assert [(v["token"], v["label"]) for v in made["view"]] == [(share, "給朋友")]
+    # a sharing token reads its maker's characters only, never chat, and uploads nothing
+    reader = {"Authorization": f"Bearer {share}"}
+    assert seen(web, **reader) == ["char-mine"]
+    assert web.get("/api/v1/characters/char-other/snapshot", headers=reader).status_code in (403, 404)
+    assert web.get("/api/v1/token", headers=reader).json() == {"kind": "read", "characters": [{"id": "char-mine", "name": "char-mine"}], "can_upload": False}
+    assert web.put("/api/v1/characters/char-mine/snapshot", headers=reader, json={
+        "captured_at": "2026-11-26T10:00:00+08:00", "device_id": "x", "data": {"name": "n"}}).status_code == 403
+    # a change from a page of another site is refused
+    assert web.post("/api/v1/me/tokens", json={"label": "x"}, headers={"origin": "https://evil.example"}).status_code == 403
+    # only its own can be deleted; deleting stops it at once
+    assert web.delete("/api/v1/me/tokens/vsomeoneelse").status_code == 404
+    assert web.delete(f"/api/v1/me/tokens/{share}").json()["view"] == []
+    assert seen(web, **reader) == 403
+
+
+def test_existing_tokens_work_exactly_as_before_alongside_sharing_tokens(tmp_path):
+    import sqlite3
+    web = signed_in(tmp_path)
+    mine = web.post("/api/v1/admin/tokens", json={"label": "小明"}).json()["token"]
+    upload(web, mine, "char-mine")
+    upload(web, TOKEN, "char-other")
+    db = sqlite3.connect(tmp_path / "b.db")
+    with db:
+        db.execute("INSERT INTO voice_tokens VALUES ('voicecode1', 'char-mine', '2026-11-26T00:00:00Z')")
+    before = {name: seen(web, Authorization=f"Bearer {t}") for name, t in
+              (("owner", TOKEN), ("read", READ_TOKEN), ("personal", mine), ("voice", "voicecode1"), ("bad", "nope"))}
+    web.post("/api/v1/me/link", json={"token": mine})
+    share = web.post("/api/v1/me/tokens", json={}).json()["made"]
+    after = {name: seen(web, Authorization=f"Bearer {t}") for name, t in
+             (("owner", TOKEN), ("read", READ_TOKEN), ("personal", mine), ("voice", "voicecode1"), ("bad", "nope"))}
+    assert before == after == {"owner": ["char-mine", "char-other"], "read": ["char-mine", "char-other"],
+                               "personal": ["char-mine"], "voice": ["char-mine"], "bad": 403}
+    # the personal token still uploads; deleting it in /admin takes its sharing tokens along
+    upload(web, mine, "char-mine")
+    assert web.delete(f"/api/v1/admin/tokens/{mine}").status_code == 200
+    assert seen(web, Authorization=f"Bearer {share}") == 403
+
+
+def test_an_account_bound_to_the_servers_token_shares_every_character(tmp_path):
+    web = signed_in(tmp_path)
+    upload(web, TOKEN, "char-a")
+    web.post("/api/v1/me/link", json={"token": READ_TOKEN})
+    held = web.get("/api/v1/me/tokens").json()
+    assert held["kind"] == "all" and held["sync"] is None              # the server's own token is never shown
+    share = web.post("/api/v1/me/tokens", json={"label": "全部"}).json()["made"]
+    assert seen(web, Authorization=f"Bearer {share}") == ["char-a"]

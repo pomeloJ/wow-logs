@@ -7,7 +7,7 @@ import json
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
@@ -246,6 +246,20 @@ def create_app(
                 return "voice"
         return None
 
+    def shared_by(conn, t: str) -> List[str]:
+        """The characters a read-only sharing token shows (see auth.py): its maker's, or every
+        one for a token made by an account bound to the server's own. Looked up only after every
+        other kind of token, so none of those changes in any way."""
+        v = conn.execute("SELECT owner, last_used_at FROM view_tokens WHERE token=?", (t,)).fetchone()
+        if v is None:
+            return []
+        if not v["last_used_at"] or v["last_used_at"] < iso(datetime.now(timezone.utc) - timedelta(minutes=10)):
+            conn.execute("UPDATE view_tokens SET last_used_at=? WHERE token=?", (now_iso(), t))
+        if v["owner"] == "*":
+            return [r["id"] for r in conn.execute("SELECT id FROM characters ORDER BY updated_at DESC")]
+        return [r["character_id"] for r in conn.execute(
+            "SELECT character_id FROM token_characters WHERE token=? ORDER BY claimed_at, character_id", (v["owner"],))]
+
     def can_read(request: Request, authorization: Optional[str] = Header(None)) -> Optional[Scope]:
         """Returns None for full read access, or what a limited token may see.
 
@@ -272,6 +286,8 @@ def create_app(
             row = conn.execute("SELECT character_id FROM voice_tokens WHERE token=?", (t,)).fetchone()
             mine = [row["character_id"]] if row else [r["character_id"] for r in conn.execute(
                 "SELECT character_id FROM token_characters WHERE token=? ORDER BY claimed_at, character_id", (t,))]
+            if not row and not mine:
+                mine = shared_by(conn, t)
         if not mine:
             raise HTTPException(403, "invalid token")
         # Asked about a character that is not theirs, the answer is about one that is (or a
@@ -299,6 +315,12 @@ def create_app(
                 return {"kind": "personal", "characters": mine, "can_upload": taken is None or taken["token"] == t}
             row = conn.execute("SELECT v.character_id, c.name FROM voice_tokens v LEFT JOIN characters c "
                                "ON c.id=v.character_id WHERE v.token=?", (t,)).fetchone()
+            if row is None:
+                shown = shared_by(conn, t)
+                if shown:
+                    names = {r["id"]: r["name"] for r in conn.execute(
+                        f"SELECT id, name FROM characters WHERE id IN ({','.join('?' * len(shown))})", shown)}
+                    return {"kind": "read", "characters": [{"id": c, "name": names.get(c)} for c in shown], "can_upload": False}
         if row is None:
             raise HTTPException(403, "invalid token")
         return {"kind": "read", "characters": [{"id": row["character_id"], "name": row["name"]}], "can_upload": False}

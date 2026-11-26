@@ -60,6 +60,14 @@ CREATE TABLE IF NOT EXISTS web_sessions (
 CREATE TABLE IF NOT EXISTS google_links (
     sub TEXT PRIMARY KEY, kind TEXT NOT NULL, token TEXT, linked_at TEXT NOT NULL
 );
+-- Tokens that only read, made by a person to share what they recorded. owner is that person's
+-- upload token, or '*' for an account bound to the server's own (every character). sections
+-- is kept for choosing what a token shows; NULL means everything a reader sees.
+CREATE TABLE IF NOT EXISTS view_tokens (
+    token TEXT PRIMARY KEY, owner TEXT NOT NULL, label TEXT, sections TEXT,
+    created_at TEXT NOT NULL, last_used_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_view_tokens_owner ON view_tokens(owner);
 """
 
 
@@ -98,6 +106,13 @@ def claims_of(id_token: str) -> Dict[str, Any]:
 
 class LinkIn(BaseModel):
     token: str = Field(min_length=1, max_length=200)
+
+
+class ViewTokenIn(BaseModel):
+    label: str = Field("", max_length=40)
+
+
+MAX_VIEW_TOKENS = 20
 
 
 def _hash(session_id: str) -> str:
@@ -196,6 +211,68 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
                          "kind=excluded.kind, token=excluded.token, linked_at=excluded.linked_at",
                          (acct["sub"], kind, token if kind == "personal" else None, _now_iso()))
         return JSONResponse(described(request), headers=NO_STORE)
+
+    # ---- the signed-in person's own tokens: only once the account is bound to one
+    def bound(request: Request) -> Dict[str, Any]:
+        """The signed-in account's binding, refusing otherwise; and, for a change, a request
+        that came from a page of this site (a form elsewhere cannot use the sign-in cookie)."""
+        if request.method != "GET":
+            origin = request.headers.get("origin")
+            if origin and urlsplit(origin).netloc.lower() != request.headers.get("host", "").lower():
+                raise HTTPException(403, "not from this site")
+        if not account_of(request):
+            raise HTTPException(401, "sign in with Google first")
+        link = link_of(request)
+        if not link:                    # a Google account alone makes no tokens
+            raise HTTPException(403, "bind this Google account to your token first")
+        return link
+
+    def owner_key(link: Dict[str, Any]) -> str:
+        return link["token"] if link["kind"] == "personal" else "*"
+
+    def tokens_of(link: Dict[str, Any]) -> Dict[str, Any]:
+        with db() as conn:
+            sync = None
+            if link["kind"] == "personal":
+                row = conn.execute("SELECT label, created_at, last_used_at FROM upload_tokens WHERE token=?", (link["token"],)).fetchone()
+                names = [r["name"] or r["character_id"] for r in conn.execute(
+                    "SELECT o.character_id, c.name FROM token_characters o LEFT JOIN characters c ON c.id=o.character_id "
+                    "WHERE o.token=? ORDER BY o.claimed_at", (link["token"],))]
+                sync = {"token": link["token"], "label": row["label"] if row else None,
+                        "last_used_at": row["last_used_at"] if row else None, "characters": names}
+            view = [dict(r) for r in conn.execute(
+                "SELECT token, label, created_at, last_used_at FROM view_tokens WHERE owner=? ORDER BY created_at",
+                (owner_key(link),))]
+        return {"kind": link["kind"], "sync": sync, "view": view, "max_view": MAX_VIEW_TOKENS}
+
+    @app.get("/api/v1/me/tokens", include_in_schema=False)
+    def my_tokens(request: Request):
+        """The tokens of the person signed in: the one their sync program uploads with, and the
+        read-only ones they made to share. Only for an account bound to a token."""
+        return JSONResponse(tokens_of(bound(request)), headers=NO_STORE)
+
+    @app.post("/api/v1/me/tokens", include_in_schema=False)
+    def new_view_token(body: ViewTokenIn, request: Request):
+        """A new read-only token: it sees what its maker's token sees, never chat, and uploads nothing."""
+        link = bound(request)
+        with db() as conn:
+            if conn.execute("SELECT COUNT(*) FROM view_tokens WHERE owner=?", (owner_key(link),)).fetchone()[0] >= MAX_VIEW_TOKENS:
+                raise HTTPException(409, f"at most {MAX_VIEW_TOKENS} sharing tokens")
+            token = "v" + secrets.token_urlsafe(18)
+            conn.execute("INSERT INTO view_tokens (token, owner, label, sections, created_at) VALUES (?,?,?,?,?)",
+                         (token, owner_key(link), body.label.strip() or None, None, _now_iso()))
+        out = tokens_of(link)
+        out["made"] = token
+        return JSONResponse(out, headers=NO_STORE)
+
+    @app.delete("/api/v1/me/tokens/{token}", include_in_schema=False)
+    def delete_view_token(token: str, request: Request):
+        """Stops one of the person's read-only tokens at once. Their sync token cannot be deleted here."""
+        link = bound(request)
+        with db() as conn:
+            if not conn.execute("DELETE FROM view_tokens WHERE token=? AND owner=?", (token, owner_key(link))).rowcount:
+                raise HTTPException(404, "no such sharing token")
+        return JSONResponse(tokens_of(link), headers=NO_STORE)
 
     @app.post("/api/v1/me/unlink", include_in_schema=False)
     def unlink(request: Request):

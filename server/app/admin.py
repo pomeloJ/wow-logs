@@ -82,7 +82,9 @@ def register(app, db) -> None:
                 "(SELECT COUNT(*) FROM events e WHERE e.character_id=c.id) events FROM characters c "
                 "LEFT JOIN token_characters o ON o.character_id=c.id LEFT JOIN upload_tokens t ON t.token=o.token "
                 "ORDER BY c.updated_at DESC")]
-            tokens = [dict(r) for r in conn.execute("SELECT token, label, created_at, last_used_at FROM upload_tokens ORDER BY created_at DESC")]
+            tokens = [dict(r) for r in conn.execute(
+                "SELECT token, label, created_at, last_used_at, (SELECT COUNT(*) FROM view_tokens v WHERE v.owner=upload_tokens.token) "
+                "shared FROM upload_tokens ORDER BY created_at DESC")]
             for t in tokens:
                 t["characters"] = [{"id": r["character_id"], "name": r["name"]} for r in conn.execute(
                     "SELECT o.character_id, c.name FROM token_characters o LEFT JOIN characters c ON c.id=o.character_id "
@@ -141,4 +143,5 @@ def register(app, db) -> None:
                 raise HTTPException(404, "no such token")
             conn.execute("DELETE FROM token_characters WHERE token=?", (token,))
             conn.execute("DELETE FROM google_links WHERE token=?", (token,))      # its Google account loses access too
+            conn.execute("DELETE FROM view_tokens WHERE owner=?", (token,))       # and so do the tokens shared from it
         return {"success": True}
