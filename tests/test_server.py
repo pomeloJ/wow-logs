@@ -218,7 +218,7 @@ def test_a_personal_token_is_one_person_with_any_number_of_characters(tmp_path):
     assert "/admin" not in lan.get("/openapi.json").text
 
     token = lan.post("/api/v1/admin/tokens", json={"label": "小明"}).json()["token"]
-    assert len(token) == 16 and lan.get("/api/v1/admin/overview").json()["tokens"][0]["characters"] == []
+    assert len(token) == 32 and lan.get("/api/v1/admin/overview").json()["tokens"][0]["characters"] == []
     mine, now = {"Authorization": f"Bearer {token}"}, datetime(2026, 11, 22, 12, 0, tzinfo=timezone.utc).isoformat()
     snap = lambda name: {"captured_at": now, "device_id": "pc", "data": {"name": name, "class": "MAGE", "level": 10}}                 # noqa: E731
     event = lambda cid, n: {"event_id": f"e:{cid}:{n}", "character_id": cid, "event_type": "LEVEL_UP", "timestamp": now, "payload": {}}  # noqa: E731

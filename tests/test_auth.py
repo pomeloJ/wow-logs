@@ -239,7 +239,7 @@ def test_a_bound_account_manages_its_sharing_tokens(tmp_path):
     assert web.post("/api/v1/me/tokens", json={"label": "x"}).status_code == 403
     web.post("/api/v1/me/link", json={"token": mine})
     held = web.get("/api/v1/me/tokens").json()
-    assert held["sync"]["token"] == mine and held["sync"]["characters"] == ["char-mine"] and held["view"] == []
+    assert [s["token"] for s in held["sync"]] == [mine] and held["characters"] == ["char-mine"] and held["view"] == []
     made = web.post("/api/v1/me/tokens", json={"label": "給朋友"}).json()
     share = made["made"]
     assert [(v["token"], v["label"]) for v in made["view"]] == [(share, "給朋友")]
@@ -253,8 +253,10 @@ def test_a_bound_account_manages_its_sharing_tokens(tmp_path):
     # a change from a page of another site is refused
     assert web.post("/api/v1/me/tokens", json={"label": "x"}, headers={"origin": "https://evil.example"}).status_code == 403
     # only its own can be deleted; deleting stops it at once
-    assert web.delete("/api/v1/me/tokens/vsomeoneelse").status_code == 404
-    assert web.delete(f"/api/v1/me/tokens/{share}").json()["view"] == []
+    assert web.post("/api/v1/me/tokens/delete", json={"id": "0" * 16}).status_code == 404
+    which = made["view"][0]["id"]
+    assert share not in which                                           # rows are named by a fingerprint, never the token
+    assert web.post("/api/v1/me/tokens/delete", json={"id": which}).json()["view"] == []
     assert seen(web, **reader) == 403
 
 
@@ -289,3 +291,82 @@ def test_an_account_bound_to_the_servers_token_shares_every_character(tmp_path):
     assert held["kind"] == "all" and held["sync"] is None              # the server's own token is never shown
     share = web.post("/api/v1/me/tokens", json={"label": "全部"}).json()["made"]
     assert seen(web, Authorization=f"Bearer {share}") == ["char-a"]
+
+
+def test_up_to_three_sync_tokens_each_uploading_as_the_same_person(tmp_path):
+    web = signed_in(tmp_path)
+    first = web.post("/api/v1/admin/tokens", json={"label": "小明"}).json()["token"]
+    upload(web, first, "char-mine")
+    web.post("/api/v1/me/link", json={"token": first})
+    second = web.post("/api/v1/me/sync-tokens", json={"label": "筆電"}).json()["made"]
+    third = web.post("/api/v1/me/sync-tokens", json={}).json()["made"]
+    assert len(second) == len(third) == 32 and len(first) == 32
+    assert web.post("/api/v1/me/sync-tokens", json={}).status_code == 409           # three at most
+    held = web.get("/api/v1/me/tokens").json()
+    assert [(s["token"], s["first"], s["label"]) for s in held["sync"]] == [(first, True, "小明"), (second, False, "筆電"), (third, False, None)]
+    # each uploads and reads as the same person: a character uploaded with one belongs to all of them
+    upload(web, second, "char-laptop")
+    for t in (first, second, third):
+        assert seen(web, Authorization=f"Bearer {t}") == ["char-laptop", "char-mine"]
+        assert web.get("/api/v1/token", headers={"Authorization": f"Bearer {t}"}).json()["kind"] == "personal"
+    assert web.get("/api/v1/me/tokens").json()["characters"] == ["char-mine", "char-laptop"]
+    # a further one can be deleted; the first cannot
+    ids = {s["token"]: s["id"] for s in held["sync"]}
+    assert web.post("/api/v1/me/sync-tokens/delete", json={"id": ids[first]}).status_code == 409
+    assert web.post("/api/v1/me/sync-tokens/delete", json={"id": ids[third]}).status_code == 200
+    assert seen(web, Authorization=f"Bearer {third}") == 403
+    # pasting a further sync token binds the account to the person, not to that token
+    web.post("/api/v1/me/unlink")
+    assert web.post("/api/v1/me/link", json={"token": second}).json()["link"] == {"kind": "personal", "characters": ["char-mine", "char-laptop"]}
+
+
+def test_regenerating_a_sync_token_stops_only_that_one_and_keeps_everything(tmp_path):
+    import sqlite3
+    web = signed_in(tmp_path)
+    first = web.post("/api/v1/admin/tokens", json={"label": "小明"}).json()["token"]
+    upload(web, first, "char-mine")
+    web.post("/api/v1/me/link", json={"token": first})
+    second = web.post("/api/v1/me/sync-tokens", json={"label": "筆電"}).json()["made"]
+    share = web.post("/api/v1/me/tokens", json={"label": "朋友"}).json()["made"]
+    web.put("/api/v1/sync-settings", headers={"Authorization": f"Bearer {first}"}, json={"upload_screenshots": True})
+    ids = {s["token"]: s["id"] for s in web.get("/api/v1/me/tokens").json()["sync"]}
+    # the first: everything kept under it moves to the new one
+    new_first = web.post("/api/v1/me/sync-tokens/regenerate", json={"id": ids[first]}).json()["made"]
+    assert new_first != first and len(new_first) == 32
+    assert seen(web, Authorization=f"Bearer {first}") == 403                         # the old one stops at once
+    assert seen(web, Authorization=f"Bearer {new_first}") == ["char-mine"]          # the characters stayed
+    assert seen(web, Authorization=f"Bearer {second}") == ["char-mine"]             # the other sync token is untouched
+    assert seen(web, Authorization=f"Bearer {share}") == ["char-mine"]              # and so is what was shared
+    assert seen(web) == ["char-mine"]                                               # the Google sign-in still works
+    assert web.get("/api/v1/sync-settings", headers={"Authorization": f"Bearer {new_first}"}).json()["upload_screenshots"] is True
+    upload(web, new_first, "char-mine")                                             # uploads as before
+    # a further one: only that one changes
+    held = web.get("/api/v1/me/tokens").json()
+    sid = next(s["id"] for s in held["sync"] if s["token"] == second)
+    new_second = web.post("/api/v1/me/sync-tokens/regenerate", json={"id": sid}).json()["made"]
+    assert seen(web, Authorization=f"Bearer {second}") == 403 and seen(web, Authorization=f"Bearer {new_second}") == ["char-mine"]
+    assert seen(web, Authorization=f"Bearer {new_first}") == ["char-mine"]
+    # a sharing token gets a new address; the old link stops, the name stays
+    vid = held["view"][0]["id"]
+    new_share = web.post("/api/v1/me/tokens/regenerate", json={"id": vid}).json()
+    assert seen(web, Authorization=f"Bearer {share}") == 403
+    assert seen(web, Authorization=f"Bearer {new_share['made']}") == ["char-mine"] and new_share["view"][0]["label"] == "朋友"
+    # nothing of the old first token is left anywhere
+    db = sqlite3.connect(tmp_path / "b.db")
+    for table, column in (("upload_tokens", "token"), ("token_characters", "token"), ("google_links", "token"),
+                          ("view_tokens", "owner"), ("sync_aliases", "owner"), ("sync_settings", "token")):
+        assert not db.execute(f"SELECT 1 FROM {table} WHERE {column}=?", (first,)).fetchone(), table
+
+
+def test_tokens_made_before_keep_working_and_short_ones_are_still_accepted(tmp_path):
+    import sqlite3
+    web = signed_in(tmp_path)
+    db = sqlite3.connect(tmp_path / "b.db")
+    with db:                                             # a 16-character token from before
+        db.execute("INSERT INTO upload_tokens VALUES ('abcdefghjkmnpqrs', 'old', NULL, '2026-11-21T00:00:00Z', NULL, NULL)")
+    upload(web, "abcdefghjkmnpqrs", "char-old")
+    assert seen(web, Authorization="Bearer abcdefghjkmnpqrs") == ["char-old"]
+    web.post("/api/v1/me/link", json={"token": "abcdefghjkmnpqrs"})
+    second = web.post("/api/v1/me/sync-tokens", json={}).json()["made"]
+    assert seen(web, Authorization=f"Bearer {second}") == ["char-old"]
+    assert seen(web, Authorization="Bearer abcdefghjkmnpqrs") == ["char-old"]      # adding one changes nothing for it

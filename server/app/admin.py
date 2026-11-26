@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"          # no look-alikes (0/o, 1/l/i)
-TOKEN_LEN = 16
+TOKEN_LEN = 32                                        # longer than the first ones (16), which keep working
 LOCAL = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,fc00::/7,fe80::/10"
 FORWARDED = ("x-forwarded-for", "x-real-ip", "cf-connecting-ip", "true-client-ip", "forwarded")
 
@@ -84,7 +84,8 @@ def register(app, db) -> None:
                 "ORDER BY c.updated_at DESC")]
             tokens = [dict(r) for r in conn.execute(
                 "SELECT token, label, created_at, last_used_at, (SELECT COUNT(*) FROM view_tokens v WHERE v.owner=upload_tokens.token) "
-                "shared FROM upload_tokens ORDER BY created_at DESC")]
+                "shared, (SELECT COUNT(*) FROM sync_aliases a WHERE a.owner=upload_tokens.token) more_sync "
+                "FROM upload_tokens ORDER BY created_at DESC")]
             for t in tokens:
                 t["characters"] = [{"id": r["character_id"], "name": r["name"]} for r in conn.execute(
                     "SELECT o.character_id, c.name FROM token_characters o LEFT JOIN characters c ON c.id=o.character_id "
@@ -144,4 +145,5 @@ def register(app, db) -> None:
             conn.execute("DELETE FROM token_characters WHERE token=?", (token,))
             conn.execute("DELETE FROM google_links WHERE token=?", (token,))      # its Google account loses access too
             conn.execute("DELETE FROM view_tokens WHERE owner=?", (token,))       # and so do the tokens shared from it
+            conn.execute("DELETE FROM sync_aliases WHERE owner=?", (token,))      # and the person's further sync tokens
         return {"success": True}

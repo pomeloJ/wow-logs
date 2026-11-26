@@ -28,7 +28,7 @@ import os
 import secrets
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import HTTPException, Request
@@ -108,11 +108,30 @@ class LinkIn(BaseModel):
     token: str = Field(min_length=1, max_length=200)
 
 
-class ViewTokenIn(BaseModel):
+class LabelIn(BaseModel):
     label: str = Field("", max_length=40)
 
 
+class PickIn(BaseModel):
+    id: str = Field(min_length=1, max_length=64)        # a token's fingerprint, never the token itself
+
+
+MAX_SYNC_TOKENS = 3            # the person's own token and two more, for more computers
 MAX_VIEW_TOKENS = 20
+ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"          # as for the tokens /admin makes: no look-alikes
+
+
+def new_sync_secret() -> str:
+    """32 characters, twice as long as the first tokens (which keep working)."""
+    return "".join(secrets.choice(ALPHABET) for _ in range(32))
+
+
+def new_view_secret() -> str:
+    return "v" + secrets.token_urlsafe(24)
+
+
+def fingerprint(token: str) -> str:
+    return hashlib.sha256(("token:" + token).encode()).hexdigest()[:16]
 
 
 def _hash(session_id: str) -> str:
@@ -141,9 +160,10 @@ def _page(title: str, text: str, status: int) -> HTMLResponse:
 
 def register(app, db, settings: Optional[Dict[str, str]] = None,
              exchange: Optional[Callable[[Dict[str, str], str, str], Dict[str, Any]]] = None,
-             judge: Optional[Callable[[str], Optional[str]]] = None):
+             judge: Optional[Callable[[str], Optional[str]]] = None,
+             person: Optional[Callable[[str], Optional[str]]] = None):
     """Adds the sign-in routes. judge(token) says what a pasted token is: "all", "personal",
-    "voice" or None. Returns (account_of, link_of): for a request, the signed-in Google account,
+    "voice" or None; person(token), for a sync token, the person it belongs to (their first token). Returns (account_of, link_of): for a request, the signed-in Google account,
     and what it is bound to ({"kind", "token"}); None for either when there is none."""
     s = settings if settings is not None else settings_from_env()
     trade = exchange or exchange_code
@@ -209,7 +229,8 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
             # the server's own tokens are not stored: "all" stays right when they are changed
             conn.execute("INSERT INTO google_links VALUES (?,?,?,?) ON CONFLICT(sub) DO UPDATE SET "
                          "kind=excluded.kind, token=excluded.token, linked_at=excluded.linked_at",
-                         (acct["sub"], kind, token if kind == "personal" else None, _now_iso()))
+                         (acct["sub"], kind, ((person(token) if person else None) or token) if kind == "personal" else None,
+                          _now_iso()))
         return JSONResponse(described(request), headers=NO_STORE)
 
     # ---- the signed-in person's own tokens: only once the account is bound to one
@@ -231,48 +252,126 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
         return link["token"] if link["kind"] == "personal" else "*"
 
     def tokens_of(link: Dict[str, Any]) -> Dict[str, Any]:
+        """Everything the panel shows. Each token comes with an id (a fingerprint of it) that the
+        changes below use, so a token itself is never put in an address, nor in a server's log."""
         with db() as conn:
-            sync = None
+            sync, names = [], []
             if link["kind"] == "personal":
-                row = conn.execute("SELECT label, created_at, last_used_at FROM upload_tokens WHERE token=?", (link["token"],)).fetchone()
+                me = link["token"]
+                row = conn.execute("SELECT label, created_at, last_used_at FROM upload_tokens WHERE token=?", (me,)).fetchone()
+                if row:
+                    sync.append({"id": fingerprint(me), "token": me, "label": row["label"], "first": True,
+                                 "created_at": row["created_at"], "last_used_at": row["last_used_at"]})
+                sync += [{"id": fingerprint(r["token"]), "token": r["token"], "label": r["label"], "first": False,
+                          "created_at": r["created_at"], "last_used_at": r["last_used_at"]} for r in conn.execute(
+                    "SELECT token, label, created_at, last_used_at FROM sync_aliases WHERE owner=? ORDER BY created_at", (me,))]
                 names = [r["name"] or r["character_id"] for r in conn.execute(
                     "SELECT o.character_id, c.name FROM token_characters o LEFT JOIN characters c ON c.id=o.character_id "
-                    "WHERE o.token=? ORDER BY o.claimed_at", (link["token"],))]
-                sync = {"token": link["token"], "label": row["label"] if row else None,
-                        "last_used_at": row["last_used_at"] if row else None, "characters": names}
-            view = [dict(r) for r in conn.execute(
+                    "WHERE o.token=? ORDER BY o.claimed_at", (me,))]
+            view = [{"id": fingerprint(r["token"]), **dict(r)} for r in conn.execute(
                 "SELECT token, label, created_at, last_used_at FROM view_tokens WHERE owner=? ORDER BY created_at",
                 (owner_key(link),))]
-        return {"kind": link["kind"], "sync": sync, "view": view, "max_view": MAX_VIEW_TOKENS}
+        return {"kind": link["kind"], "sync": sync if link["kind"] == "personal" else None, "characters": names,
+                "view": view, "max_sync": MAX_SYNC_TOKENS, "max_view": MAX_VIEW_TOKENS}
+
+    def answer(link: Dict[str, Any], made: Optional[str] = None) -> JSONResponse:
+        out = tokens_of(link)
+        if made:
+            out["made"] = made
+        return JSONResponse(out, headers=NO_STORE)
+
+    def pick(rows: List[Dict[str, Any]], which: str) -> Dict[str, Any]:
+        for r in rows:
+            if r["id"] == which:
+                return r
+        raise HTTPException(404, "no such token")
 
     @app.get("/api/v1/me/tokens", include_in_schema=False)
     def my_tokens(request: Request):
-        """The tokens of the person signed in: the one their sync program uploads with, and the
-        read-only ones they made to share. Only for an account bound to a token."""
-        return JSONResponse(tokens_of(bound(request)), headers=NO_STORE)
+        """The tokens of the person signed in: the ones their sync programs upload with (up to
+        three), and the read-only ones they made to share. Only for an account bound to a token."""
+        return answer(bound(request))
 
+    # sync tokens: the first stands for the person; up to two more upload and read as that person
+    def personal(request: Request) -> Dict[str, Any]:
+        link = bound(request)
+        if link["kind"] != "personal":
+            raise HTTPException(409, "this account is bound to the server's own token, which is not changed here")
+        return link
+
+    @app.post("/api/v1/me/sync-tokens", include_in_schema=False)
+    def new_sync_token(body: LabelIn, request: Request):
+        """Another sync token for the same person: for a second computer, say."""
+        link = personal(request)
+        with db() as conn:
+            if 1 + conn.execute("SELECT COUNT(*) FROM sync_aliases WHERE owner=?", (link["token"],)).fetchone()[0] >= MAX_SYNC_TOKENS:
+                raise HTTPException(409, f"at most {MAX_SYNC_TOKENS} sync tokens")
+            token = new_sync_secret()
+            conn.execute("INSERT INTO sync_aliases (token, owner, label, created_at) VALUES (?,?,?,?)",
+                         (token, link["token"], body.label.strip() or None, _now_iso()))
+        return answer(link, token)
+
+    @app.post("/api/v1/me/sync-tokens/regenerate", include_in_schema=False)
+    def regenerate_sync_token(body: PickIn, request: Request):
+        """A new token in place of one of the person's sync tokens. The old one stops at once:
+        a sync program that used it has to be given the new one."""
+        link = personal(request)
+        old = pick(tokens_of(link)["sync"], body.id)
+        new = new_sync_secret()
+        with db() as conn:
+            if old["first"]:
+                # The first one stands for the person: everything kept under it moves to the new one,
+                # in one go, so the characters, the binding, the shared tokens and the settings stay.
+                for table, column in (("upload_tokens", "token"), ("token_characters", "token"), ("google_links", "token"),
+                                      ("view_tokens", "owner"), ("sync_aliases", "owner"), ("sync_settings", "token")):
+                    conn.execute(f"UPDATE {table} SET {column}=? WHERE {column}=?", (new, old["token"]))
+                link = {**link, "token": new}
+            else:
+                conn.execute("UPDATE sync_aliases SET token=?, last_used_at=NULL WHERE token=?", (new, old["token"]))
+        return answer(link, new)
+
+    @app.post("/api/v1/me/sync-tokens/delete", include_in_schema=False)
+    def delete_sync_token(body: PickIn, request: Request):
+        """Stops one of the person's further sync tokens. The first cannot be deleted, only replaced."""
+        link = personal(request)
+        old = pick(tokens_of(link)["sync"], body.id)
+        if old["first"]:
+            raise HTTPException(409, "the first sync token cannot be deleted, only regenerated")
+        with db() as conn:
+            conn.execute("DELETE FROM sync_aliases WHERE token=?", (old["token"],))
+        return answer(link)
+
+    # read-only tokens to share
     @app.post("/api/v1/me/tokens", include_in_schema=False)
-    def new_view_token(body: ViewTokenIn, request: Request):
+    def new_view_token(body: LabelIn, request: Request):
         """A new read-only token: it sees what its maker's token sees, never chat, and uploads nothing."""
         link = bound(request)
         with db() as conn:
             if conn.execute("SELECT COUNT(*) FROM view_tokens WHERE owner=?", (owner_key(link),)).fetchone()[0] >= MAX_VIEW_TOKENS:
                 raise HTTPException(409, f"at most {MAX_VIEW_TOKENS} sharing tokens")
-            token = "v" + secrets.token_urlsafe(18)
+            token = new_view_secret()
             conn.execute("INSERT INTO view_tokens (token, owner, label, sections, created_at) VALUES (?,?,?,?,?)",
                          (token, owner_key(link), body.label.strip() or None, None, _now_iso()))
-        out = tokens_of(link)
-        out["made"] = token
-        return JSONResponse(out, headers=NO_STORE)
+        return answer(link, token)
 
-    @app.delete("/api/v1/me/tokens/{token}", include_in_schema=False)
-    def delete_view_token(token: str, request: Request):
-        """Stops one of the person's read-only tokens at once. Their sync token cannot be deleted here."""
+    @app.post("/api/v1/me/tokens/regenerate", include_in_schema=False)
+    def regenerate_view_token(body: PickIn, request: Request):
+        """A new address for a sharing token: the old link stops working, the name stays."""
         link = bound(request)
+        old = pick(tokens_of(link)["view"], body.id)
+        new = new_view_secret()
         with db() as conn:
-            if not conn.execute("DELETE FROM view_tokens WHERE token=? AND owner=?", (token, owner_key(link))).rowcount:
-                raise HTTPException(404, "no such sharing token")
-        return JSONResponse(tokens_of(link), headers=NO_STORE)
+            conn.execute("UPDATE view_tokens SET token=?, last_used_at=NULL WHERE token=?", (new, old["token"]))
+        return answer(link, new)
+
+    @app.post("/api/v1/me/tokens/delete", include_in_schema=False)
+    def delete_view_token(body: PickIn, request: Request):
+        """Stops one of the person's read-only tokens at once."""
+        link = bound(request)
+        old = pick(tokens_of(link)["view"], body.id)
+        with db() as conn:
+            conn.execute("DELETE FROM view_tokens WHERE token=?", (old["token"],))
+        return answer(link)
 
     @app.post("/api/v1/me/unlink", include_in_schema=False)
     def unlink(request: Request):

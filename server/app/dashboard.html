@@ -231,6 +231,10 @@ button.link { background: none; color: var(--muted); padding: 0; font-size: 13px
 .tk form { display: flex; gap: 8px; margin-top: 10px; align-items: center; } .tk form input { margin: 0; flex: 1 1 auto; min-width: 0; }
 .tk form button { flex: none; white-space: nowrap; }
 .tk .say { font-size: 13px; min-height: 1.2em; margin-top: 6px; color: var(--warn); }
+.tk .row.fresh { background: var(--accent-soft); border-radius: 6px; padding: 8px; }   /* the one just made
+*/
+.sheet > .say { font-size: 13px; min-height: 1.2em; margin-top: 10px; color: var(--warn); }
+.tk .what code { display: inline-block; margin: 3px 0; }
 .beta { margin-left: 8px; padding: 1px 6px; border-radius: 4px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 600; letter-spacing: .04em; vertical-align: 1px; }
 </style>
 </head>
@@ -409,10 +413,10 @@ async function tokensPanel() {
   document.addEventListener("keydown", esc);
   document.body.append(shade);
   const call = async (method, path, body) => {
-    const r = await fetch(API + "/me/tokens" + (path || ""), { method, body: body ? JSON.stringify(body) : undefined,
+    const r = await fetch(API + "/me/" + path, { method, body: body ? JSON.stringify(body) : undefined,
       headers: body ? { "Content-Type": "application/json" } : {} });
-    if (!r.ok) throw new Error(r.status === 409 ? "分享權杖已達上限，先刪掉不用的。" : r.status === 401 ? "Google 登入已過期，請重新登入。"
-      : r.status === 403 ? "這個 Google 帳號還沒綁定權杖。" : "伺服器回應 " + r.status);
+    if (!r.ok) throw new Error(r.status === 409 ? "已達上限，或這個權杖不能這樣改。" : r.status === 401 ? "Google 登入已過期，請重新登入。"
+      : r.status === 403 ? "這個 Google 帳號還沒綁定權杖。" : r.status === 404 ? "找不到這個權杖，請重新打開這個視窗。" : "伺服器回應 " + r.status);
     return r.json();
   };
   const copy = (text, label) => {
@@ -423,51 +427,76 @@ async function tokensPanel() {
     });
     return b;
   };
+  // asks once more before anything that stops a token
+  const sure = (label, warn, run) => {
+    const b = el("button", { type: "button", class: "small" + (label === "刪除" ? " danger" : ""), text: label });
+    b.addEventListener("click", () => {
+      if (b.textContent !== warn) { b.textContent = warn; setTimeout(() => { b.textContent = label; }, 4000); return; }
+      run();
+    });
+    return b;
+  };
   const when = iso => iso ? full(iso) : "還沒用過";
   const shut = el("button", { type: "button", class: "link", text: "關閉" });
   shut.addEventListener("click", close);
-  const draw = d => {
+  const draw = (d, fresh) => {
     const say = el("div", { class: "say", role: "status" });
-    // the sync token: shown and copied, never deleted or replaced here, so a running sync program never stops
+    const act = async (method, path, body) => {
+      try { const next = await call(method, path, body); draw(next, next.made); } catch (e) { say.textContent = e.message; }
+    };
+    const secret = (token, open) => {
+      const code = el("code", { text: open ? token : "•".repeat(12) });
+      const show = el("button", { type: "button", class: "small", text: open ? "隱藏" : "顯示" });
+      show.addEventListener("click", () => { const hidden = show.textContent === "顯示"; code.textContent = hidden ? token : "•".repeat(12); show.textContent = hidden ? "隱藏" : "顯示"; });
+      return [code, show];
+    };
+    // sync tokens: up to three, all always viewable; the first stands for the person
     const sync = el("section", { class: "tk" }, el("h3", { text: "同步權杖" }));
     if (d.sync) {
-      const code = el("code", { text: "•".repeat(12) });
-      const show = el("button", { type: "button", class: "small", text: "顯示" });
-      show.addEventListener("click", () => { const hidden = show.textContent === "顯示"; code.textContent = hidden ? d.sync.token : "•".repeat(12); show.textContent = hidden ? "隱藏" : "顯示"; });
-      sync.append(el("p", { class: "tkhint", text: "填在同步程式裡，用來上傳你的角色。只給自己用，不要分享給別人。這裡不能刪除或更換，正在運作的同步程式不會受影響。" }),
-        el("div", { class: "row" }, el("div", { class: "what" }, code,
-          el("small", { text: (d.sync.characters.length ? "名下角色：" + d.sync.characters.join("、") : "還沒上傳過角色") + "　·　最後上傳：" + when(d.sync.last_used_at) })),
-          show, copy(d.sync.token, "複製")));
+      sync.append(el("p", { class: "tkhint", text: "填在同步程式裡，用來上傳你的角色；一台電腦用一個，最多 " + d.max_sync + " 個，都算你的角色。只給自己用，不要分享給別人。"
+        + "「重新產生」會換一個新的，舊的立刻失效，用它的同步程式要改填新的；其他權杖不受影響。" }));
+      if (d.characters.length) sync.append(el("p", { class: "tkhint", text: "名下角色：" + d.characters.join("、") }));
+      for (const s of d.sync) {
+        const [code, show] = secret(s.token, s.token === fresh);
+        const row = el("div", { class: "row" + (s.token === fresh ? " fresh" : "") }, el("div", { class: "what" },
+          el("b", { text: (s.label || (s.first ? "主要" : "未命名")) + (s.first ? "" : "　") }), code,
+          el("small", { text: `建立於 ${full(s.created_at)}　·　最後上傳：${when(s.last_used_at)}` })),
+          show, copy(s.token, "複製"),
+          sure("重新產生", "確定換新？", () => act("POST", "sync-tokens/regenerate", { id: s.id })));
+        if (!s.first) row.append(sure("刪除", "確定刪除？", () => act("POST", "sync-tokens/delete", { id: s.id })));
+        sync.append(row);
+      }
+      if (d.sync.length < d.max_sync) {
+        const name = el("input", { type: "text", maxlength: "40", placeholder: "哪台電腦用的，例如：筆電", autocomplete: "off" });
+        const form = el("form", null, name, el("button", { text: "新增同步權杖" }));
+        form.addEventListener("submit", e => { e.preventDefault(); act("POST", "sync-tokens", { label: name.value.trim() }); });
+        sync.append(form);
+      }
     } else {
       sync.append(el("p", { class: "tkhint", text: "這個帳號綁定的是伺服器本身的權杖，同步用的權杖不會在網頁上顯示。" }));
     }
-    // read-only tokens to share: made, copied as a link, and deleted here
+    // read-only tokens to share: made, copied as a link, given a new address, and deleted here
     const share = el("section", { class: "tk" }, el("h3", { text: "分享用權杖（只能看）" }),
-      el("p", { class: "tkhint", text: "給別人看你的冒險紀錄：只能看、不能上傳，也看不到聊天內容。不想給看了就刪掉，立刻失效。之後可以設定每個權杖能看到哪些區塊。" }));
+      el("p", { class: "tkhint", text: "給別人看你的冒險紀錄：只能看、不能上傳，也看不到聊天內容。「重新產生」換一個新連結，舊連結立刻失效；不想給看了就刪掉。之後可以設定每個權杖能看到哪些區塊。" }));
     if (!d.view.length) share.append(el("p", { class: "tkhint", text: "還沒有分享用權杖。" }));
     for (const v of d.view) {
       const link = location.origin + "/#token=" + encodeURIComponent(v.token);
-      const drop = el("button", { type: "button", class: "small danger", text: "刪除" });
-      drop.addEventListener("click", async () => {
-        if (drop.textContent !== "確定刪除？") { drop.textContent = "確定刪除？"; setTimeout(() => { drop.textContent = "刪除"; }, 4000); return; }
-        try { draw(await call("DELETE", "/" + encodeURIComponent(v.token))); } catch (e) { say.textContent = e.message; }
-      });
-      share.append(el("div", { class: "row" }, el("div", { class: "what" }, el("b", { text: v.label || "（沒有名稱）" }),
+      share.append(el("div", { class: "row" + (v.token === fresh ? " fresh" : "") }, el("div", { class: "what" }, el("b", { text: v.label || "（沒有名稱）" }),
         el("small", { text: `建立於 ${full(v.created_at)}　·　最後使用：${when(v.last_used_at)}` })),
-        copy(link, "複製分享連結"), copy(v.token, "複製權杖"), drop));
+        copy(link, "複製分享連結"), copy(v.token, "複製權杖"),
+        sure("重新產生", "確定換新？", () => act("POST", "tokens/regenerate", { id: v.id })),
+        sure("刪除", "確定刪除？", () => act("POST", "tokens/delete", { id: v.id }))));
     }
-    const name = el("input", { type: "text", maxlength: "40", placeholder: "給誰的，例如：公會朋友", autocomplete: "off" });
-    const form = el("form", null, name, el("button", { text: "建立" }));
-    form.addEventListener("submit", async e => {
-      e.preventDefault();
-      try { draw(await call("POST", "", { label: name.value.trim() })); } catch (err) { say.textContent = err.message; }
-    });
-    if (d.view.length < d.max_view) share.append(form);
-    share.append(say);
-    box.replaceChildren(el("div", { class: "sheet-head" }, el("h2", { text: "管理權杖" }), shut), sync, share);
+    if (d.view.length < d.max_view) {
+      const name = el("input", { type: "text", maxlength: "40", placeholder: "給誰的，例如：公會朋友", autocomplete: "off" });
+      const form = el("form", null, name, el("button", { text: "建立" }));
+      form.addEventListener("submit", e => { e.preventDefault(); act("POST", "tokens", { label: name.value.trim() }); });
+      share.append(form);
+    }
+    box.replaceChildren(el("div", { class: "sheet-head" }, el("h2", { text: "管理權杖" }), shut), sync, share, say);
   };
   box.replaceChildren(el("div", { class: "loading", role: "status" }, el("i"), "讀取中…"));
-  try { draw(await call("GET")); }
+  try { draw(await call("GET", "tokens")); }
   catch (e) { box.replaceChildren(el("div", { class: "sheet-head" }, el("h2", { text: "管理權杖" }), shut), el("p", { class: "detail", text: e.message })); }
 }
 

@@ -32,6 +32,13 @@ CREATE TABLE IF NOT EXISTS upload_tokens (
 CREATE TABLE IF NOT EXISTS token_characters (
     character_id TEXT PRIMARY KEY, token TEXT NOT NULL, claimed_at TEXT NOT NULL
 );
+-- A person's further sync tokens (up to two more). Each uploads and reads as the person's own
+-- token (owner, the upload_tokens row that stands for the person), so the characters, the
+-- Google binding and the settings stay with the person whichever of them is used.
+CREATE TABLE IF NOT EXISTS sync_aliases (
+    token TEXT PRIMARY KEY, owner TEXT NOT NULL, label TEXT, created_at TEXT NOT NULL, last_used_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_sync_aliases_owner ON sync_aliases(owner);
 CREATE TABLE IF NOT EXISTS character_snapshots (
     character_id TEXT PRIMARY KEY, captured_at TEXT NOT NULL, device_id TEXT,
     payload_json TEXT NOT NULL, received_at TEXT NOT NULL
@@ -200,15 +207,28 @@ def create_app(
     def _eq(a: str, b: str) -> bool:
         return bool(b) and hmac.compare_digest(a.encode(), b.encode())
 
+    def person_of(conn, t: str) -> Optional[str]:
+        """The person a sync token belongs to, as their own token (the upload_tokens row): that
+        token itself, or the one a further sync token of theirs points to. None for neither."""
+        if conn.execute("SELECT 1 FROM upload_tokens WHERE token=?", (t,)).fetchone():
+            return t
+        alias = conn.execute("SELECT owner, last_used_at FROM sync_aliases WHERE token=?", (t,)).fetchone()
+        if alias is None:
+            return None
+        if not alias["last_used_at"] or alias["last_used_at"] < iso(datetime.now(timezone.utc) - timedelta(minutes=1)):
+            conn.execute("UPDATE sync_aliases SET last_used_at=? WHERE token=?", (now_iso(), t))
+        return alias["owner"]
+
     def can_write(authorization: Optional[str] = Header(None)) -> Optional[str]:
         """Returns None for the owner's token, which may write anything, or the personal token
-        that was used: one person's, good for all of that person's characters (see `claim`)."""
+        of the person whose token was used: good for all of that person's characters (see `claim`)."""
         t = _token(authorization)
         if _eq(t, write_token):
             return None
         with db() as conn:
-            if conn.execute("SELECT 1 FROM upload_tokens WHERE token=?", (t,)).fetchone():
-                return t
+            person = person_of(conn, t)
+            if person:
+                return person
         raise HTTPException(403, "invalid token")
 
     def owner_only(authorization: Optional[str] = Header(None)) -> None:
@@ -240,11 +260,16 @@ def create_app(
         if _eq(t, write_token) or _eq(t, read_token):
             return "all"
         with db() as conn:
-            if conn.execute("SELECT 1 FROM upload_tokens WHERE token=?", (t,)).fetchone():
+            if person_of(conn, t):
                 return "personal"
             if conn.execute("SELECT 1 FROM voice_tokens WHERE token=?", (t,)).fetchone():
                 return "voice"
         return None
+
+    def person(t: str) -> Optional[str]:
+        """For binding a Google account: the person a pasted sync token stands for."""
+        with db() as conn:
+            return person_of(conn, t)
 
     def shared_by(conn, t: str) -> List[str]:
         """The characters a read-only sharing token shows (see auth.py): its maker's, or every
@@ -285,7 +310,8 @@ def create_app(
         with db() as conn:
             row = conn.execute("SELECT character_id FROM voice_tokens WHERE token=?", (t,)).fetchone()
             mine = [row["character_id"]] if row else [r["character_id"] for r in conn.execute(
-                "SELECT character_id FROM token_characters WHERE token=? ORDER BY claimed_at, character_id", (t,))]
+                "SELECT character_id FROM token_characters WHERE token=? ORDER BY claimed_at, character_id",
+                (person_of(conn, t) or t,))]
             if not row and not mine:
                 mine = shared_by(conn, t)
         if not mine:
@@ -306,13 +332,14 @@ def create_app(
         if _eq(t, read_token):
             return {"kind": "read", "characters": [], "can_upload": False}
         with db() as conn:
-            if conn.execute("SELECT 1 FROM upload_tokens WHERE token=?", (t,)).fetchone():
+            owner = person_of(conn, t)
+            if owner:
                 mine = [{"id": r["character_id"], "name": r["name"]} for r in conn.execute(
                     "SELECT o.character_id, c.name FROM token_characters o LEFT JOIN characters c ON c.id=o.character_id "
-                    "WHERE o.token=? ORDER BY o.claimed_at", (t,))]
+                    "WHERE o.token=? ORDER BY o.claimed_at", (owner,))]
                 taken = conn.execute("SELECT token FROM token_characters WHERE character_id=?", (character_id,)).fetchone() \
                     if character_id else None
-                return {"kind": "personal", "characters": mine, "can_upload": taken is None or taken["token"] == t}
+                return {"kind": "personal", "characters": mine, "can_upload": taken is None or taken["token"] == owner}
             row = conn.execute("SELECT v.character_id, c.name FROM voice_tokens v LEFT JOIN characters c "
                                "ON c.id=v.character_id WHERE v.token=?", (t,)).fetchone()
             if row is None:
@@ -706,7 +733,7 @@ def create_app(
     admin.register(app, db)
     from . import auth
     # Who is at the browser, by their Google account, and the token it is bound to.
-    app.state.account_of, signed_in["link"] = auth.register(app, db, google, google_exchange, judge)
+    app.state.account_of, signed_in["link"] = auth.register(app, db, google, google_exchange, judge, person)
     shots = shots_api.register(app, db, can_read, can_write, claim,
                                os.path.join(os.path.dirname(os.path.abspath(db_path)), "shots"))
     groups.register(app, db, can_read, activity, maps_dir, world, shots)
