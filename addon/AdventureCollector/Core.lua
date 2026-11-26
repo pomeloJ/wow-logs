@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.2.0"
+local VERSION = "0.3.0"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -16,6 +16,8 @@ local DEFAULTS = {
     requestPlayed = true,  -- ask for /played once per login (prints two chat lines)
     combatLogRemind = true, -- say so in chat when the game's combat log is off
     combatLogAuto = false,  -- switch the game's combat log on at login instead of only saying so
+    aiShotDelay = 0.2,      -- seconds between showing the AI screenshot panel and taking the picture
+    aiFontSize = 15,        -- panel text size (unscaled UI units; about 21 px at 1080p)
 }
 
 local db, charId, myGuid
@@ -514,6 +516,33 @@ local function remindMapBackground(mapID)
     say("這張地圖（" .. tostring(zoneName() or mapID) .. "）在 Dashboard 還沒有底圖，輸入 /adventure mapshot 可以補上")
 end
 
+-- Where a map lies in its continent's world coordinates (yards), asked of the client once
+-- per map. With it the server turns map percent into real distances and joins zones.
+local function recordMapRect(mapID)
+    if type(db.mapRects) ~= "table" then db.mapRects = {} end
+    if db.mapRects[mapID] or type(C_Map) ~= "table" or type(C_Map.GetWorldPosFromMapPos) ~= "function"
+        or type(CreateVector2D) ~= "function" then return end
+    local function corner(u, v)
+        local continent, pos = safe(C_Map.GetWorldPosFromMapPos, mapID, CreateVector2D(u, v))
+        if type(pos) ~= "table" or isSecret(pos) then return nil end
+        local wx, wy
+        if pos.GetXY then wx, wy = safe(pos.GetXY, pos) else wx, wy = pos.x, pos.y end
+        wx, wy = plain(wx), plain(wy)
+        if type(wx) ~= "number" or type(wy) ~= "number" then return nil end
+        return plain(continent), math.floor(wx * 100 + 0.5) / 100, math.floor(wy * 100 + 0.5) / 100
+    end
+    local c0, x0, y0 = corner(0, 0)
+    local c1, x1, y1 = corner(1, 1)
+    if type(c0) ~= "number" or c0 ~= c1 or not x1 or x0 == x1 or y0 == y1 then return end
+    local info = safe(C_Map.GetMapInfo, mapID)
+    info = type(info) == "table" and info or {}
+    if addEvent("MAP_RECT", { map_id = mapID, map_name = plain(info.name), parent_map_id = plain(info.parentMapID),
+            map_type = plain(info.mapType), continent_id = c0,
+            world_x0 = x0, world_y0 = y0, world_x1 = x1, world_y1 = y1 }) then
+        db.mapRects[mapID] = true
+    end
+end
+
 local function samplePosition(force)
     if not db or not db.settings.locationEnabled then return end
     local mapID, x, y = getPosition()
@@ -527,6 +556,7 @@ local function samplePosition(force)
         last.map, last.x, last.y, last.t = mapID, x, y, t
         takeSnapshot() -- keep the snapshot current while position data is valid
         remindMapBackground(mapID)
+        pcall(recordMapRect, mapID)
     end
 end
 
@@ -573,6 +603,7 @@ function handlers.PLAYER_LOGIN()
             ns.syncGroup()          -- still grouped after a reload, or left while offline
             if db.settings.requestPlayed then safe(RequestTimePlayed) end
             checkCombatLog()
+            pcall(ns.bindAIShot)
         end)
     else
         samplePosition(true)
@@ -1226,6 +1257,393 @@ function ns.createButton()
     if not db.settings.showButton then b:Hide() end
 end
 
+-- ------------------------------------------------------------ AI screenshot
+-- One key (F12 unless the player already uses it; changeable under Key Bindings > AddOns)
+-- shows a panel with what the addon can read right now, takes an ordinary game screenshot
+-- with the panel on it, and hides the panel again once the game says the picture is taken.
+-- The sync program uploads screenshots within seconds, so an assistant reading the newest
+-- one sees the live position, target, mouse-over and quest progress, with no /reload.
+-- Values the client does not give are written "unavailable", never guessed.
+local AI = { busy = nil, serial = 0, messages = {} }
+local NA = "unavailable"
+local LABEL = "|cff8fd3ff%s|r  "
+
+local function fmt(v) if v == nil then return NA end return tostring(v) end
+
+-- Position to three decimals (getPosition keeps two for the stored samples).
+local function precisePosition()
+    if type(C_Map) ~= "table" then return nil end
+    local mapID = plain(safe(C_Map.GetBestMapForUnit, "player"))
+    if type(mapID) ~= "number" then return nil end
+    local pos = safe(C_Map.GetPlayerMapPosition, mapID, "player")
+    local x, y
+    if pos ~= nil and not isSecret(pos) and type(pos) == "table" and pos.GetXY then x, y = safe(pos.GetXY, pos) end
+    x, y = plain(x), plain(y)
+    if type(x) ~= "number" or type(y) ~= "number" then return mapID end
+    return mapID, math.floor(x * 100000 + 0.5) / 1000, math.floor(y * 100000 + 0.5) / 1000
+end
+
+-- The game's facing is radians counter-clockwise from north; shown as a compass bearing.
+local COMPASS = { "北", "東北", "東", "東南", "南", "西南", "西", "西北" }
+local function facing()
+    local r = plain(safe(GetPlayerFacing))
+    if type(r) ~= "number" then return nil end
+    local bearing = (360 - math.deg(r)) % 360
+    return math.floor(bearing + 0.5) % 360, COMPASS[math.floor((bearing + 22.5) / 45) % 8 + 1]
+end
+
+local function spellName(id)
+    if type(id) ~= "number" then return nil end
+    if type(C_Spell) == "table" and type(C_Spell.GetSpellInfo) == "function" then
+        local info = safe(C_Spell.GetSpellInfo, id)
+        if type(info) == "table" and plain(info.name) then return plain(info.name) end
+    end
+    return plain((safe(GetSpellInfo, id)))
+end
+
+local function formName()
+    local i = plain(safe(GetShapeshiftForm))
+    if type(i) ~= "number" then return nil end
+    if i == 0 then return "一般" end
+    local _, second, _, fourth = safe(GetShapeshiftFormInfo, i)
+    local spell = plain(fourth)
+    local name = type(second) == "string" and plain(second) or spellName(spell)
+    return (name or ("形態 " .. i)) .. (type(spell) == "number" and (" (spell " .. spell .. ")") or "")
+end
+
+local function bar(cur, max)
+    cur, max = plain(cur), plain(max)
+    if type(cur) ~= "number" then return NA end
+    if type(max) == "number" and max > 0 then
+        return string.format("%d/%d (%d%%)", cur, max, math.floor(cur * 100 / max + 0.5))
+    end
+    return tostring(cur)
+end
+
+local POWER = { [0] = "法力", [1] = "怒氣", [2] = "集中值", [3] = "能量" }
+
+local function guidInfo(guid)
+    guid = plain(guid)
+    if type(guid) ~= "string" then return nil end
+    local kind, id = guid:match("^(%a+)%-%d+%-%d+%-%d+%-%d+%-(%d+)%-%x+$")
+    if kind then return kind, tonumber(id) end
+    return guid:match("^(%a+)%-"), nil
+end
+
+local CLASSIFY = { elite = "精英", rareelite = "稀有精英", rare = "稀有", worldboss = "首領", normal = "普通",
+                   trivial = "低等", minus = "雜兵" }
+
+-- One line about a unit (target or mouse-over) and its NPC id.
+local function unitLine(unit)
+    if not plain(safe(UnitExists, unit)) then return nil end
+    local kind, id = guidInfo(safe(UnitGUID, unit))
+    local level = plain(safe(UnitLevel, unit))
+    if level == -1 then level = "??" end
+    local out = { plain(safe(UnitName, unit)) or NA }
+    if kind == "Player" then out[#out + 1] = "玩家"
+    else out[#out + 1] = "NPC ID " .. fmt(id) end
+    out[#out + 1] = "等級 " .. fmt(level)
+    local class = CLASSIFY[plain(safe(UnitClassification, unit)) or ""]
+    if class then out[#out + 1] = class end
+    local creature = plain(safe(UnitCreatureType, unit))
+    if creature then out[#out + 1] = creature end
+    local reaction = plain(safe(UnitReaction, unit, "player"))
+    out[#out + 1] = type(reaction) ~= "number" and "關係 " .. NA
+        or reaction <= 3 and "敵對" or reaction == 4 and "中立" or "友善"
+    out[#out + 1] = "生命 " .. bar(safe(UnitHealth, unit), (safe(UnitHealthMax, unit)))
+    if plain(safe(UnitIsDeadOrGhost, unit)) then out[#out + 1] = "已死亡" end
+    return table.concat(out, " · "), kind ~= "Player" and id or nil, out[1]
+end
+
+-- What the mouse points at, read from the game tooltip before the panel appears.
+local function tooltipInfo()
+    local tip = GameTooltip
+    if type(tip) ~= "table" or not plain(safe(tip.IsShown, tip)) then return nil end
+    local out = { lines = {} }
+    local _, link = safe(tip.GetItem, tip)
+    link = plain(link)
+    if type(link) == "string" then
+        out.item, out.item_name = tonumber(link:match("item:(%d+)")), link:match("%[(.-)%]")
+    end
+    local spell = { safe(tip.GetSpell, tip) }
+    for i = table.maxn(spell), 1, -1 do
+        local v = plain(spell[i])
+        if type(v) == "number" then out.spell, out.spell_name = v, plain(spell[1]) break end
+    end
+    local n = plain(safe(tip.NumLines, tip))
+    for i = 1, math.min(type(n) == "number" and n or 0, 10) do
+        local left, right = _G["GameTooltipTextLeft" .. i], _G["GameTooltipTextRight" .. i]
+        local l = type(left) == "table" and plain(safe(left.GetText, left)) or nil
+        local r = type(right) == "table" and plain(safe(right.GetText, right)) or nil
+        if l or r then out.lines[#out.lines + 1] = (l or "") .. (r and ("    " .. r) or "") end
+    end
+    return out
+end
+
+local function trackedQuestIds()
+    local ids = {}
+    if type(C_QuestLog) == "table" and type(C_QuestLog.GetNumQuestWatches) == "function"
+        and type(C_QuestLog.GetQuestIDForQuestWatchIndex) == "function" then
+        for i = 1, plain(safe(C_QuestLog.GetNumQuestWatches)) or 0 do
+            local id = plain(safe(C_QuestLog.GetQuestIDForQuestWatchIndex, i))
+            if type(id) == "number" then ids[#ids + 1] = id end
+        end
+    end
+    if #ids == 0 and type(GetNumQuestWatches) == "function" and type(GetQuestIndexForWatch) == "function"
+        and type(C_QuestLog) == "table" then
+        for i = 1, plain(safe(GetNumQuestWatches)) or 0 do
+            local index = plain(safe(GetQuestIndexForWatch, i))
+            local info = type(index) == "number" and safe(C_QuestLog.GetInfo, index) or nil
+            local id = type(info) == "table" and plain(info.questID) or nil
+            if type(id) == "number" then ids[#ids + 1] = id end
+        end
+    end
+    return ids
+end
+
+-- The tracked quests, or (none tracked) the unfinished ones in the log, with their progress.
+local function questLines(lines, data)
+    local log = safe(scanners.quests) or {}
+    local byId = {}
+    for _, q in ipairs(log) do byId[q.quest_id] = q end
+    local ids, note = trackedQuestIds(), "追蹤中"
+    if #ids == 0 then
+        note = "沒有追蹤任務，列出日誌中未完成的"
+        for _, q in ipairs(log) do if not q.complete then ids[#ids + 1] = q.quest_id end end
+    end
+    lines[#lines + 1] = LABEL:format("任務") .. note .. (#ids == 0 and "：無" or "")
+    data.quests = {}
+    for n, id in ipairs(ids) do
+        if n > 4 then lines[#lines + 1] = "    …另有 " .. (#ids - 4) .. " 個" break end
+        data.quests[#data.quests + 1] = id
+        local q = byId[id] or {}
+        local done = q.complete
+        if done == nil and type(C_QuestLog) == "table" then done = plain(safe(C_QuestLog.IsComplete, id)) and true or false end
+        lines[#lines + 1] = string.format("    [%d] %s — %s", id, fmt(q.title or questTitle(id)),
+            done and "|cff66ff66已完成，可交付|r" or "進行中")
+        for i, o in ipairs(q.objectives or {}) do
+            if i > 3 then break end
+            lines[#lines + 1] = "        " .. (o.finished and "✓ " or "· ") .. o.text
+        end
+    end
+end
+
+local RECENT = {
+    ITEM_LOOTED = function(p) return "拾取 " .. fmt(p.item_name) .. " x" .. fmt(p.count) .. " (item " .. fmt(p.item_id) .. ")" end,
+    MOB_KILLED = function(p) return "擊殺 " .. fmt(p.monster_name) .. " (NPC " .. fmt(p.monster_id) .. ")" end,
+    QUEST_ACCEPTED = function(p) return "接受任務 [" .. fmt(p.quest_id) .. "] " .. fmt(p.quest_name) end,
+    QUEST_COMPLETED = function(p) return "交付任務 [" .. fmt(p.quest_id) .. "] " .. fmt(p.quest_name) end,
+    QUEST_REMOVED = function(p) return "移除任務 [" .. fmt(p.quest_id) .. "] " .. fmt(p.quest_name) end,
+    LEVEL_UP = function(p) return "升到 " .. fmt(p.level) .. " 級" end,
+    PLAYER_DIED = function() return "死亡" end,
+    COMBAT = function(p) return "戰鬥 " .. fmt(p.duration) .. " 秒" end,
+}
+
+local function ago(ts, t)
+    local s = math.max(0, t - (tonumber(ts) or t))
+    return s < 60 and (s .. " 秒前") or (math.floor(s / 60) .. " 分前")
+end
+
+local function recentLines(lines)
+    local t, got = now(), {}
+    for i = #db.events, math.max(1, #db.events - 300), -1 do
+        local e = db.events[i]
+        if type(e) == "table" and (t - (tonumber(e.ts) or 0)) > 900 then break end
+        local describe = type(e) == "table" and RECENT[e.event_type]
+        if describe then
+            got[#got + 1] = "    " .. ago(e.ts, t) .. "  " .. describe(type(e.payload) == "table" and e.payload or {})
+            if #got >= 6 then break end
+        end
+    end
+    lines[#lines + 1] = LABEL:format("近期") .. (#got == 0 and "15 分鐘內沒有紀錄" or "")
+    for _, l in ipairs(got) do lines[#lines + 1] = l end
+    if #AI.messages > 0 then
+        lines[#lines + 1] = LABEL:format("系統提示")
+        for i = #AI.messages, 1, -1 do
+            lines[#lines + 1] = "    " .. ago(AI.messages[i].ts, t) .. "  " .. AI.messages[i].text
+        end
+    end
+end
+
+local function remember(text)
+    text = plain(text)
+    if type(text) ~= "string" or text == "" then return end
+    AI.messages[#AI.messages + 1] = { ts = now(), text = text }
+    if #AI.messages > 3 then table.remove(AI.messages, 1) end
+end
+function handlers.UI_INFO_MESSAGE(a, b) remember(type(b) == "string" and b or a) end
+function handlers.UI_ERROR_MESSAGE(a, b) remember(type(b) == "string" and b or a) end
+
+-- The panel's text, and the same facts as data for the AI_SCREENSHOT event.
+local function aiText(mouse, mouseUnit, mouseId, mouseName)
+    local lines, data = {}, { local_ts = time() }
+    local t = now()
+    local name, level = plain(safe(UnitName, "player")), plain(safe(UnitLevel, "player"))
+    lines[1] = "|cffffd100AdventureCollector AI 截圖|r  v" .. VERSION
+    lines[#lines + 1] = LABEL:format("時間") .. date("%Y-%m-%d %H:%M:%S", time()) .. "（本機）  "
+        .. date("!%H:%M:%S", t) .. " UTC"
+    lines[#lines + 1] = LABEL:format("角色") .. fmt(name) .. "  等級 " .. fmt(level)
+    local mapID, x, y = precisePosition()
+    local info = type(mapID) == "number" and safe(C_Map.GetMapInfo, mapID) or nil
+    local sub = plain(safe(GetSubZoneText))
+    lines[#lines + 1] = LABEL:format("地圖") .. fmt(type(info) == "table" and plain(info.name) or zoneName())
+        .. (type(sub) == "string" and sub ~= "" and (" / " .. sub) or "") .. "  UiMapID " .. fmt(mapID)
+    lines[#lines + 1] = LABEL:format("座標") .. (x and string.format("%.3f, %.3f", x, y) or NA)
+        .. "  (地圖百分比，左上 0,0)"
+    local deg, dir = facing()
+    lines[#lines + 1] = LABEL:format("面向") .. (deg and (deg .. "° " .. dir) or NA) .. "  (北 0°，順時針)"
+    local combat = plain(safe(UnitAffectingCombat, "player"))
+    lines[#lines + 1] = LABEL:format("狀態") .. "形態 " .. fmt(formName()) .. "  ·  "
+        .. (combat == nil and "戰鬥 " .. NA or combat and "|cffff5555戰鬥中|r" or "非戰鬥")
+    local res = { "生命 " .. bar(safe(UnitHealth, "player"), (safe(UnitHealthMax, "player"))) }
+    local kind = plain(safe(UnitPowerType, "player"))
+    if type(kind) == "number" then
+        res[#res + 1] = (POWER[kind] or "能量") .. " " .. bar(safe(UnitPower, "player", kind), (safe(UnitPowerMax, "player", kind)))
+    end
+    if kind ~= 0 and select(2, safe(UnitClass, "player")) == "DRUID" then
+        res[#res + 1] = "法力 " .. bar(safe(UnitPower, "player", 0), (safe(UnitPowerMax, "player", 0)))
+    end
+    lines[#lines + 1] = LABEL:format("資源") .. table.concat(res, "  ·  ")
+    local target, targetId, targetName = unitLine("target")
+    lines[#lines + 1] = LABEL:format("目標") .. (target or "無")
+    if target then
+        local combo = plain(safe(GetComboPoints, "player", "target"))
+        if type(combo) == "number" and combo > 0 then lines[#lines + 1] = "    連擊點數 " .. combo end
+    end
+    if mouseUnit then
+        lines[#lines + 1] = LABEL:format("滑鼠") .. mouseUnit
+    elseif mouse and (mouse.item or mouse.spell) then
+        lines[#lines + 1] = LABEL:format("滑鼠") .. (mouse.item and ("物品 " .. fmt(mouse.item_name) .. " (item " .. mouse.item .. ")")
+            or ("技能 " .. fmt(mouse.spell_name) .. " (spell " .. mouse.spell .. ")"))
+    else
+        lines[#lines + 1] = LABEL:format("滑鼠") .. (mouse and "提示框內容如下" or "沒有指向")
+    end
+    if mouse and #mouse.lines > 0 then
+        for i, l in ipairs(mouse.lines) do
+            if i > 8 then break end
+            lines[#lines + 1] = "    |cffbbbbbb" .. l .. "|r"
+        end
+    end
+    questLines(lines, data)
+    recentLines(lines)
+    data.map_id, data.x, data.y, data.facing = mapID, x, y, deg
+    data.in_combat, data.target_id, data.target_name = combat, targetId, targetName
+    data.mouse_npc_id, data.mouse_name = mouseId, mouseName
+    data.mouse_item_id, data.mouse_spell_id = mouse and mouse.item, mouse and mouse.spell
+    return table.concat(lines, "\n"), data
+end
+
+local function aiPanel()
+    if AI.frame then return AI.frame end
+    if type(CreateFrame) ~= "function" or not UIParent then return nil end
+    local f = CreateFrame("Frame", "AdventureCollectorAIPanel", UIParent)
+    safe(f.SetIgnoreParentScale, f, true)       -- the same size in the picture whatever the UI scale
+    f:SetFrameStrata("DIALOG")
+    f:SetClampedToScreen(true)
+    f:SetWidth(600)
+    local bg = f:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints(f)
+    bg:SetColorTexture(0.02, 0.03, 0.06, 0.9)
+    local text = f:CreateFontString(nil, "OVERLAY")
+    text:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", db.settings.aiFontSize, "")
+    text:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -12)
+    text:SetWidth(572)
+    text:SetJustifyH("LEFT")
+    text:SetJustifyV("TOP")
+    safe(text.SetSpacing, text, 3)
+    f.text = text
+    f:SetMovable(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    f:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        local point, _, _, px, py = self:GetPoint()
+        if type(point) == "string" then db.settings.aiPanelPos = { point = point, x = px, y = py } end
+    end)
+    f:Hide()
+    AI.frame = f
+    return f
+end
+
+local function aiPlace(f)
+    f:ClearAllPoints()
+    local pos = db.settings.aiPanelPos
+    if type(pos) == "table" and type(pos.point) == "string" then
+        f:SetPoint(pos.point, UIParent, pos.point, pos.x or 0, pos.y or 0)
+    else
+        f:SetPoint("LEFT", UIParent, "LEFT", 16, 40)   -- left edge, clear of the unit frames and the chat
+    end
+end
+
+local function aiHide()
+    AI.busy = nil
+    if AI.frame then AI.frame:EnableMouse(false) AI.frame:Hide() end
+end
+
+-- test: shown for a while without a screenshot, and draggable to where it should sit
+local function aiShot(test)
+    if not db or AI.busy then return end
+    if not test and type(Screenshot) ~= "function" then say("此客戶端無法截圖") return end
+    local mouse = tooltipInfo()                     -- before anything on screen changes
+    local mouseUnit, mouseId, mouseName = unitLine("mouseover")
+    local text, data = aiText(mouse, mouseUnit, mouseId, mouseName)
+    AI.lastText = text
+    AI.serial = AI.serial + 1
+    local serial = AI.serial
+    local f = aiPanel()
+    if f then
+        aiPlace(f)
+        f.text:SetText(text)
+        local h = plain(safe(f.text.GetStringHeight, f.text))
+        f:SetHeight((type(h) == "number" and h or 480) + 24)
+        f:Show()
+    end
+    local after = type(C_Timer) == "table" and C_Timer.After or nil
+    if test then
+        AI.busy = "test"
+        if f then f:EnableMouse(true) end
+        say("AI 截圖面板測試：顯示 10 秒，不會截圖，可以用滑鼠拖曳調整位置（/adventure aishot reset 回到預設）")
+        if after then after(10, function() if AI.serial == serial then aiHide() end end) else aiHide() end
+        return
+    end
+    AI.busy = "shot"
+    addEvent("AI_SCREENSHOT", data)
+    if not after then Screenshot() return end
+    -- give the panel a frame or two to be drawn before the picture is taken
+    after(db.settings.aiShotDelay, function() if AI.serial == serial and AI.busy == "shot" then Screenshot() end end)
+    after(db.settings.aiShotDelay + 4, function()
+        if AI.serial == serial and AI.busy == "shot" then
+            aiHide()
+            say("截圖沒有回應，面板已隱藏")
+        end
+    end)
+end
+
+function AdventureCollector_AIShot() pcall(aiShot, false) end
+BINDING_HEADER_ADVENTURECOLLECTOR = "AdventureCollector"
+BINDING_NAME_ADVENTURECOLLECTOR_AISHOT = "AI 增強截圖"
+
+-- F12 once, at the first login with this version, if neither the key nor the action is taken.
+-- Asked only once, so a player who later unbinds it is never overruled.
+function ns.bindAIShot()
+    if not db or db.settings.aiKeyOffered or type(SetBinding) ~= "function" or type(GetBindingKey) ~= "function" then return end
+    if plain(safe(InCombatLockdown)) then return end
+    db.settings.aiKeyOffered = true
+    if plain(safe(GetBindingKey, "ADVENTURECOLLECTOR_AISHOT")) then return end
+    local taken = plain(safe(GetBindingAction, "F12"))
+    if type(taken) == "string" and taken ~= "" then
+        say("AI 增強截圖：F12 已經用於「" .. taken .. "」，請到 選單 > 按鍵設定 > 插件 自訂按鍵，或輸入 /adventure aishot")
+        return
+    end
+    if safe(SetBinding, "F12", "ADVENTURECOLLECTOR_AISHOT") then
+        safe(SaveBindings, plain(safe(GetCurrentBindingSet)) or 1)
+        say("按 F12 拍 AI 增強截圖（可在 選單 > 按鍵設定 > 插件 更改）")
+    end
+end
+
+ns.aiShot = aiShot
+ns.aiState = AI
+
 -- ------------------------------------------------------------ map screenshot
 -- Takes a screenshot with the world map open and records where the map sits on
 -- screen (as fractions), so the agent can crop it into a dashboard background.
@@ -1284,6 +1702,7 @@ local function mapShot()
 end
 
 function handlers.SCREENSHOT_SUCCEEDED()
+    if AI.busy == "shot" then aiHide() end
     if not pendingShot then return end
     local shot = pendingShot
     pendingShot = nil
@@ -1295,6 +1714,10 @@ function handlers.SCREENSHOT_SUCCEEDED()
 end
 
 function handlers.SCREENSHOT_FAILED()
+    if AI.busy == "shot" then
+        aiHide()
+        say("AI 截圖失敗")
+    end
     if pendingShot then
         pendingShot = nil
         say("截圖失敗")
@@ -1385,6 +1808,14 @@ SlashCmdList.ADVENTURECOLLECTOR = function(msg)
         saveNow()
     elseif msg == "mapshot" then
         mapShot()
+    elseif msg:match("^aishot") then
+        local what = msg:match("^aishot%s+(%S+)")
+        if what == "reset" then
+            if db then db.settings.aiPanelPos = nil end
+            say("AI 截圖面板回到預設位置")
+        else
+            aiShot(what == "test")
+        end
     elseif msg:match("^combatlog") then
         if not db then return end
         local what = msg:match("^combatlog%s+(%S+)")
@@ -1410,7 +1841,7 @@ SlashCmdList.ADVENTURECOLLECTOR = function(msg)
             say(db.settings.showButton and "存檔按鈕已顯示" or "存檔按鈕已隱藏")
         end
     elseif msg == "help" then
-        say("/adventure [status] - 狀態;  /adventure save - 立即存檔;  /adventure mapshot - 截目前地圖當底圖;  /adventure chat - 聊天紀錄設定;  "
+        say("/adventure [status] - 狀態;  /adventure save - 立即存檔;  /adventure mapshot - 截目前地圖當底圖;  /adventure aishot [test|reset] - AI 增強截圖 (預設 F12);  /adventure chat - 聊天紀錄設定;  "
             .. "/adventure combatlog - 確認戰鬥紀錄 (auto: 每次登入自動開, quiet: 不提醒);  "
             .. "/adventure button - 顯示/隱藏存檔按鈕;  "
             .. "/adventure on|off - 啟用/暫停")

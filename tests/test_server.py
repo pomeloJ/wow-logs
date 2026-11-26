@@ -164,7 +164,7 @@ def test_setup_page_and_client_downloads(tmp_path):
     page = web.get("/setup")
     assert page.status_code == 200 and "AdventureSync" in page.text
     from adventuresync import __version__
-    assert web.get("/api/v1/setup").json() == {"source": True, "source_version": __version__, "addon_version": "0.2.0", "builds": []}
+    assert web.get("/api/v1/setup").json() == {"source": True, "source_version": __version__, "addon_version": "0.3.0", "builds": []}
     src = zipfile.ZipFile(io.BytesIO(web.get("/download/client-source.zip").content))
     names = set(src.namelist())
     assert {"AdventureSync/adventuresync/core.py", "AdventureSync/adventuresync/gui.py", "AdventureSync/AdventureSync.pyw",
@@ -173,7 +173,8 @@ def test_setup_page_and_client_downloads(tmp_path):
     # nothing that could hold a token, and nothing compiled
     assert not [n for n in names if n.endswith((".toml", ".pyc", ".db")) or "config" in n.lower() or "__pycache__" in n]
     addon = zipfile.ZipFile(io.BytesIO(web.get("/download/addon.zip").content))
-    assert sorted(addon.namelist()) == ["AdventureCollector/AdventureCollector.toc", "AdventureCollector/Core.lua"]
+    assert sorted(addon.namelist()) == ["AdventureCollector/AdventureCollector.toc", "AdventureCollector/Bindings.xml",
+                                     "AdventureCollector/Core.lua"]
     # ready-made programs: only the owner may put them there, anyone may fetch them
     w = {"Authorization": "Bearer w"}
     assert web.put("/api/v1/builds/AdventureSync-windows-x64.exe", content=b"MZ" + b"x" * 5000).status_code == 401

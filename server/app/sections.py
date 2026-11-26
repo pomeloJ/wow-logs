@@ -31,10 +31,10 @@ ALWAYS = {
     f"{P}/maps", f"{P}/maps/{{map_id}}/image",
     f"{P}/world/sources", f"{P}/world/maps", f"{P}/world/quests", f"{P}/world/quests/{{quest_id}}", f"{P}/world/npcs",
     f"{P}/world/npcs/{{npc_id}}", f"{P}/world/names", f"{P}/world/items", f"{P}/world/items/{{item_id}}",
-    f"{P}/world/spawns", f"{P}/world/nearby",
+    f"{P}/world/spawns", f"{P}/world/nearby", f"{P}/world/map",
 }
 ROUTES = {
-    f"{P}/locations": "location",
+    f"{P}/locations": "location", f"{P}/world/route": "location", f"{P}/world/route/image": "location",
     f"{P}/events": "activity", f"{P}/stats/activity": "activity", f"{P}/stats/summary": "activity",
     f"{P}/characters/{{character_id}}/items": "items", f"{P}/characters/{{character_id}}/bank": "items",
     f"{P}/characters/{{character_id}}/quests": "quests", f"{P}/world/quest-pins": "quests",

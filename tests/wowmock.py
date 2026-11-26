@@ -195,18 +195,45 @@ function CreateFrame(kind, name)
         if name == "OnEvent" then MOCK.onEvent = fn end
     end
     if name == "AdventureCollectorCombatLogSign" then MOCK.sign = f
+    elseif name == "AdventureCollectorAIPanel" then MOCK.aipanel = f
     elseif kind == "Button" then MOCK.button = f else MOCK.frame = f end
     return f
 end
 function fire(e, ...) MOCK.onEvent(MOCK.frame, e, ...) end
+-- what the AI screenshot panel reads
+function GetPlayerFacing() return MOCK.facing end
+function UnitHealth(unit) return unit == "target" and 40 or 900 end
+function UnitPowerType() return 0 end
+function UnitPower() return 320 end
+function UnitAffectingCombat() return MOCK.combat or false end
+function GetShapeshiftForm() return 0 end
+function UnitExists(unit) return unit == "target" and MOCK.target or unit == "player" end
+function UnitClassification() return "elite" end
+function UnitCreatureType() return "人型生物" end
+function UnitReaction() return 2 end
+function GetComboPoints() return 3 end
+date = os.date
+-- map rects and key bindings (the AI screenshot tests switch these on: Game(world=True))
+WORLD_MOCK = [[
+C_Map.GetWorldPosFromMapPos = function(_, v) return 0, { x = -9000 + v.x * 3000, y = 500 - v.y * 2000 } end
+function CreateVector2D(x, y) return { x = x, y = y } end
+MOCK.bindings = {}
+function GetBindingKey(action) for k, a in pairs(MOCK.bindings) do if a == action then return k end end end
+function GetBindingAction(key) return MOCK.bindings[key] or "" end
+function SetBinding(key, action) MOCK.bindings[key] = action return true end
+function GetCurrentBindingSet() return 2 end
+function SaveBindings(set) MOCK.savedBindings = set end
+]]
 print = function(s) MOCK.out[#MOCK.out + 1] = s end
 """
 
 
 class Game:
-    def __init__(self):
+    def __init__(self, world=False):
         self.lua = lupa.LuaRuntime(unpack_returned_tuples=True)
         self.lua.execute(PRELUDE)
+        if world:
+            self.lua.execute(self.lua.globals().WORLD_MOCK)
         self.mock = self.lua.globals().MOCK
         self.ns = None
 

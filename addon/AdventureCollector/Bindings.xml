@@ -1,0 +1,5 @@
+<Bindings>
+	<Binding name="ADVENTURECOLLECTOR_AISHOT" header="ADVENTURECOLLECTOR" category="ADDONS">
+		AdventureCollector_AIShot()
+	</Binding>
+</Bindings>

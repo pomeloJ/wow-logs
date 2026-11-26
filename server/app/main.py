@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 
+from . import navigate
 from . import sections as sections_mod
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse
@@ -128,10 +129,17 @@ limited token ever shows chat messages. `GET /api/v1/token` says what a token is
 * fighting alone: `/characters/{id}/solo` lists the stretches; their ids work with the same `/groups/{group_id}...` endpoints
 * combat outside a group: `/characters/{id}/combat/skills` and `/combat/analysis`
 * the game world (quests, monsters, items): everything under `/world`
+* maps and finding the way: `/world/map` (a map's picture, its size and how percent positions map to its
+  pixels and to yards), `/world/route` (a suggested way from the character to a point, an NPC, an object
+  or a quest, with distance and time) and `/world/route/image` (the same drawn on the map). There is no
+  terrain data: a route is never verified passable, and legs nobody has walked are straight guesses
 * what the player sees right now: `/characters/{id}/screenshots/latest` (where and when, with the picture's address)
   or `/screenshots/latest/image` (the JPEG itself); `max_age` leaves out a stale one. There are
   screenshots only when the player has turned on screenshot upload in the sync program; a new
-  one arrives a few seconds after it is taken in the game
+  one arrives a few seconds after it is taken in the game. With the addon's AI screenshot key (F12) the
+  picture carries a panel with the live map id, position to three decimals, facing (degrees clockwise from
+  north), target and mouse-over with their NPC/item/spell ids, tracked quest progress and recent events;
+  read the position off it and pass it to `/world/route` as `from_map`, `from_x`, `from_y`
 
 Times are UTC in ISO 8601. Positions are `map_id` with `x`, `y` in percent of that map.
 Damage figures exist only where the game's combat log was switched on while playing.
@@ -767,6 +775,7 @@ def create_app(
     shots = shots_api.register(app, db, can_read, can_write, claim,
                                os.path.join(os.path.dirname(os.path.abspath(db_path)), "shots"))
     groups.register(app, db, can_read, activity, maps_dir, world, shots)
+    navigate.register(app, db, world, can_read, maps_dir)
     from . import items
     items.register(app, db, can_read, world)
     return app
