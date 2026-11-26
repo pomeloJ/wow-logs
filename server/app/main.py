@@ -8,9 +8,11 @@ import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+
+from . import sections as sections_mod
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
@@ -160,8 +162,10 @@ def section_of(path: str, method: str) -> str:
 
 
 class Scope(str):
-    """The character a limited token is looking at. `all` holds every character it may see."""
+    """The character a limited token is looking at. `all` holds every character it may see;
+    `sections`, for a sharing token limited to some parts, the parts it shows (None: all of them)."""
     all: frozenset = frozenset()
+    sections: Optional[frozenset] = None
 
 
 def create_app(
@@ -271,19 +275,22 @@ def create_app(
         with db() as conn:
             return person_of(conn, t)
 
-    def shared_by(conn, t: str) -> List[str]:
+    def shared_by(conn, t: str) -> Tuple[List[str], Optional[frozenset]]:
         """The characters a read-only sharing token shows (see auth.py): its maker's, or every
-        one for a token made by an account bound to the server's own. Looked up only after every
-        other kind of token, so none of those changes in any way."""
-        v = conn.execute("SELECT owner, last_used_at FROM view_tokens WHERE token=?", (t,)).fetchone()
+        one for a token made by an account bound to the server's own; and the parts of them it
+        shows (sections.py; None for all). Looked up only after every other kind of token, so
+        none of those changes in any way."""
+        v = conn.execute("SELECT owner, sections, last_used_at FROM view_tokens WHERE token=?", (t,)).fetchone()
         if v is None:
-            return []
+            return [], None
         if not v["last_used_at"] or v["last_used_at"] < iso(datetime.now(timezone.utc) - timedelta(minutes=10)):
             conn.execute("UPDATE view_tokens SET last_used_at=? WHERE token=?", (now_iso(), t))
         if v["owner"] == "*":
-            return [r["id"] for r in conn.execute("SELECT id FROM characters ORDER BY updated_at DESC")]
-        return [r["character_id"] for r in conn.execute(
-            "SELECT character_id FROM token_characters WHERE token=? ORDER BY claimed_at, character_id", (v["owner"],))]
+            mine = [r["id"] for r in conn.execute("SELECT id FROM characters ORDER BY updated_at DESC")]
+        else:
+            mine = [r["character_id"] for r in conn.execute(
+                "SELECT character_id FROM token_characters WHERE token=? ORDER BY claimed_at, character_id", (v["owner"],))]
+        return mine, sections_mod.parse(v["sections"])
 
     def can_read(request: Request, authorization: Optional[str] = Header(None)) -> Optional[Scope]:
         """Returns None for full read access, or what a limited token may see.
@@ -312,15 +319,22 @@ def create_app(
             mine = [row["character_id"]] if row else [r["character_id"] for r in conn.execute(
                 "SELECT character_id FROM token_characters WHERE token=? ORDER BY claimed_at, character_id",
                 (person_of(conn, t) or t,))]
+            parts = None
             if not row and not mine:
-                mine = shared_by(conn, t)
+                mine, parts = shared_by(conn, t)
         if not mine:
             raise HTTPException(403, "invalid token")
+        if parts is not None:
+            # a sharing token limited to some parts: a route of a hidden part is refused outright
+            part = sections_mod.route_part(getattr(request.scope.get("route"), "path", ""))
+            if part != "always" and part not in parts:
+                raise HTTPException(403, {"hidden": part or "other", "message": "this sharing token does not show this part"})
         # Asked about a character that is not theirs, the answer is about one that is (or a
         # refusal, where the endpoint checks): never about someone else's.
         asked = request.path_params.get("character_id") or request.query_params.get("character_id")
         scope = Scope(asked if asked in mine else mine[0])
         scope.all = frozenset(mine)
+        scope.sections = parts
         return scope
 
     def whose(character_id: Optional[str] = None, authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
@@ -343,11 +357,14 @@ def create_app(
             row = conn.execute("SELECT v.character_id, c.name FROM voice_tokens v LEFT JOIN characters c "
                                "ON c.id=v.character_id WHERE v.token=?", (t,)).fetchone()
             if row is None:
-                shown = shared_by(conn, t)
+                shown, parts = shared_by(conn, t)
                 if shown:
                     names = {r["id"]: r["name"] for r in conn.execute(
                         f"SELECT id, name FROM characters WHERE id IN ({','.join('?' * len(shown))})", shown)}
-                    return {"kind": "read", "characters": [{"id": c, "name": names.get(c)} for c in shown], "can_upload": False}
+                    out = {"kind": "read", "characters": [{"id": c, "name": names.get(c)} for c in shown], "can_upload": False}
+                    if parts is not None:       # only for a token limited to some parts: what it shows
+                        out["sections"] = [k for k, _ in sections_mod.PARTS if k in parts]
+                    return out
         if row is None:
             raise HTTPException(403, "invalid token")
         return {"kind": "read", "characters": [{"id": row["character_id"], "name": row["name"]}], "can_upload": False}
@@ -495,15 +512,20 @@ def create_app(
         return {
             "character_id": row["character_id"], "captured_at": row["captured_at"],
             "received_at": row["received_at"], "device_id": row["device_id"],
-            "data": json.loads(row["payload_json"]),
+            "data": sections_mod.trim_snapshot(json.loads(row["payload_json"]), getattr(scope, "sections", None)),
         }
 
     def query_events(character_id, event_type, start_time, end_time, map_id, limit, cursor,
                      exclude_type=None, scope=None):
         where, args = [], []
+        parts = getattr(scope, "sections", None)
         if scope is not None:   # share link: one character, no chat
             character_id = scope
             where.append("event_type<>'CHAT_MESSAGE'")
+        hidden = sorted(sections_mod.hidden_events(parts))
+        if hidden:              # a sharing token limited to some parts: not the kinds of a hidden one
+            where.append("event_type NOT IN (%s)" % ",".join("?" * len(hidden)))
+            args += hidden
         if exclude_type:                               # one type, or several separated by commas
             kinds = [k for k in exclude_type.split(",") if k]
             where.append("event_type NOT IN (%s)" % ",".join("?" * len(kinds)))
@@ -538,7 +560,7 @@ def create_app(
             {"event_id": r["event_id"], "character_id": r["character_id"],
              "device_id": r["device_id"], "event_type": r["event_type"],
              "timestamp": r["timestamp"], "received_at": r["received_at"],
-             "payload": json.loads(r["payload_json"])}
+             "payload": sections_mod.trim_payload(json.loads(r["payload_json"]), parts)}
             for r in rows
         ]
         nxt = None
@@ -622,7 +644,14 @@ def create_app(
                      end_time: Optional[datetime] = None, scope: Optional[str] = Depends(can_read)):
         """Totals for a stretch of time: kills, experience, loot and its vendor value, money in and out, fights and
         time in combat, the monsters killed most and the items looted most. Without times it covers everything."""
-        return activity(scope if scope is not None else character_id, start_time, end_time)
+        out = activity(scope if scope is not None else character_id, start_time, end_time)
+        parts = getattr(scope, "sections", None)
+        if parts is not None:   # a sharing token limited to some parts: nothing of a hidden one
+            gone = sections_mod.hidden_events(parts)
+            out["counts"] = {k: v for k, v in out["counts"].items() if k not in gone}
+            if not sections_mod.shows(parts, "items"):
+                out.update(items_looted=0, loot_value=0, money_in=0, money_out=0, top_items=[])
+        return out
 
     def activity(character_id: Optional[str] = None, start_time: Optional[datetime] = None,
                  end_time: Optional[datetime] = None):
@@ -715,9 +744,10 @@ def create_app(
             ev = conn.execute("SELECT COUNT(*) c, MAX(received_at) r, MAX(timestamp) t FROM events" + w, a).fetchone()
             ch = conn.execute("SELECT COUNT(*) c FROM characters").fetchone()
             by = conn.execute("SELECT event_type, COUNT(*) c FROM events" + w + " GROUP BY event_type", a).fetchall()
+        gone = sections_mod.hidden_events(getattr(scope, "sections", None))
         return {
             "characters": ch["c"] if scope is None else 1, "events": ev["c"], "last_event_at": ev["t"],
-            "last_received_at": ev["r"], "by_type": {r["event_type"]: r["c"] for r in by},
+            "last_received_at": ev["r"], "by_type": {r["event_type"]: r["c"] for r in by if r["event_type"] not in gone},
             "server_time": now_iso(),
         }
 

@@ -32,6 +32,8 @@ from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import HTTPException, Request
+
+from . import sections as parts
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
@@ -114,6 +116,16 @@ class LabelIn(BaseModel):
 
 class PickIn(BaseModel):
     id: str = Field(min_length=1, max_length=64)        # a token's fingerprint, never the token itself
+
+
+class SectionsIn(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    sections: List[str] = Field(max_length=20)          # the parts it shows (sections.py); all of them: no limit
+
+
+class NewViewIn(BaseModel):
+    label: str = Field("", max_length=40)
+    sections: Optional[List[str]] = Field(None, max_length=20)     # left out: every part
 
 
 MAX_SYNC_TOKENS = 3            # the person's own token and two more, for more computers
@@ -268,11 +280,16 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
                 names = [r["name"] or r["character_id"] for r in conn.execute(
                     "SELECT o.character_id, c.name FROM token_characters o LEFT JOIN characters c ON c.id=o.character_id "
                     "WHERE o.token=? ORDER BY o.claimed_at", (me,))]
-            view = [{"id": fingerprint(r["token"]), **dict(r)} for r in conn.execute(
-                "SELECT token, label, created_at, last_used_at FROM view_tokens WHERE owner=? ORDER BY created_at",
-                (owner_key(link),))]
+            view = []
+            for r in conn.execute("SELECT token, label, sections, created_at, last_used_at FROM view_tokens WHERE owner=? "
+                                  "ORDER BY created_at", (owner_key(link),)):
+                shown = parts.parse(r["sections"])
+                view.append({"id": fingerprint(r["token"]), "token": r["token"], "label": r["label"],
+                             "created_at": r["created_at"], "last_used_at": r["last_used_at"],
+                             "sections": [k for k, _ in parts.PARTS if shown is None or k in shown]})
         return {"kind": link["kind"], "sync": sync if link["kind"] == "personal" else None, "characters": names,
-                "view": view, "max_sync": MAX_SYNC_TOKENS, "max_view": MAX_VIEW_TOKENS}
+                "view": view, "max_sync": MAX_SYNC_TOKENS, "max_view": MAX_VIEW_TOKENS,
+                "parts": [{"key": k, "name": n} for k, n in parts.PARTS]}
 
     def answer(link: Dict[str, Any], made: Optional[str] = None) -> JSONResponse:
         out = tokens_of(link)
@@ -342,17 +359,34 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
         return answer(link)
 
     # read-only tokens to share
+    def chosen(names: Optional[List[str]]) -> Optional[str]:
+        if names is None:
+            return None
+        if not set(names) <= parts.KEYS:
+            raise HTTPException(400, "unknown part: " + ", ".join(sorted(set(names) - parts.KEYS)))
+        return parts.dump(names)
+
     @app.post("/api/v1/me/tokens", include_in_schema=False)
-    def new_view_token(body: LabelIn, request: Request):
-        """A new read-only token: it sees what its maker's token sees, never chat, and uploads nothing."""
+    def new_view_token(body: NewViewIn, request: Request):
+        """A new read-only token: it sees what its maker's token sees (or only the parts chosen),
+        never chat, and uploads nothing."""
         link = bound(request)
         with db() as conn:
             if conn.execute("SELECT COUNT(*) FROM view_tokens WHERE owner=?", (owner_key(link),)).fetchone()[0] >= MAX_VIEW_TOKENS:
                 raise HTTPException(409, f"at most {MAX_VIEW_TOKENS} sharing tokens")
             token = new_view_secret()
             conn.execute("INSERT INTO view_tokens (token, owner, label, sections, created_at) VALUES (?,?,?,?,?)",
-                         (token, owner_key(link), body.label.strip() or None, None, _now_iso()))
+                         (token, owner_key(link), body.label.strip() or None, chosen(body.sections), _now_iso()))
         return answer(link, token)
+
+    @app.post("/api/v1/me/tokens/sections", include_in_schema=False)
+    def set_view_sections(body: SectionsIn, request: Request):
+        """Which parts a sharing token shows (see sections.py). Takes effect at its next request."""
+        link = bound(request)
+        old = pick(tokens_of(link)["view"], body.id)
+        with db() as conn:
+            conn.execute("UPDATE view_tokens SET sections=? WHERE token=?", (chosen(body.sections), old["token"]))
+        return answer(link)
 
     @app.post("/api/v1/me/tokens/regenerate", include_in_schema=False)
     def regenerate_view_token(body: PickIn, request: Request):

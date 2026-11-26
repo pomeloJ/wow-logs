@@ -181,7 +181,11 @@ def register(app, db, can_read, can_write, claim, folder: str) -> Shots:
                                 + " ORDER BY taken_at DESC LIMIT ?", args + [limit]).fetchall()
             total = conn.execute("SELECT COUNT(*) FROM screenshots WHERE " + " AND ".join(where[:2] if character_id else where[:1]),
                                  args[:1] if character_id else []).fetchone()[0]
-            return {"total": total, "items": [shots.describe(conn, r) for r in rows]}
+            out = [shots.describe(conn, r) for r in rows]
+        if getattr(scope, "sections", None) is not None and "location" not in scope.sections:
+            for s in out:                       # a sharing token that hides where the character goes
+                s["place"] = None
+        return {"total": total, "items": out}
 
     def serve(shot_id: str, thumb: bool, scope: Optional[str]):
         check_id(shot_id)
@@ -219,6 +223,8 @@ def register(app, db, can_read, can_write, claim, folder: str) -> Shots:
         and only once the player has turned on screenshot upload in the sync program."""
         row, age, out = newest(character_id, scope, max_age)
         out.update(age_seconds=age, image=f"/api/v1/screenshots/{row['id']}/image", thumb=f"/api/v1/screenshots/{row['id']}/thumb")
+        if getattr(scope, "sections", None) is not None and "location" not in scope.sections:
+            out["place"] = None
         return out
 
     @app.get("/api/v1/characters/{character_id}/screenshots/latest/image",

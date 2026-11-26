@@ -370,3 +370,91 @@ def test_tokens_made_before_keep_working_and_short_ones_are_still_accepted(tmp_p
     second = web.post("/api/v1/me/sync-tokens", json={}).json()["made"]
     assert seen(web, Authorization=f"Bearer {second}") == ["char-old"]
     assert seen(web, Authorization="Bearer abcdefghjkmnpqrs") == ["char-old"]      # adding one changes nothing for it
+
+
+# ---------------------------------------------------------------- what a sharing token shows
+def full_record(web, token, cid="char-mine"):
+    r = web.put(f"/api/v1/characters/{cid}/snapshot", headers={"Authorization": f"Bearer {token}"}, json={
+        "captured_at": "2026-11-26T10:00:00+08:00", "device_id": "pc", "data": {
+            "name": "小明", "class": "DRUID", "level": 20, "xp": 100, "xp_max": 900, "money": 12345, "map_id": 1439, "x": 40.0, "y": 50.0,
+            "zone_name": "黑海岸", "equipment": [{"item_id": 1}], "bags": {"items": []}, "quests": [{"id": 5}], "quests_done": [1, 2],
+            "stats": {"strength": 30}, "professions": [], "reputations": [], "played_total": 999}})
+    assert r.status_code == 200, r.text
+    ev = lambda i, t, p: {"event_id": f"{cid}:{i:010d}", "character_id": cid, "event_type": t,   # noqa: E731
+                          "timestamp": f"2026-11-26T10:0{i}:00+08:00", "payload": p}
+    r = web.post("/api/v1/events/batch", headers={"Authorization": f"Bearer {token}"}, json={"schema_version": 1, "device_id": "pc", "events": [
+        ev(1, "LOCATION_SAMPLE", {"map_id": 1439, "x": 40.0, "y": 50.0}),
+        ev(2, "MOB_KILLED", {"monster_name": "狼", "map_id": 1439, "x": 41.0, "y": 51.0, "zone_name": "黑海岸"}),
+        ev(3, "ITEM_LOOTED", {"item_id": 2, "item_name": "狼皮", "map_id": 1439}),
+        ev(4, "QUEST_COMPLETED", {"quest_id": 5, "quest_name": "狼群"}),
+        ev(5, "MONEY_CHANGED", {"delta": 500, "money": 12345})]})
+    assert r.status_code == 200, r.text
+
+
+def test_a_sharing_token_shows_only_the_parts_chosen(tmp_path):
+    web = signed_in(tmp_path)
+    mine = web.post("/api/v1/admin/tokens", json={"label": "小明"}).json()["token"]
+    full_record(web, mine)
+    web.post("/api/v1/me/link", json={"token": mine})
+    made = web.post("/api/v1/me/tokens", json={"label": "只看動態", "sections": ["activity"]}).json()
+    assert [p["key"] for p in made["parts"]] == ["location", "activity", "items", "quests", "character", "groups", "screenshots"]
+    assert made["view"][0]["sections"] == ["activity"]
+    h = {"Authorization": f"Bearer {made['made']}"}
+    get = lambda path: web.get(path, headers=h)     # noqa: E731
+    # always: who the character is
+    assert [c["id"] for c in get("/api/v1/characters").json()["items"]] == ["char-mine"]
+    data = get("/api/v1/characters/char-mine/snapshot").json()["data"]
+    assert (data["name"], data["level"], data["xp"]) == ("小明", 20, 100) and data["played_total"] == 999
+    for hidden_field in ("money", "map_id", "x", "zone_name", "equipment", "bags", "quests", "quests_done", "stats"):
+        assert hidden_field not in data, hidden_field
+    # whole routes of a hidden part are refused, and say which part
+    for path, part in (("/api/v1/locations?character_id=char-mine", "location"), ("/api/v1/characters/char-mine/items", "items"),
+                       ("/api/v1/characters/char-mine/quests", "quests"), ("/api/v1/screenshots", "screenshots"),
+                       ("/api/v1/characters/char-mine/groups", "groups"), ("/api/v1/characters/char-mine/screenshots/latest", "screenshots")):
+        r = get(path)
+        assert r.status_code == 403 and r.json()["detail"]["hidden"] == part, path
+    # the parts shown are trimmed: no loot, money, quests or positions in the events and totals
+    events = get("/api/v1/events?character_id=char-mine").json()["items"]
+    assert [e["event_type"] for e in events] == ["MOB_KILLED"] and events[0]["payload"] == {"monster_name": "狼"}
+    act = get("/api/v1/stats/activity?character_id=char-mine").json()
+    assert act["kills"] == 1 and (act["money_in"], act["items_looted"], act["top_items"]) == (0, 0, [])
+    assert set(act["counts"]) == {"MOB_KILLED"}
+    assert set(get("/api/v1/stats/summary").json()["by_type"]) == {"MOB_KILLED"}
+    assert web.get("/api/v1/token", headers=h).json()["sections"] == ["activity"]
+    # changed in the panel: in effect at the next request
+    tid = made["view"][0]["id"]
+    assert web.post("/api/v1/me/tokens/sections", json={"id": tid, "sections": ["activity", "location", "items"]}).status_code == 200
+    assert get("/api/v1/locations?character_id=char-mine").status_code == 200
+    data = get("/api/v1/characters/char-mine/snapshot").json()["data"]
+    assert data["money"] == 12345 and data["map_id"] == 1439 and "quests" not in data
+    assert web.post("/api/v1/me/tokens/sections", json={"id": tid, "sections": ["nonsense"]}).status_code == 400
+
+
+def test_a_sharing_token_with_every_part_or_none_chosen_shows_everything(tmp_path):
+    import sqlite3
+    web = signed_in(tmp_path)
+    mine = web.post("/api/v1/admin/tokens", json={"label": "小明"}).json()["token"]
+    full_record(web, mine)
+    web.post("/api/v1/me/link", json={"token": mine})
+    made = web.post("/api/v1/me/tokens", json={"label": "全部"}).json()
+    every = [p["key"] for p in made["parts"]]
+    assert made["view"][0]["sections"] == every
+    h = {"Authorization": f"Bearer {made['made']}"}
+    assert web.get("/api/v1/characters/char-mine/snapshot", headers=h).json()["data"]["money"] == 12345
+    assert len(web.get("/api/v1/events?character_id=char-mine", headers=h).json()["items"]) == 5
+    assert "sections" not in web.get("/api/v1/token", headers=h).json()
+    # choosing every part stores no limit at all, the same as a token made before parts existed
+    web.post("/api/v1/me/tokens/sections", json={"id": made["view"][0]["id"], "sections": every})
+    assert sqlite3.connect(tmp_path / "b.db").execute("SELECT sections FROM view_tokens").fetchone()[0] is None
+
+
+def test_every_read_route_belongs_to_a_part_or_is_always_open(tmp_path):
+    """A route added later must be placed in sections.py, or a limited sharing token is refused it."""
+    from app import sections
+    from app.main import create_app
+    app = create_app(str(tmp_path / "r.db"), TOKEN, READ_TOKEN)
+    apart = ("/api/v1/token", "/api/v1/health", "/api/v1/setup", "/api/v1/admin/", "/api/v1/me", "/api/v1/sync-settings",
+             "/api/v1/shared/party/")
+    unplaced = [r.path for r in app.routes if "GET" in (getattr(r, "methods", None) or ()) and r.path.startswith("/api/v1")
+                and not r.path.startswith(apart) and sections.route_part(r.path) is None]
+    assert unplaced == []

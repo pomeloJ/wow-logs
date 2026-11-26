@@ -235,6 +235,15 @@ button.link { background: none; color: var(--muted); padding: 0; font-size: 13px
 */
 .sheet > .say { font-size: 13px; min-height: 1.2em; margin-top: 10px; color: var(--warn); }
 .tk .what code { display: inline-block; margin: 3px 0; }
+.tk .shows { display: block; color: var(--muted); font-size: 12px; }
+.tk .parts { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 8px 10px; margin-top: 4px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
+.tk .parts[hidden] { display: none; }
+.tk .parts label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.tk .parts input { width: auto; margin: 0; }
+.tk .parts .always { flex-basis: 100%; color: var(--muted); font-size: 12px; }
+.tk .parts button { margin-left: auto; padding: 4px 12px; font-size: 13px; }
+.sharenote { margin-bottom: 12px; font-size: 13px; color: var(--muted); padding: 10px 14px; }
 .beta { margin-left: 8px; padding: 1px 6px; border-radius: 4px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 600; letter-spacing: .04em; vertical-align: 1px; }
 </style>
 </head>
@@ -300,7 +309,9 @@ try {
 } catch (e) { /* storage unavailable: fall through to the token form */ }
 
 const app = document.getElementById("app");
-const state = { charId: null, mapId: null, locs: [], maps: {}, filter: "activity", range: "today", tab: "home", pins: [], redraw: null };
+// The parts a sharing token shows (null: everything); the page leaves out the rest.
+const has = part => !state.parts || state.parts.has(part);
+const state = { parts: null, charId: null, mapId: null, locs: [], maps: {}, filter: "activity", range: "today", tab: "home", pins: [], redraw: null };
 try { const t = localStorage.getItem(TAB_KEY); if (TABS.some(x => x[0] === t)) state.tab = t; } catch (e) { /* default tab */ }
 
 function el(tag, attrs, ...kids) {
@@ -319,6 +330,11 @@ async function whoAmI() {
 
 async function get(path) {
   const r = await fetch(API + path, { headers: auth() });
+  if (r.status === 403) {
+    // a sharing token limited to some parts says which one it does not show: that is no failed sign-in
+    const why = await r.json().catch(() => null);
+    if (why && why.detail && why.detail.hidden) throw new Error("hidden");
+  }
   if (r.status === 401 || r.status === 403) throw new Error("auth");
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
@@ -477,15 +493,27 @@ async function tokensPanel() {
     }
     // read-only tokens to share: made, copied as a link, given a new address, and deleted here
     const share = el("section", { class: "tk" }, el("h3", { text: "分享用權杖（只能看）" }),
-      el("p", { class: "tkhint", text: "給別人看你的冒險紀錄：只能看、不能上傳，也看不到聊天內容。「重新產生」換一個新連結，舊連結立刻失效；不想給看了就刪掉。之後可以設定每個權杖能看到哪些區塊。" }));
+      el("p", { class: "tkhint", text: "給別人看你的冒險紀錄：只能看、不能上傳，也看不到聊天內容。按「可看區塊」選擇每個權杖能看到哪些部分；「重新產生」換一個新連結，舊連結立刻失效；不想給看了就刪掉。" }));
     if (!d.view.length) share.append(el("p", { class: "tkhint", text: "還沒有分享用權杖。" }));
+    const partName = Object.fromEntries(d.parts.map(p => [p.key, p.name]));
     for (const v of d.view) {
       const link = location.origin + "/#token=" + encodeURIComponent(v.token);
+      const shows = v.sections.length === d.parts.length ? "可看：全部" : v.sections.length
+        ? "可看：" + v.sections.map(k => partName[k]).join("、") : "可看：只有角色的名字、職業、等級與經驗";
+      // which parts it shows: ticked boxes, saved with one press
+      const boxes = d.parts.map(p => { const c = el("input", { type: "checkbox", value: p.key }); c.checked = v.sections.includes(p.key); return [p, c]; });
+      const save = el("button", { type: "button", text: "儲存" });
+      save.addEventListener("click", () => act("POST", "tokens/sections", { id: v.id, sections: boxes.filter(([, c]) => c.checked).map(([p]) => p.key) }));
+      const parts = el("div", { class: "parts" }, ...boxes.map(([p, c]) => el("label", null, c, p.name)), save,
+        el("span", { class: "always", text: "角色的名字、職業、等級與經驗一律看得到；聊天內容一律看不到。" }));
+      parts.hidden = true;
+      const choose = el("button", { type: "button", class: "small", text: "可看區塊" });
+      choose.addEventListener("click", () => { parts.hidden = !parts.hidden; });
       share.append(el("div", { class: "row" + (v.token === fresh ? " fresh" : "") }, el("div", { class: "what" }, el("b", { text: v.label || "（沒有名稱）" }),
-        el("small", { text: `建立於 ${full(v.created_at)}　·　最後使用：${when(v.last_used_at)}` })),
-        copy(link, "複製分享連結"), copy(v.token, "複製權杖"),
+        el("small", { text: `建立於 ${full(v.created_at)}　·　最後使用：${when(v.last_used_at)}` }), el("span", { class: "shows", text: shows })),
+        copy(link, "複製分享連結"), copy(v.token, "複製權杖"), choose,
         sure("重新產生", "確定換新？", () => act("POST", "tokens/regenerate", { id: v.id })),
-        sure("刪除", "確定刪除？", () => act("POST", "tokens/delete", { id: v.id }))));
+        sure("刪除", "確定刪除？", () => act("POST", "tokens/delete", { id: v.id })), parts));
     }
     if (d.view.length < d.max_view) {
       const name = el("input", { type: "text", maxlength: "40", placeholder: "給誰的，例如：公會朋友", autocomplete: "off" });
@@ -900,7 +928,8 @@ function computeView(pts, mode) {
 function mapMarkers(id) {
   const key = state.charId + ":" + id;
   if (!R.markers.has(key)) {
-    R.markers.set(key, get(`/events?character_id=${encodeURIComponent(state.charId)}&map_id=${id}&exclude_type=LOCATION_SAMPLE,PARTY_POSITIONS,GROUP_METER,GROUP_ENCOUNTER,PARTY_LOOT&limit=1000`)
+    R.markers.set(key, (has("activity") ? get(`/events?character_id=${encodeURIComponent(state.charId)}&map_id=${id}&exclude_type=LOCATION_SAMPLE,PARTY_POSITIONS,GROUP_METER,GROUP_ENCOUNTER,PARTY_LOOT&limit=1000`)
+      : Promise.resolve({ items: [] }))
       .then(r => r.items.map(e => ({ t: new Date(e.timestamp).getTime(), x: e.payload.x, y: e.payload.y, type: e.event_type }))
         .filter(m => typeof m.x === "number" && typeof m.y === "number"
           && ["MOB_KILLED", "PLAYER_DIED", "QUEST_ACCEPTED", "QUEST_COMPLETED"].includes(m.type)))
@@ -1294,7 +1323,14 @@ async function load(quiet) {
     // row kept the page empty for about five seconds. Only what needs an earlier answer waits:
     // the character list (for the character), and the snapshot (for its items and position).
     const optional = (promise, fallback) => promise.catch(() => fallback);   // missing parts are shown as "none"
-    const [chars, stats, maps] = await Promise.all([get("/characters").then(r => r.items), get("/stats/summary"), get("/maps")]);
+    const who = token ? await optional(get("/token"), null) : null;     // what this token is, and what it shows
+    state.parts = who && Array.isArray(who.sections) ? new Set(who.sections) : null;
+    // a part the token does not show is not asked for: an empty answer of the same shape instead
+    const want = (part, ask, empty) => has(part) ? ask() : Promise.resolve(empty);
+    const NO_ACTIVITY = { counts: {}, kills: 0, fights: 0, combat_seconds: 0, active_seconds: 0, xp: 0, items_looted: 0, loot_value: 0,
+      money_in: 0, money_out: 0, top_monsters: [], top_items: [], xp_points: [] };
+    const [chars, stats, maps] = await Promise.all([get("/characters").then(r => r.items),
+      want("activity", () => get("/stats/summary"), { characters: 1, events: 0, by_type: {}, last_received_at: null }), get("/maps")]);
     R.markers.clear();
     state.maps = Object.fromEntries(maps.items.map(m => [m.map_id, m]));
     document.getElementById("logout").hidden = false;
@@ -1308,7 +1344,7 @@ async function load(quiet) {
       : state.range === "week" ? new Date(Date.now() - 7 * 86400000) : null;
     // Older positions too, so a time range can reach back (five pages at most). Each page
     // names the next, so these follow one another, alongside everything else.
-    const positions = (async () => {
+    const positions = !has("location") ? Promise.resolve([]) : (async () => {
       const first = await get(`/locations?character_id=${cid}&limit=1000`);
       let all = first.items;
       for (let cursor = first.next_cursor, page = 1; cursor && page < 5; page++) {
@@ -1335,16 +1371,16 @@ async function load(quiet) {
     });
     const [snap, locs, events, act, ws, shots, groups, solos, pins, zones, [nm, near]] = await Promise.all([
       snapshot, positions,
-      get(`/events?character_id=${cid}&limit=100` + (state.filter === "activity" ? "&exclude_type=LOCATION_SAMPLE,PARTY_POSITIONS,GROUP_METER,GROUP_ENCOUNTER"
-        : state.filter === "all" ? "" : "&event_type=" + encodeURIComponent(state.filter))),
-      get(`/stats/activity?character_id=${cid}` + (since ? "&start_time=" + encodeURIComponent(since.toISOString()) : "")),
+      want("activity", () => get(`/events?character_id=${cid}&limit=100` + (state.filter === "activity" ? "&exclude_type=LOCATION_SAMPLE,PARTY_POSITIONS,GROUP_METER,GROUP_ENCOUNTER"
+        : state.filter === "all" ? "" : "&event_type=" + encodeURIComponent(state.filter))), { items: [], next_cursor: null }),
+      want("activity", () => get(`/stats/activity?character_id=${cid}` + (since ? "&start_time=" + encodeURIComponent(since.toISOString()) : "")), NO_ACTIVITY),
       world,
       // screenshots are only fetched while the album has a tab: hidden means not loaded either
-      TABS.some(t => t[0] === "album") ? optional(get(`/screenshots?character_id=${cid}&limit=120`), { total: 0, items: [] }) : { total: 0, items: [] },
-      optional(get(`/groups?character_id=${cid}`).then(r => r.items), []),
-      optional(get(`/characters/${encodeURIComponent(cid)}/solo?limit=30`).then(r => r.items), []),
-      world.then(w => w.available ? optional(get(`/world/quest-pins?character_id=${cid}`).then(r => r.items), []) : []),
-      world.then(w => w.available ? optional(get(`/world/quest-zones?character_id=${cid}`), null) : null),
+      TABS.some(t => t[0] === "album") && has("screenshots") ? optional(get(`/screenshots?character_id=${cid}&limit=120`), { total: 0, items: [] }) : { total: 0, items: [] },
+      want("groups", () => optional(get(`/groups?character_id=${cid}`).then(r => r.items), []), []),
+      want("groups", () => optional(get(`/characters/${encodeURIComponent(cid)}/solo?limit=30`).then(r => r.items), []), []),
+      world.then(w => w.available && has("quests") ? optional(get(`/world/quest-pins?character_id=${cid}`).then(r => r.items), []) : []),
+      world.then(w => w.available && has("quests") ? optional(get(`/world/quest-zones?character_id=${cid}`), null) : null),
       fromSnapshot,
     ]);
     state.locs = locs;
@@ -1505,8 +1541,9 @@ async function load(quiet) {
       el("div", { class: "maphead" }, el("h2", { text: "冒險摘要" }), rangeSel),
       el("div", { class: "summary" },
         el("div", { class: "tiles" }, tile(act.kills.toLocaleString(), "擊殺"), tile(act.xp.toLocaleString(), "獲得經驗"),
-          tile((net < 0 ? "−" : "+") + shortMoney(Math.abs(net)), "金錢淨額"), tile(act.items_looted.toLocaleString(), "拾取物品"),
-          act.loot_value ? tile(shortMoney(act.loot_value), "拾取物賣店價值") : null,
+          has("items") ? tile((net < 0 ? "−" : "+") + shortMoney(Math.abs(net)), "金錢淨額") : null,
+          has("items") ? tile(act.items_looted.toLocaleString(), "拾取物品") : null,
+          act.loot_value && has("items") ? tile(shortMoney(act.loot_value), "拾取物賣店價值") : null,
           tile(act.fights.toLocaleString(), "戰鬥場數"), tile(shortDuration(act.active_seconds), "活動時間")),
         el("div", null, el("div", { class: "small", text: "累積獲得經驗" }), xpCanvas, estimate)));
     requestAnimationFrame(() => { if (xpCanvas.clientWidth) drawXp(xpCanvas, act.xp_points); });
@@ -1713,8 +1750,11 @@ async function load(quiet) {
       zonesCard.append(el("div", { class: "small", text: "綠色是已完成，橘色是進行中，淺色是現在可接。只算你的種族與職業接得到、非節慶、非重複的任務。" }));
       fillZone();
     }
-    const layout = { home: [summaryCard, evCard, nearCard, monsterCard, itemCard, groupCard, soloCard], map: [mapCard, fpCard], quests: [questCard, zonesCard, zoneCard],
-      items: [equipCard, bagCard, bankCard], char: [charCard, attrCard, profCard, repCard], album: [albumCard], data: [W.ok ? searchCard() : null, statCard, foot] };
+    const only = (part, ...nodes) => has(part) ? nodes : [];
+    const layout = { home: [...only("activity", summaryCard, evCard), ...only("location", nearCard), ...only("activity", monsterCard), ...(has("items") ? only("activity", itemCard) : []),
+      ...only("groups", groupCard, soloCard)], map: only("location", mapCard, fpCard), quests: only("quests", questCard, zonesCard, zoneCard),
+      items: only("items", equipCard, bagCard, bankCard), char: [charCard, ...only("character", attrCard, profCard, repCard)],
+      album: only("screenshots", albumCard), data: [W.ok ? searchCard() : null, ...only("activity", statCard), foot] };
     const cards = [];
     for (const [name, nodes] of Object.entries(layout)) for (const n of nodes) if (n) { n.dataset.tab = name; cards.push(n); }
     const bar = el("nav", { class: "tabs", role: "tablist", "aria-label": "區塊" });
@@ -1725,7 +1765,9 @@ async function load(quiet) {
       for (const n of cards) n.classList.toggle("on", n.dataset.tab === name);
       if (state.redraw) state.redraw();              // canvases cannot draw while hidden
     };
-    for (const [name, label] of TABS) {
+    const shownTabs = TABS.filter(([name]) => layout[name] && layout[name].some(Boolean));
+    if (!shownTabs.some(([name]) => name === state.tab)) state.tab = shownTabs.length ? shownTabs[0][0] : "home";
+    for (const [name, label] of shownTabs) {
       const b = el("button", { type: "button", role: "tab", "data-tab": name, text: label });
       b.addEventListener("click", () => { showTab(name); bar.scrollIntoView({ block: "nearest" }); });
       bar.append(b);
@@ -1733,7 +1775,8 @@ async function load(quiet) {
     fpCard.classList.replace("c-half", "c-events");
     state.redraw = () => { if (xpCanvas.clientWidth) drawXp(xpCanvas, act.xp_points); if (window.onresize) window.onresize(); };
     const y = window.scrollY;
-    app.replaceChildren(hero, bar, el("div", { class: "grid" }, ...cards));
+    const note = state.parts ? el("div", { class: "card sharenote", text: "這是分享的檢視：擁有者只開放了部分內容。" }) : null;
+    app.replaceChildren(...[note, hero, bar, el("div", { class: "grid" }, ...cards)].filter(Boolean));
     showTab(state.tab);
     window.scrollTo(0, y);                           // a refresh must not move the page
   } catch (err) {
