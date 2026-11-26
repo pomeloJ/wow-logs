@@ -87,3 +87,53 @@ def test_party_page_gets_the_screenshots_of_its_session_only(client):
     assert client.get(f"/api/v1/shared/party/{tok}/shot/during?thumb=1").content == THUMB
     assert client.get(f"/api/v1/shared/party/{tok}/shot/after").status_code == 404      # outside the session
     assert client.get("/api/v1/shared/party/wrongwrong12/shot/during").status_code == 404
+
+
+def test_latest_screenshot_is_what_the_player_sees_now(make_client, tmp_path):
+    import sqlite3
+    client = make_client()
+    assert client.get("/api/v1/characters/c1/screenshots/latest", headers=READ).status_code == 404
+    now = datetime.now(timezone.utc)
+    for sid, ago in (("older", 600), ("newest", 20)):
+        r = client.put(f"/api/v1/screenshots/{sid}", content=JPEG, headers=AUTH, params={
+            "character_id": "c1", "taken_at": (now - timedelta(seconds=ago)).isoformat(), "width": 1920, "height": 1080})
+        assert r.status_code == 200
+    got = client.get("/api/v1/characters/c1/screenshots/latest", headers=READ).json()
+    assert got["id"] == "newest" and 15 <= got["age_seconds"] <= 60
+    assert got["image"] == "/api/v1/screenshots/newest/image"
+    assert client.get(got["image"], headers=READ).content == JPEG
+    img = client.get("/api/v1/characters/c1/screenshots/latest/image", headers=READ)
+    assert img.content == JPEG and img.headers["content-type"] == "image/jpeg" and img.headers["cache-control"] == "no-store"
+    assert 15 <= int(img.headers["x-age-seconds"]) <= 60
+    # an assistant can ask for a recent one only
+    assert client.get("/api/v1/characters/c1/screenshots/latest?max_age=5", headers=READ).status_code == 404
+    assert client.get("/api/v1/characters/c1/screenshots/latest/image?max_age=120", headers=READ).status_code == 200
+    # another person's token never sees it, even asking by the character's id
+    db = sqlite3.connect(tmp_path / "server.db")
+    with db:
+        db.execute("INSERT INTO upload_tokens VALUES ('person2', 'p2', NULL, '2026-11-26T00:00:00Z', NULL, NULL)")
+        db.execute("INSERT INTO token_characters VALUES ('c2', 'person2', '2026-11-26T00:00:00Z')")
+    theirs = {"Authorization": "Bearer person2"}
+    assert client.get("/api/v1/characters/c1/screenshots/latest", headers=theirs).status_code == 404
+    assert client.get("/api/v1/characters/c1/screenshots/latest/image", headers=theirs).status_code == 404
+    assert client.get("/api/v1/characters/c2/screenshots/latest", headers=theirs).status_code == 404     # theirs has none
+    assert client.get("/api/v1/characters/c1/screenshots/latest").status_code == 401
+
+
+def test_screenshot_upload_setting_is_one_per_token(make_client, tmp_path):
+    import sqlite3
+    from conftest import TOKEN
+    client = make_client()
+    assert client.get("/api/v1/sync-settings", headers=AUTH).json()["upload_screenshots"] is False     # off at first
+    assert client.put("/api/v1/sync-settings", headers=AUTH, json={"upload_screenshots": True}).json()["upload_screenshots"] is True
+    assert client.get("/api/v1/sync-settings", headers=AUTH).json()["upload_screenshots"] is True
+    # a person's token has a choice of its own
+    db = sqlite3.connect(tmp_path / "server.db")
+    with db:
+        db.execute("INSERT INTO upload_tokens VALUES ('person1', 'p', NULL, '2026-11-26T00:00:00Z', NULL, NULL)")
+    mine = {"Authorization": "Bearer person1"}
+    assert client.get("/api/v1/sync-settings", headers=mine).json()["upload_screenshots"] is False
+    client.put("/api/v1/sync-settings", headers=mine, json={"upload_screenshots": True})
+    client.put("/api/v1/sync-settings", headers=AUTH, json={"upload_screenshots": False})
+    assert client.get("/api/v1/sync-settings", headers=mine).json()["upload_screenshots"] is True
+    assert client.get("/api/v1/sync-settings", headers=READ).status_code == 403                         # a read token uploads nothing

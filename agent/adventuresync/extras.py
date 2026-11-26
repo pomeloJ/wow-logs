@@ -65,12 +65,36 @@ def scaled_jpeg(path: Path, width: int, quality: int) -> Tuple[bytes, int, int]:
         return out.getvalue(), img.width, img.height
 
 
+_sizes: Dict[str, int] = {}          # file -> its size when last looked at, to tell when the game is done writing it
+
+
 def process_screenshots(game_dir: Path, db: Any, queue, uploader) -> int:
-    """Upload screenshots not sent yet. Returns how many were uploaded."""
+    """Upload screenshots not sent yet. Returns how many were uploaded.
+
+    Only while the player has screenshot upload turned on (a setting kept on the server, see
+    Uploader.settings), and only screenshots taken after this program first saw it on: the
+    ones taken before, or while it was off, are noted as such and never sent.
+
+    Meant to be called every second or so: a file is taken as soon as the game has finished
+    writing it, which is when its size stays the same from one look to the next."""
     folder = game_dir / "Screenshots"
     character = latest_character(db)
     if not folder.is_dir() or not character:
         return 0
+    done = kv_get(queue, "screenshots", {})
+    new = [f for f in sorted(folder.iterdir()) if f.suffix.lower() in IMAGE_SUFFIXES and f.name not in done]
+    if not new:
+        return 0
+    if uploader is None or not uploader.screenshots_on(character):
+        for f in new:
+            done[f.name] = "off"
+        kv_set(queue, "screenshots", done)
+        kv_set(queue, "screenshots_since", None)    # turned on again later: from that moment
+        return 0
+    since = kv_get(queue, "screenshots_since")
+    if since is None:                               # just turned on: what is in the folder now stays here
+        since = time.time()
+        kv_set(queue, "screenshots_since", since)
     # Shots taken by /adventure mapshot are map backgrounds, not pictures for the album.
     map_times = []
     for e in (db.get("events") or []) if isinstance(db, dict) and isinstance(db.get("events"), list) else []:
@@ -79,13 +103,15 @@ def process_screenshots(game_dir: Path, db: Any, queue, uploader) -> int:
                 map_times.append(float(e["payload"]["local_ts"]))
             except (KeyError, TypeError, ValueError):
                 pass
-    done = kv_get(queue, "screenshots", {})
     sent = 0
-    for f in sorted(folder.iterdir()):
-        if f.suffix.lower() not in IMAGE_SUFFIXES or f.name in done:
-            continue
+    for f in new:
         st = f.stat()
-        if time.time() - st.st_mtime < 3:          # the game may still be writing it
+        if st.st_mtime < since - 2:
+            done[f.name] = "off"
+            continue
+        age = time.time() - st.st_mtime
+        last, _sizes[str(f)] = _sizes.get(str(f)), st.st_size
+        if age < 3 and not (age >= 1 and last == st.st_size):     # the game may still be writing it
             continue
         if any(-5 <= st.st_mtime - t <= 30 for t in map_times):
             done[f.name] = "map"
@@ -94,9 +120,12 @@ def process_screenshots(game_dir: Path, db: Any, queue, uploader) -> int:
             full, w, h = scaled_jpeg(f, FULL_WIDTH, 85)
             thumb, _, _ = scaled_jpeg(f, THUMB_WIDTH, 80)
         except Exception as e:
+            if age < 60:                            # perhaps not finished after all: look again shortly
+                continue
             done[f.name] = f"unreadable: {e}"
             log.warning("could not read screenshot %s: %s", f.name, e)
             continue
+        _sizes.pop(str(f), None)
         shot_id = re.sub(r"[^A-Za-z0-9_-]", "_", f.stem)[:80]
         state, detail = uploader.upload_screenshot(shot_id, character, iso(st.st_mtime), w, h, full, thumb)
         if state == "ok":

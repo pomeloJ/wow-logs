@@ -10,8 +10,11 @@ ME = "Player-1-0000ABCD"
 
 
 class FakeUploader:
-    def __init__(self, result=("ok", "")):
-        self.result, self.sent = result, []
+    def __init__(self, result=("ok", ""), shots=True):
+        self.result, self.sent, self.shots = result, [], shots
+
+    def screenshots_on(self, character_id=None):
+        return self.shots
 
     def upload_screenshot(self, shot_id, character_id, taken_at, width, height, full, thumb):
         self.sent.append((shot_id, character_id, taken_at, width, height, len(full) > len(thumb) > 0))
@@ -40,8 +43,14 @@ def shot(folder, name, age=60, size=(2560, 1440)):
 DB = {"characters": {"Player-OLD": {"captured_at": 10}, ME: {"captured_at": 20}}, "events": []}
 
 
+def on_long_ago(q):
+    """Screenshot upload was turned on before any of this test's pictures were taken."""
+    extras.kv_set(q, "screenshots_since", 0)
+    return q
+
+
 def test_screenshots_are_resized_uploaded_once_and_map_shots_skipped(tmp_path):
-    g, q, up = game(tmp_path), Queue(":memory:"), FakeUploader()
+    g, q, up = game(tmp_path), on_long_ago(Queue(":memory:")), FakeUploader()
     taken = shot(g, "WoWScrnShot_112226_200500.jpg")
     map_time = shot(g, "WoWScrnShot_112126_130356.jpg", age=600)
     shot(g, "fresh.jpg", age=0)                                  # still being written
@@ -57,7 +66,7 @@ def test_screenshots_are_resized_uploaded_once_and_map_shots_skipped(tmp_path):
 
 
 def test_screenshot_upload_failures(tmp_path):
-    g, q = game(tmp_path), Queue(":memory:")
+    g, q = game(tmp_path), on_long_ago(Queue(":memory:"))
     shot(g, "a.jpg")
     shot(g, "b.jpg")
     down = FakeUploader(("retry", "network"))
@@ -68,6 +77,41 @@ def test_screenshot_upload_failures(tmp_path):
     assert extras.process_screenshots(g, DB, q, FakeUploader()) == 0
     assert extras.kv_get(q, "screenshots")["broken.jpg"].startswith("unreadable")
     assert extras.process_screenshots(g, {}, q, FakeUploader()) == 0                    # no character known yet
+
+
+def test_screenshots_go_up_only_while_turned_on_and_never_the_ones_from_before(tmp_path):
+    g, q = game(tmp_path), Queue(":memory:")
+    shot(g, "before.jpg")
+    off = FakeUploader(shots=False)
+    assert extras.process_screenshots(g, DB, q, off) == 0 and not off.sent
+    assert extras.kv_get(q, "screenshots")["before.jpg"] == "off"
+    on = FakeUploader()
+    assert extras.process_screenshots(g, DB, q, on) == 0 and not on.sent              # taken while off: never sent
+    shot(g, "after.jpg", age=1.5)                                   # taken just now, after it was turned on
+    assert extras.process_screenshots(g, DB, q, on) == 0            # (first look: size noted)
+    assert extras.process_screenshots(g, DB, q, on) == 1 and on.sent[0][0] == "after"
+    # turned on for the first time with pictures already there (it was off while nothing ran): those stay here
+    (tmp_path / "other").mkdir()
+    g2, q2 = game(tmp_path / "other"), Queue(":memory:")
+    shot(g2, "old.jpg", age=3600)
+    first = FakeUploader()
+    assert extras.process_screenshots(g2, DB, q2, first) == 0 and extras.kv_get(q2, "screenshots")["old.jpg"] == "off"
+    shot(g2, "new.jpg", age=1.5)
+    assert extras.process_screenshots(g2, DB, q2, first) == 0
+    assert extras.process_screenshots(g2, DB, q2, first) == 1 and [x[0] for x in first.sent] == ["new"]
+    assert extras.process_screenshots(g, DB, q, None) == 0             # no uploader: nothing to do
+
+
+def test_a_new_screenshot_is_taken_as_soon_as_the_game_is_done_writing_it(tmp_path):
+    g, q, up = game(tmp_path), on_long_ago(Queue(":memory:")), FakeUploader()
+    shot(g, "new.jpg", age=1.5)
+    assert extras.process_screenshots(g, DB, q, up) == 0          # first look: its size is noted
+    assert extras.process_screenshots(g, DB, q, up) == 1          # same size a moment later: finished
+    path = g / "Screenshots" / "half.jpg"
+    path.write_bytes(b"\xff\xd8\xff" + b"0" * 100)              # half written: unreadable for now
+    os.utime(path, (time.time() - 5,) * 2)
+    assert extras.process_screenshots(g, DB, q, up) == 0
+    assert "half.jpg" not in extras.kv_get(q, "screenshots")      # looked at again later, not given up on
 
 
 # ---- combat log

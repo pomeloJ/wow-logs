@@ -3,6 +3,11 @@
 The agent uploads each screenshot with the time it was taken. Where it was taken and what
 was going on are not stored with it: they are looked up from the character's recorded
 events when it is shown, so a screenshot uploaded before its events still gets a place.
+
+Uploading them is the player's choice, off until they turn it on in the sync program. The
+choice is kept here, one per token, so every character and every computer that uploads with
+the same token follows it. The newest screenshot is what a tool (an AI voice assistant) reads
+to see what the player sees right now.
 """
 import json
 import os
@@ -12,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 MAX_BYTES = 8 * 1024 * 1024
@@ -22,6 +28,10 @@ MOMENTS = {"MOB_KILLED": lambda p: f"擊殺 {p.get('monster_name') or '怪物'}"
            "PLAYER_DIED": lambda p: "死亡", "INSTANCE_ENTERED": lambda p: f"進入副本 {p.get('name') or ''}",
            "ACHIEVEMENT_EARNED": lambda p: f"成就 {p.get('name') or ''}",
            "ENCOUNTER_END": lambda p: f"首領戰 {p.get('name') or ''}"}
+
+
+class SyncSettingsIn(BaseModel):
+    upload_screenshots: bool
 
 
 def _fmt(dt: datetime) -> str:
@@ -40,6 +50,10 @@ class Shots:
             conn.execute("CREATE TABLE IF NOT EXISTS screenshots (id TEXT PRIMARY KEY, character_id TEXT NOT NULL, "
                          "taken_at TEXT NOT NULL, width INTEGER, height INTEGER, uploaded_at TEXT NOT NULL)")
             conn.execute("CREATE INDEX IF NOT EXISTS ix_shots_char ON screenshots(character_id, taken_at)")
+            # what the sync program does, per token ("owner" for the server's own): one choice
+            # for every character and computer that uploads with it
+            conn.execute("CREATE TABLE IF NOT EXISTS sync_settings (token TEXT PRIMARY KEY, "
+                         "upload_screenshots INTEGER NOT NULL, updated_at TEXT NOT NULL)")
 
     def path(self, shot_id: str, thumb: bool = False) -> str:
         return os.path.join(self.folder, f"{shot_id}{'.t' if thumb else ''}.jpg")
@@ -169,6 +183,67 @@ def register(app, db, can_read, can_write, claim, folder: str) -> Shots:
         if not row or (scope is not None and row["character_id"] not in scope.all) or not os.path.isfile(path):
             raise HTTPException(404, "no such screenshot")
         return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+    def newest(character_id: str, scope: Optional[str], max_age: Optional[int]):
+        if scope is not None and character_id not in scope.all:
+            raise HTTPException(404, "no such character")
+        with db() as conn:
+            row = conn.execute("SELECT * FROM screenshots WHERE character_id=? ORDER BY taken_at DESC LIMIT 1",
+                               (character_id,)).fetchone()
+            if row is None:
+                raise HTTPException(404, "no screenshots for this character (the player has to turn on screenshot upload in the sync program)")
+            age = max(0, int((datetime.now(timezone.utc) - _dt(row["taken_at"])).total_seconds()))
+            if max_age is not None and age > max_age:
+                raise HTTPException(404, f"the newest screenshot is {age} seconds old, more than max_age")
+            return row, age, shots.describe(conn, row)
+
+    @app.get("/api/v1/characters/{character_id}/screenshots/latest")
+    def latest_screenshot(character_id: str, max_age: Optional[int] = Query(None, ge=0, description="seconds; older than this counts as none"),
+                          scope: Optional[str] = Depends(can_read)):
+        """The character's newest screenshot: what the player saw a moment ago.
+
+        When it was taken, `age_seconds` (how long ago), where and what was going on (`place`,
+        `moment`, from the recorded events), and `image`, the address of the picture itself
+        (JPEG, 1920 wide; `thumb` is a small one). With `max_age`, a screenshot older than that
+        is answered with 404, so an assistant never describes a scene that is long gone.
+
+        Screenshots arrive a few seconds after the player takes one (Print Screen in the game),
+        and only once the player has turned on screenshot upload in the sync program."""
+        row, age, out = newest(character_id, scope, max_age)
+        out.update(age_seconds=age, image=f"/api/v1/screenshots/{row['id']}/image", thumb=f"/api/v1/screenshots/{row['id']}/thumb")
+        return out
+
+    @app.get("/api/v1/characters/{character_id}/screenshots/latest/image",
+             responses={200: {"content": {"image/jpeg": {}}, "description": "the picture"}})
+    def latest_screenshot_image(character_id: str, max_age: Optional[int] = Query(None, ge=0, description="seconds; older than this counts as none"),
+                                scope: Optional[str] = Depends(can_read)):
+        """The character's newest screenshot itself, as JPEG: for a tool that looks at the picture
+        straight away. `X-Taken-At` and `X-Age-Seconds` say when it was taken. Same `max_age` as above."""
+        row, age, _ = newest(character_id, scope, max_age)
+        path = shots.path(row["id"])
+        if not os.path.isfile(path):
+            raise HTTPException(404, "no such screenshot")
+        return FileResponse(path, media_type="image/jpeg", headers={
+            "Cache-Control": "no-store", "X-Taken-At": row["taken_at"], "X-Age-Seconds": str(age)})
+
+    def settings_of(writer: Optional[str]) -> Dict[str, Any]:
+        with db() as conn:
+            row = conn.execute("SELECT upload_screenshots, updated_at FROM sync_settings WHERE token=?",
+                               (writer or "owner",)).fetchone()
+        return {"upload_screenshots": bool(row and row["upload_screenshots"]), "updated_at": row["updated_at"] if row else None}
+
+    @app.get("/api/v1/sync-settings", include_in_schema=False)
+    def get_sync_settings(writer: Optional[str] = Depends(can_write)):
+        """What the sync program should do for this token's characters. Asked for by the sync
+        program; everything is off until the player turns it on."""
+        return settings_of(writer)
+
+    @app.put("/api/v1/sync-settings", include_in_schema=False)
+    def put_sync_settings(body: SyncSettingsIn, writer: Optional[str] = Depends(can_write)):
+        with db() as conn:
+            conn.execute("INSERT OR REPLACE INTO sync_settings VALUES (?,?,?)",
+                         (writer or "owner", int(body.upload_screenshots), _fmt(datetime.now(timezone.utc))))
+        return settings_of(writer)
 
     @app.get("/api/v1/screenshots/{shot_id}/image")
     def get_image(shot_id: str, scope: Optional[str] = Depends(can_read)):

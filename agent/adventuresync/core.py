@@ -375,6 +375,50 @@ class Uploader:
         self.client = client or httpx.Client(base_url=cfg.url, timeout=cfg.timeout,
                                              headers={"User-Agent": USER_AGENT})
         self.headers = {"Authorization": f"Bearer {cfg.api_token}"} if cfg.api_token else {}
+        self._settings: Dict[str, Tuple[float, Dict[str, Any]]] = {}     # token -> (when asked, answer)
+
+    # ---- what the player chose, kept on the server per token (sync-settings)
+    SETTINGS_EVERY = 60.0           # seconds between asking again: a change made elsewhere arrives within a minute
+
+    def _token_of(self, character_id: Optional[str]) -> str:
+        return self.cfg.tokens.get(character_id or "") or self.cfg.api_token or next(iter(self.cfg.tokens.values()), "")
+
+    def settings(self, character_id: Optional[str] = None, fresh: bool = False) -> Dict[str, Any]:
+        """The server's settings for the token this character uploads with. Off when the server
+        cannot be asked and never answered before, or is from before these settings existed."""
+        token = self._token_of(character_id)
+        if not token:
+            return {"upload_screenshots": False}
+        held = self._settings.get(token)
+        if held and not fresh and time.monotonic() - held[0] < self.SETTINGS_EVERY:
+            return held[1]
+        try:
+            r = self.client.get("/api/v1/sync-settings", headers={"Authorization": f"Bearer {token}"})
+            answer = r.json() if r.status_code == 200 else {"upload_screenshots": False}
+        except (httpx.HTTPError, ValueError):
+            answer = held[1] if held else {"upload_screenshots": False}       # keep the last answer
+        self._settings[token] = (time.monotonic(), answer)
+        return answer
+
+    def screenshots_on(self, character_id: Optional[str] = None) -> bool:
+        return bool(self.settings(character_id).get("upload_screenshots"))
+
+    def set_screenshots(self, on: bool) -> List[str]:
+        """Turn screenshot upload on or off for every token this computer uses. Returns the
+        problems, one per token that could not be changed (empty: all done)."""
+        problems = []
+        for token in dict.fromkeys(t for t in [self.cfg.api_token, *self.cfg.tokens.values()] if t):
+            try:
+                r = self.client.put("/api/v1/sync-settings", json={"upload_screenshots": bool(on)},
+                                    headers={"Authorization": f"Bearer {token}"})
+            except httpx.HTTPError as e:
+                problems.append(f"連不上伺服器（{type(e).__name__}）")
+                continue
+            if r.status_code == 200:
+                self._settings[token] = (time.monotonic(), r.json())
+            else:
+                problems.append("伺服器還不支援這個設定，請先更新伺服器" if r.status_code in (404, 405) else _outcome(r)[1])
+        return problems
 
     def auth(self, character_id: Optional[str]) -> Optional[Dict[str, str]]:
         """The header to upload one character's data with: its own token, else the general one.
@@ -620,14 +664,26 @@ def process_map_shots(sv_path: Path, parsed: Dict[str, Any], queue: Queue,
 _last_db: Dict[Path, Any] = {}      # newest parsed data per SavedVariables file
 
 
+def scan_screenshots(queue: Queue, uploader: Optional["Uploader"]) -> int:
+    """New screenshots in every game folder seen so far. Cheap when there are none: meant to be
+    called every second or so, so that a screenshot reaches the server within a few seconds."""
+    from . import extras
+    sent = 0
+    for path, db in list(_last_db.items()):
+        try:
+            sent += extras.process_screenshots(path.parents[4], db, queue, uploader)
+        except Exception as e:      # never let a picture stop the sync
+            log.warning("screenshots failed: %s", e)
+    return sent
+
+
 def scan_extras(path: Path, queue: Queue, uploader: Optional["Uploader"]) -> None:
-    """Screenshots and the combat log, which change without the SavedVariables file changing."""
+    """The combat log, which changes without the SavedVariables file changing. (Screenshots
+    are looked for more often, by scan_screenshots.)"""
     from . import extras
     game_dir = path.parents[4]                      # <flavor>/WTF/Account/X/SavedVariables/file
     db = _last_db.get(path)
     try:
-        if uploader is not None:
-            extras.process_screenshots(game_dir, db, queue, uploader)
         n = extras.process_combat_logs(game_dir, db, queue, saved_at=path.stat().st_mtime, uploader=uploader)
         if n:
             log.info("combat log: %d events queued (damage and healing per minute, kills)", n)
@@ -661,9 +717,14 @@ def scan(cfg: Config, queue: Queue, seen: Dict[Path, Tuple[int, int]],
 
 def run_forever(cfg: Config, queue: Queue, uploader: Uploader, scan_every: float = 5) -> None:
     seen: Dict[Path, Tuple[int, int]] = {}
-    failures, next_sync = 0, 0.0
+    failures, next_sync, next_scan = 0, 0.0, 0.0
     log.info("agent started; server %s", cfg.url)
     while True:
+        scan_screenshots(queue, uploader)           # every second: a new screenshot goes up at once
+        if time.monotonic() < next_scan:
+            time.sleep(1)
+            continue
+        next_scan = time.monotonic() + scan_every
         scan(cfg, queue, seen, uploader)
         if time.monotonic() >= next_sync:
             res = uploader.sync_once()
@@ -676,4 +737,4 @@ def run_forever(cfg: Config, queue: Queue, uploader: Uploader, scan_every: float
                     log.info("synced: %s", res)
             delay = min(cfg.sync_interval * (2 ** min(failures, 5)), 600)
             next_sync = time.monotonic() + delay
-        time.sleep(scan_every)
+        time.sleep(1)

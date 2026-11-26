@@ -378,3 +378,20 @@ def test_the_addon_in_the_game_is_updated_from_the_server(tmp_path):
     with pytest.raises(RuntimeError):
         update.fetch_addon({"version": offered, "folders": [str(target)], "url": "x"}, Broken())
     assert (target / "AdventureCollector" / "Old.lua").is_file()                  # the old addon is still there
+
+
+def test_screenshot_setting_is_read_from_and_written_to_the_server(tmp_path):
+    from fastapi.testclient import TestClient
+    from app.main import create_app
+    from adventuresync.core import Config, Queue, Uploader
+    web = TestClient(create_app(db_path=str(tmp_path / "s.db"), write_token="w", read_token="r"))
+    up = Uploader(Config(url="http://hub", api_token="w"), Queue(":memory:"), client=web)
+    assert up.screenshots_on() is False
+    assert up.set_screenshots(True) == [] and up.screenshots_on() is True
+    # changed from another computer: noticed once the minute is up
+    other = Uploader(Config(url="http://hub", api_token="w"), Queue(":memory:"), client=web)
+    other.set_screenshots(False)
+    assert up.screenshots_on() is True and up.settings(fresh=True)["upload_screenshots"] is False
+    # a token the server refuses changes nothing, and says so
+    bad = Uploader(Config(url="http://hub", api_token="nope"), Queue(":memory:"), client=web)
+    assert bad.set_screenshots(True) and bad.screenshots_on() is False

@@ -119,6 +119,10 @@ limited token ever shows chat messages. `GET /api/v1/token` says what a token is
 * fighting alone: `/characters/{id}/solo` lists the stretches; their ids work with the same `/groups/{group_id}...` endpoints
 * combat outside a group: `/characters/{id}/combat/skills` and `/combat/analysis`
 * the game world (quests, monsters, items): everything under `/world`
+* what the player sees right now: `/characters/{id}/screenshots/latest` (where and when, with the picture's address)
+  or `/screenshots/latest/image` (the JPEG itself); `max_age` leaves out a stale one. There are
+  screenshots only when the player has turned on screenshot upload in the sync program; a new
+  one arrives a few seconds after it is taken in the game
 
 Times are UTC in ISO 8601. Positions are `map_id` with `x`, `y` in percent of that map.
 Damage figures exist only where the game's combat log was switched on while playing.

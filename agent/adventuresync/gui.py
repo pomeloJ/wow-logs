@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from . import __version__, extras, update
-from .core import (DB_GLOBAL, Config, Queue, Uploader, find_saved_variables, load_config, read_stable, save_config,
+from .core import (DB_GLOBAL, Config, Queue, Uploader, find_saved_variables, load_config, read_stable, save_config, scan_screenshots,
                    scan, wow_roots)
 
 CHECK_EVERY = 6 * 3600                               # seconds between looks for a newer version
@@ -127,7 +127,7 @@ class Worker(threading.Thread):
         store: Optional[Queue] = None
         up: Optional[Uploader] = None
         seen: Dict[Path, Any] = {}
-        next_scan = next_sync = next_check = 0.0
+        next_scan = next_sync = next_check = next_shots = next_settings = 0.0
         failures = 0
         while True:
             try:
@@ -175,14 +175,32 @@ class Worker(threading.Thread):
                 if what == "chars":                             # needs no server: just the game's files
                     self._say(characters=characters(cfg.wow_path if cfg else self._cfg.wow_path if self._cfg else ""))
                     continue
-                if cfg is not None and cfg != self._cfg:        # new settings: start afresh with them
+                if isinstance(cfg, Config) and cfg != self._cfg:     # new settings: start afresh with them
                     self._cfg, store, up, seen = cfg, Queue(cfg.db_path), None, {}
                     up = Uploader(cfg, store)
+                    next_settings = 0.0                                 # and ask the server what it holds for them
                 if self._cfg is None or store is None or up is None or not self._cfg.url \
                         or not (self._cfg.api_token or self._cfg.tokens):
                     if what != "tick":
                         self._say(message="請先填入伺服器網址與至少一個權杖並儲存。", ok=False)
                     continue
+                if what == "shots":                             # cfg is the box's new state
+                    problems = up.set_screenshots(bool(cfg))
+                    if problems:
+                        self._say(message="截圖上傳設定沒有改成：" + "、".join(dict.fromkeys(problems)), ok=False,
+                                  shots=up.screenshots_on())
+                    else:
+                        self._say(message=("已開啟截圖上傳：之後在遊戲裡截的圖會在幾秒內上傳"
+                                           + ("。" if self.auto else "（要先按「開始自動同步」）。")) if cfg
+                                  else "已關閉截圖上傳。", ok=True, shots=bool(cfg))
+                    next_settings = time.monotonic() + up.SETTINGS_EVERY
+                    continue
+                if what == "tick" and time.monotonic() >= next_settings:
+                    next_settings = time.monotonic() + up.SETTINGS_EVERY
+                    self._say(shots=up.screenshots_on())        # changed on another computer: shown here too
+                if self.auto and time.monotonic() >= next_shots:
+                    next_shots = time.monotonic() + 1           # a new screenshot goes up within seconds
+                    scan_screenshots(store, up)
                 if what == "test":
                     info = up.test_connection()
                     names = {c["id"]: c["name"] for c in characters(self._cfg.wow_path)}
@@ -440,6 +458,22 @@ def main(config: Optional[str] = None) -> int:
         shown[key].grid(row=row, column=1, sticky="w", pady=1)
     shown["auto"].configure(text="未啟動")
 
+    # Kept on the server, one choice per token: every character and computer using the same
+    # token follows it. Off until the player turns it on; shown as the server holds it.
+    shots_var = tk.BooleanVar(value=False)
+
+    def shots_changed() -> None:
+        now = save(quiet=True)
+        if now is None:
+            shots_var.set(not shots_var.get())
+            return
+        note("處理中…")
+        worker.ask("settings", now)                     # the worker uses these settings from now on
+        worker.ask("shots", shots_var.get())
+
+    ttk.Checkbutton(status, text="上傳遊戲截圖（讓 AI 語音看得到你的畫面；用同一個權杖的角色和電腦都跟著這個設定）",
+                    variable=shots_var, command=shots_changed).grid(row=9, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
     ttk.Label(frame, text="紀錄").grid(row=8, column=0, sticky="w", pady=(12, 2))
     box = tk.Text(frame, height=8, wrap="word", state="disabled")
     box.grid(row=9, column=0, columnspan=3, sticky="nsew")
@@ -481,6 +515,8 @@ def main(config: Optional[str] = None) -> int:
                     opened(r["fetched"])
                 if "waiting" in r:
                     shown["waiting"].configure(text=(r["waiting"] + "：沒有可用的權杖，資料先留在這台電腦") if r["waiting"] else "沒有")
+                if "shots" in r:
+                    shots_var.set(bool(r["shots"]))
                 if "connected" in r:
                     shown["connected"].configure(text="連線正常" if r["connected"] else "連不上或權杖不對")
                 if "synced_at" in r or "checked_at" in r:
