@@ -158,6 +158,8 @@ def create_app(
     write_token: Optional[str] = None,
     read_token: Optional[str] = None,
     world_db: Optional[str] = None,
+    google: Optional[Dict[str, str]] = None,
+    google_exchange=None,
 ) -> FastAPI:
     db_path = db_path or os.environ.get("AH_DB_PATH", "data/adventure.db")
     write_token = write_token or os.environ.get("AH_API_TOKEN", "")
@@ -650,6 +652,10 @@ def create_app(
     combat.register(app, db, can_write, claim)
     from . import admin
     admin.register(app, db)
+    from . import auth
+    # Who is at the browser, by their Google account (None when not signed in). Not yet used to
+    # grant anything: what an account may see comes when accounts are tied to people's tokens.
+    app.state.account_of = auth.register(app, db, google, google_exchange)
     shots = shots_api.register(app, db, can_read, can_write, claim,
                                os.path.join(os.path.dirname(os.path.abspath(db_path)), "shots"))
     groups.register(app, db, can_read, activity, maps_dir, world, shots)

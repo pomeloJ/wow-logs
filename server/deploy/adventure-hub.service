@@ -14,6 +14,9 @@ PrivateTmp=true
 ReadWritePaths=/opt/adventure-hub/data
 WorkingDirectory=/opt/adventure-hub
 EnvironmentFile=/opt/adventure-hub/.env
+# Google sign-in settings, including its secret. Outside /opt/adventure-hub so that deploying
+# never overwrites or deletes it; the "-" means the service starts without it too.
+EnvironmentFile=-/etc/adventure-hub/google.env
 ExecStart=/opt/adventure-hub/.venv/bin/uvicorn --factory app.main:create_app --host 0.0.0.0 --port ${AH_PORT}
 Restart=on-failure
 RestartSec=3
