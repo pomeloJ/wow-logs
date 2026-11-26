@@ -87,7 +87,23 @@ def register(app, db) -> None:
                 t["characters"] = [{"id": r["character_id"], "name": r["name"]} for r in conn.execute(
                     "SELECT o.character_id, c.name FROM token_characters o LEFT JOIN characters c ON c.id=o.character_id "
                     "WHERE o.token=? ORDER BY o.claimed_at", (t["token"],))]
-        return {"characters": chars, "tokens": tokens}
+            # Google accounts that signed in to the pages, and what each is bound to
+            google = [dict(r) for r in conn.execute(
+                "SELECT a.sub, a.email, a.name, a.last_seen, l.kind, l.token, t.label token_label FROM google_accounts a "
+                "LEFT JOIN google_links l ON l.sub=a.sub LEFT JOIN upload_tokens t ON t.token=l.token "
+                "ORDER BY a.last_seen DESC")]
+            for g in google:                    # a deleted personal token binds to nothing
+                if g["kind"] == "personal" and g["token_label"] is None and not conn.execute(
+                        "SELECT 1 FROM upload_tokens WHERE token=?", (g["token"],)).fetchone():
+                    g["kind"] = g["token"] = None
+        return {"characters": chars, "tokens": tokens, "google": google}
+
+    @app.delete("/api/v1/admin/google/{sub}", include_in_schema=False, dependencies=only)
+    def unbind_google(sub: str):
+        """The account stays able to sign in, but sees nothing until it is bound again."""
+        with db() as conn:
+            conn.execute("DELETE FROM google_links WHERE sub=?", (sub,))
+        return {"success": True}
 
     @app.post("/api/v1/admin/tokens", include_in_schema=False, dependencies=only)
     def new_token(body: NewToken):
@@ -124,4 +140,5 @@ def register(app, db) -> None:
             if not conn.execute("DELETE FROM upload_tokens WHERE token=?", (token,)).rowcount:
                 raise HTTPException(404, "no such token")
             conn.execute("DELETE FROM token_characters WHERE token=?", (token,))
+            conn.execute("DELETE FROM google_links WHERE token=?", (token,))      # its Google account loses access too
         return {"success": True}

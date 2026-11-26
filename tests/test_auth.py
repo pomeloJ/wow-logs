@@ -53,7 +53,7 @@ def good_claims(asked, **change):
 
 def test_signing_in_and_out(site):
     web, google = site
-    assert web.get("/api/v1/me").json() == {"google": True, "account": None}
+    assert web.get("/api/v1/me").json() == {"google": True, "account": None, "link": None}
     asked = begin(web, "/#map")
     assert asked["redirect_uri"] == "http://testserver/auth/google/callback" and asked["client_id"] == GOOGLE["client_id"]
     assert asked["scope"] == "openid email profile" and asked["code_challenge_method"] == "S256"
@@ -137,6 +137,92 @@ def test_off_without_settings(tmp_path):
     from app.main import create_app
     for google in ({}, {**GOOGLE, "client_secret": "PASTE_CLIENT_SECRET_HERE"}):
         web = TestClient(create_app(str(tmp_path / "off.db"), TOKEN, READ_TOKEN, google=google), follow_redirects=False)
-        assert web.get("/api/v1/me").json() == {"google": False, "account": None}
+        assert web.get("/api/v1/me").json() == {"google": False, "account": None, "link": None}
         assert web.get("/auth/google/start").status_code == 404
         assert web.get("/auth/google/callback", params={"state": "x", "code": "y"}).status_code == 404
+
+
+# ---------------------------------------------------------------- binding an account to a token
+def signed_in(tmp_path, client=("192.168.1.5", 50000)):
+    """A site on the LAN (so /admin answers), signed in with Google, not yet bound."""
+    from fastapi.testclient import TestClient
+    from app.main import create_app
+    google = FakeGoogle()
+    app = create_app(str(tmp_path / "b.db"), TOKEN, READ_TOKEN, google=dict(GOOGLE), google_exchange=google)
+    web = TestClient(app, follow_redirects=False, client=client)
+    asked = begin(web)
+    google.claims = good_claims(asked)
+    assert web.get("/auth/google/callback", params={"state": asked["state"], "code": "c"}).status_code == 302
+    return web
+
+
+def upload(web, token, cid):
+    r = web.put(f"/api/v1/characters/{cid}/snapshot", headers={"Authorization": f"Bearer {token}"}, json={
+        "captured_at": "2026-11-21T10:00:00+08:00", "device_id": "pc", "data": {"name": cid, "realm": "R", "class": "DRUID", "level": 20}})
+    assert r.status_code == 200, r.text
+
+
+def seen(web, **headers):
+    r = web.get("/api/v1/characters", headers=headers)
+    return sorted(c["id"] for c in r.json()["items"]) if r.status_code == 200 else r.status_code
+
+
+def test_bound_to_a_persons_token_sees_that_persons_characters(tmp_path):
+    web = signed_in(tmp_path)
+    mine = web.post("/api/v1/admin/tokens", json={"label": "小明"}).json()["token"]
+    upload(web, mine, "char-mine")
+    upload(web, TOKEN, "char-other")                     # someone else's, uploaded with the owner's token
+    assert seen(web) == 401                              # signed in, not bound: nothing
+    assert web.get("/api/v1/me").json()["link"] is None
+    assert web.post("/api/v1/me/link", json={"token": "wrong"}).status_code == 403
+    r = web.post("/api/v1/me/link", json={"token": f"  {mine} "})
+    assert r.status_code == 200 and r.json()["link"] == {"kind": "personal", "characters": ["char-mine"]}
+    assert seen(web) == ["char-mine"]
+    assert web.get("/api/v1/characters/char-other/snapshot").status_code in (403, 404)
+    # a token sent along wins over the sign-in
+    assert seen(web, Authorization=f"Bearer {READ_TOKEN}") == ["char-mine", "char-other"]
+    assert seen(web, Authorization="Bearer wrong") == 403
+    # signed in, the browser still only reads: uploading takes a token
+    assert web.post("/api/v1/events/batch", json={"schema_version": 1, "device_id": "pc", "events": []}).status_code == 401
+    # the admin page shows it, and can undo it
+    listed, = web.get("/api/v1/admin/overview").json()["google"]
+    assert (listed["email"], listed["kind"], listed["token_label"]) == ("player@gmail.com", "personal", "小明")
+    assert web.delete(f"/api/v1/admin/google/{listed['sub']}").status_code == 200
+    assert seen(web) == 401 and web.get("/api/v1/admin/overview").json()["google"][0]["kind"] is None
+
+
+def test_bound_to_the_servers_own_token_sees_everything(tmp_path):
+    web = signed_in(tmp_path)
+    upload(web, TOKEN, "char-a")
+    for server_token in (READ_TOKEN, TOKEN):
+        r = web.post("/api/v1/me/link", json={"token": server_token})
+        assert r.json()["link"] == {"kind": "all", "characters": []}
+        assert seen(web) == ["char-a"]
+    import sqlite3                                      # the server's own tokens are never stored
+    stored = [r[0] for r in sqlite3.connect(tmp_path / "b.db").execute("SELECT token FROM google_links")]
+    assert stored == [None]
+    assert web.post("/api/v1/me/unlink").json()["link"] is None and seen(web) == 401
+
+
+def test_deleting_the_token_cuts_off_the_account(tmp_path):
+    web = signed_in(tmp_path)
+    mine = web.post("/api/v1/admin/tokens", json={"label": "小明"}).json()["token"]
+    upload(web, mine, "char-mine")
+    web.post("/api/v1/me/link", json={"token": mine})
+    assert seen(web) == ["char-mine"]
+    assert web.delete(f"/api/v1/admin/tokens/{mine}").status_code == 200
+    assert seen(web) == 401 and web.get("/api/v1/me").json()["link"] is None
+
+
+def test_what_cannot_be_bound(tmp_path):
+    import sqlite3
+    web = signed_in(tmp_path)
+    upload(web, TOKEN, "char-a")
+    db = sqlite3.connect(tmp_path / "b.db")
+    with db:
+        db.execute("INSERT INTO voice_tokens VALUES ('voicecode1', 'char-a', '2026-11-26T00:00:00Z')")
+    assert web.post("/api/v1/me/link", json={"token": "voicecode1"}).status_code == 400     # the voice page's code
+    assert web.post("/api/v1/me/link", json={"token": ""}).status_code == 422
+    web.post("/auth/logout")
+    assert web.post("/api/v1/me/link", json={"token": READ_TOKEN}).status_code == 401       # signed out
+    assert seen(web) == 401

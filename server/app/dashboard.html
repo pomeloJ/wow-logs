@@ -212,6 +212,7 @@ button.link { background: none; color: var(--muted); padding: 0; font-size: 13px
 .google { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
 .gbtn { display: inline-block; padding: 7px 16px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); text-decoration: none; }
 .gbtn:hover { border-color: var(--accent); }
+.beta { margin-left: 8px; padding: 1px 6px; border-radius: 4px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 600; letter-spacing: .04em; vertical-align: 1px; }
 </style>
 </head>
 <body>
@@ -255,6 +256,9 @@ const TABS = [["home", "總覽"], ["map", "地圖"], ["quests", "任務"], ["ite
 const TAB_KEY = "adventure-hub-tab";
 
 let token = "";
+// Signed in with a Google account that is bound to a token: requests carry the sign-in cookie
+// instead of a token. A token, when there is one, always wins.
+let session = false;
 // The token arrives after the "#": written out as #token=abc, or just #abc. Either replaces
 // the one this browser remembered, so a link always shows what that link is for.
 function takeToken() {
@@ -284,8 +288,13 @@ function el(tag, attrs, ...kids) {
   return n;
 }
 
+const auth = () => token ? { Authorization: "Bearer " + token } : {};
+async function whoAmI() {
+  try { const r = await fetch(API + "/me"); return r.ok ? await r.json() : null; } catch (e) { return null; }
+}
+
 async function get(path) {
-  const r = await fetch(API + path, { headers: { Authorization: "Bearer " + token } });
+  const r = await fetch(API + path, { headers: auth() });
   if (r.status === 401 || r.status === 403) throw new Error("auth");
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
@@ -306,50 +315,72 @@ function money(c) {
 }
 const pos = d => (typeof d.x === "number" && typeof d.y === "number") ? `${d.x.toFixed(1)}, ${d.y.toFixed(1)}` : "—";
 
-function showLogin(failed) {
+// me: what /api/v1/me said, when already asked. Signed in with Google but not bound yet, the
+// form binds the account instead: the token is pasted once, and Google sign-in is enough after.
+function showLogin(failed, me) {
+  session = false;
   document.getElementById("logout").hidden = true;
   document.getElementById("sync").textContent = "";
+  const binding = !!(me && me.account && !me.link);
   const input = el("input", { type: "password", placeholder: "Token", autocomplete: "off" });
+  const note = el("div", { class: "detail", text: binding
+    ? `已用 Google 帳號 ${me.account.email} 登入。第一次使用請貼上你的 Token（同步程式裡的那串）綁定這個帳號，之後只要用 Google 登入就好。`
+    : failed ? "Token 無效，請重新輸入。" : "請貼上唯讀 Token（只會存在這個瀏覽器）。" });
   const form = el("form", { class: "card login" },
-    el("h2", { text: "需要存取 Token" }),
-    el("div", { class: "detail", text: failed ? "Token 無效，請重新輸入。" : "請貼上唯讀 Token（只會存在這個瀏覽器）。" }),
-    input, el("button", { text: "進入" }));
-  form.addEventListener("submit", e => {
+    el("h2", { text: binding ? "綁定 Google 帳號" : "需要存取 Token" }), note,
+    input, el("button", { text: binding ? "綁定並進入" : "進入" }));
+  form.addEventListener("submit", async e => {
     e.preventDefault();
-    token = input.value.trim();
-    try { localStorage.setItem(KEY, token); } catch (err) { /* keep in memory only */ }
+    const typed = input.value.trim();
+    if (!typed) return;
+    if (binding) {
+      let r = null;
+      try { r = await fetch(API + "/me/link", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: typed }) }); } catch (err) { /* below */ }
+      if (!r || !r.ok) {
+        note.textContent = !r ? "連不上伺服器，請稍後再試。" : r.status === 400 ? "這是語音頁面用的角色代碼，請貼同步程式裡的 Token。"
+          : r.status === 401 ? "Google 登入已過期，請重新整理頁面再登入一次。" : "Token 無效，請重新輸入。";
+        return;
+      }
+      token = "";
+      session = true;
+      try { localStorage.removeItem(KEY); } catch (err) { /* nothing stored */ }
+    } else {
+      token = typed;
+      try { localStorage.setItem(KEY, token); } catch (err) { /* keep in memory only */ }
+    }
     app.replaceChildren(el("div", { class: "loading", role: "status" }, el("i"), "載入冒險紀錄中…"));
     load();
   });
   app.replaceChildren(form);
-  googleBox(form);
+  googleBox(form, me);
 }
 
 // Signing in with Google, when the server has it set up. It tells the site who is at the
 // browser; what a Google account may see comes later (tied to a person's token), so the
 // token is still what opens the page for now.
-async function googleBox(form) {
-  let me = null;
-  try { const r = await fetch(API + "/me"); if (r.ok) me = await r.json(); } catch (e) { /* offered when known */ }
+async function googleBox(form, me) {
+  if (me === undefined) me = await whoAmI();
   if (!me || !me.google || !form.isConnected) return;
   const box = el("div", { class: "detail google" });
   if (me.account) {
     const out = el("button", { type: "button", class: "link", text: "登出 Google" });
     out.addEventListener("click", async () => {
       try { await fetch("/auth/logout", { method: "POST" }); } catch (e) { /* the cookie lapses by itself */ }
-      showLogin(false);
+      showLogin(false, await whoAmI());
     });
-    box.append(`已用 Google 帳號 ${me.account.email} 登入。帳號與角色的綁定還沒開放，目前仍請貼上 Token。`, " ", out);
+    box.append(me.link ? `已用 Google 帳號 ${me.account.email} 登入。` : "不想綁定的話，可以登出 Google，改用 Token 進入。", " ", out);
   } else {
-    box.append(el("a", { class: "gbtn", href: "/auth/google/start?next=/", text: "用 Google 登入" }));
+    box.append(el("a", { class: "gbtn", href: "/auth/google/start?next=/" }, "用 Google 登入", el("span", { class: "beta", text: "BETA" })));
   }
   form.append(box);
 }
 
-document.getElementById("logout").addEventListener("click", () => {
+document.getElementById("logout").addEventListener("click", async () => {
   try { localStorage.removeItem(KEY); } catch (e) { /* nothing stored */ }
   token = "";
-  showLogin(false);
+  // signed in with Google: signing out of the page signs out of that too
+  if (session) try { await fetch("/auth/logout", { method: "POST" }); } catch (e) { /* the cookie lapses by itself */ }
+  showLogin(false, await whoAmI());
 });
 
 // ---- world database (static game data): optional, the page works without it
@@ -595,7 +626,7 @@ function lightbox(items, index, srcOf, captionOf) {
 const pictureCache = new Map();
 function picture(path) {
   if (!pictureCache.has(path)) {
-    pictureCache.set(path, fetch(API + path, { headers: { Authorization: "Bearer " + token } })
+    pictureCache.set(path, fetch(API + path, { headers: auth() })
       .then(r => r.ok ? r.blob() : Promise.reject(new Error("HTTP " + r.status))).then(b => URL.createObjectURL(b)).catch(() => null));
   }
   return pictureCache.get(path);
@@ -702,7 +733,7 @@ function mapImage(id) {
   if (!meta) return Promise.resolve(null);
   const key = id + ":" + meta.updated_at;
   if (!imageCache.has(key)) {
-    imageCache.set(key, fetch(`${API}/maps/${id}/image`, { headers: { Authorization: "Bearer " + token } })
+    imageCache.set(key, fetch(`${API}/maps/${id}/image`, { headers: auth() })
       .then(r => r.ok ? r.blob() : Promise.reject(new Error("HTTP " + r.status)))
       .then(blob => new Promise((resolve, reject) => {
         const img = new Image();
@@ -1123,7 +1154,11 @@ function renderMap(card) {
 
 // quiet = background refresh: no indicator, so the page does not flicker every 30 seconds.
 async function load(quiet) {
-  if (!token) return showLogin(false);
+  if (!token && !session) {
+    const me = await whoAmI();
+    if (!(me && me.link)) return showLogin(false, me);
+    session = true;
+  }
   const busy = document.getElementById("busy");
   if (!quiet) busy.classList.add("on");
   const slow = setTimeout(() => { const n = document.getElementById("slow"); if (n) n.hidden = false; }, 4000);
@@ -1576,7 +1611,7 @@ async function load(quiet) {
     showTab(state.tab);
     window.scrollTo(0, y);                           // a refresh must not move the page
   } catch (err) {
-    if (err.message === "auth") return showLogin(true);
+    if (err.message === "auth") return showLogin(!session, await whoAmI());   // a session that lapsed is no wrong token
     const again = el("button", { type: "button", text: "重試" });
     again.addEventListener("click", () => { app.replaceChildren(el("div", { class: "loading", role: "status" }, el("i"), "重新載入中…")); load(); });
     app.replaceChildren(el("div", { class: "card msg" }, "無法讀取資料：" + (err.message === "Failed to fetch" ? "連不上伺服器" : err.message), el("div", null, again)));
@@ -1591,7 +1626,7 @@ window.addEventListener("resize", () => { if (state.redraw) state.redraw(); });
 // Background refresh, but never while someone is typing, choosing from a menu or watching the route play.
 setInterval(() => {
   const busy = document.activeElement && ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName);
-  if (token && !document.hidden && !R.playing && !busy) load(true);
+  if ((token || session) && !document.hidden && !R.playing && !busy) load(true);
 }, 30000);
 </script>
 </body>

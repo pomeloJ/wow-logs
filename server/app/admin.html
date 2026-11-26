@@ -57,6 +57,13 @@ code.token { font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monos
     <h2>角色</h2>
     <div class="scroll" id="chars"></div>
   </section>
+
+  <section>
+    <h2>Google 帳號 <small>BETA</small></h2>
+    <p class="hint">用 Google 登入過網頁的帳號。第一次登入時本人貼上自己的權杖就會綁定，之後只要 Google 登入就能看那個權杖名下的角色；
+      綁到唯讀或主權杖的帳號看得到全部角色。用 Google 登入只能看，不能上傳。刪除權杖時，綁在它上面的帳號也會一起失去存取。</p>
+    <div class="scroll" id="google"></div>
+  </section>
 </main>
 <script>
 "use strict";
@@ -93,6 +100,13 @@ function draw(d) {
     return el("tr", null, el("td", { text: c.name || c.id }), el("td", { text: CLASS[c.class] || c.class || "—" }), el("td", { text: c.level || "—" }), el("td", { text: (c.events || 0).toLocaleString() }),
       el("td", { text: when(c.updated_at) }), el("td", null, give), el("td", { class: "free", text: c.token ? "" : "由主權杖上傳，或等人認領" }));
   })) : el("div", { class: "empty", text: "還沒有任何角色上傳過資料。" }));
+  const bound = g => g.kind === "all" ? "全部角色（唯讀或主權杖）" : g.kind === "personal" ? (g.token_label || g.token) : "";
+  $("google").replaceChildren((d.google || []).length ? table(["帳號", "名字", "綁定到", "最後登入", ""], d.google.map(g =>
+    el("tr", null, el("td", { text: g.email }), el("td", { text: g.name || "—" }),
+      el("td", { class: g.kind ? "" : "free", text: g.kind ? bound(g) : "還沒綁定（看不到任何資料）" }), el("td", { text: when(g.last_seen) }),
+      el("td", null, g.kind ? act("解除綁定", "danger", () => confirm(`解除 ${g.email} 的綁定？\n他還能用 Google 登入，但要重新貼權杖才看得到資料。`)
+        && api(`/google/${encodeURIComponent(g.sub)}`, "DELETE").then(load)) : null))))
+    : el("div", { class: "empty", text: "還沒有人用 Google 登入過。" }));
 }
 const load = () => api("/overview").then(draw, e => say("讀取失敗：" + e.message, "bad"));
 function make(characterId) {

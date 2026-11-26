@@ -227,6 +227,21 @@ def create_app(
                 raise HTTPException(409, "this character belongs to another token")
             conn.execute("UPDATE upload_tokens SET last_used_at=? WHERE token=?", (now_iso(), writer))
 
+    # Set once the sign-in routes are added (below): what a request's signed-in Google account
+    # is bound to, or None.
+    signed_in: Dict[str, Any] = {"link": lambda request: None}
+
+    def judge(t: str) -> Optional[str]:
+        """What a token pasted to bind a Google account is."""
+        if _eq(t, write_token) or _eq(t, read_token):
+            return "all"
+        with db() as conn:
+            if conn.execute("SELECT 1 FROM upload_tokens WHERE token=?", (t,)).fetchone():
+                return "personal"
+            if conn.execute("SELECT 1 FROM voice_tokens WHERE token=?", (t,)).fetchone():
+                return "voice"
+        return None
+
     def can_read(request: Request, authorization: Optional[str] = Header(None)) -> Optional[Scope]:
         """Returns None for full read access, or what a limited token may see.
 
@@ -234,8 +249,19 @@ def create_app(
         token shows every character it has uploaded: the result is the one being asked about
         (so the checks written for a single character keep working) and `.all` holds them all.
         Neither ever shows chat messages.
+
+        Without a token, a browser signed in with a Google account sees what the token that
+        account is bound to sees (see auth.py). A token sent along always wins.
         """
-        t = _token(authorization)
+        if authorization is None:
+            link = signed_in["link"](request)
+            if link is None:
+                raise HTTPException(401, "missing bearer token")
+            if link["kind"] == "all":
+                return None
+            t = link["token"]
+        else:
+            t = _token(authorization)
         if _eq(t, write_token) or _eq(t, read_token):
             return None
         with db() as conn:
@@ -653,9 +679,8 @@ def create_app(
     from . import admin
     admin.register(app, db)
     from . import auth
-    # Who is at the browser, by their Google account (None when not signed in). Not yet used to
-    # grant anything: what an account may see comes when accounts are tied to people's tokens.
-    app.state.account_of = auth.register(app, db, google, google_exchange)
+    # Who is at the browser, by their Google account, and the token it is bound to.
+    app.state.account_of, signed_in["link"] = auth.register(app, db, google, google_exchange, judge)
     shots = shots_api.register(app, db, can_read, can_write, claim,
                                os.path.join(os.path.dirname(os.path.abspath(db_path)), "shots"))
     groups.register(app, db, can_read, activity, maps_dir, world, shots)

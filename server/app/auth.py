@@ -1,8 +1,10 @@
 """Signing in to the web pages with a Google account.
 
-This part only finds out who is at the browser: which Google account, by its address and name.
-What that account may see is decided elsewhere, later (an account is to be tied to a person's
-upload token). The sync program and the share links never sign in; they keep using tokens.
+It finds out who is at the browser (which Google account), and lets that account be bound,
+once, to a token: the person pastes their own upload token and from then on signing in is
+enough. Bound to a person's token, the account sees that person's characters; bound to the
+server's read or owner token, every character. A signed-in browser only ever reads: uploading
+still takes a token, so the sync program and the share links are untouched by any of this.
 
 The flow is Google's "authorization code" one, run entirely by the server:
 
@@ -31,6 +33,7 @@ from urllib.parse import urlencode, urlsplit
 
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from pydantic import BaseModel, Field
 
 AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -52,6 +55,10 @@ CREATE TABLE IF NOT EXISTS google_pending (
 );
 CREATE TABLE IF NOT EXISTS web_sessions (
     id_hash TEXT PRIMARY KEY, sub TEXT NOT NULL, created_at TEXT NOT NULL, expires REAL NOT NULL
+);
+-- kind 'personal': sees what that upload token sees (token holds it); kind 'all': every character.
+CREATE TABLE IF NOT EXISTS google_links (
+    sub TEXT PRIMARY KEY, kind TEXT NOT NULL, token TEXT, linked_at TEXT NOT NULL
 );
 """
 
@@ -89,6 +96,10 @@ def claims_of(id_token: str) -> Dict[str, Any]:
         raise ValueError("unreadable ID token") from e
 
 
+class LinkIn(BaseModel):
+    token: str = Field(min_length=1, max_length=200)
+
+
 def _hash(session_id: str) -> str:
     return hashlib.sha256(session_id.encode()).hexdigest()
 
@@ -114,8 +125,11 @@ def _page(title: str, text: str, status: int) -> HTMLResponse:
 
 
 def register(app, db, settings: Optional[Dict[str, str]] = None,
-             exchange: Optional[Callable[[Dict[str, str], str, str], Dict[str, Any]]] = None) -> Callable[[Request], Optional[Dict[str, Any]]]:
-    """Adds the sign-in routes. Returns account_of(request): the signed-in Google account, or None."""
+             exchange: Optional[Callable[[Dict[str, str], str, str], Dict[str, Any]]] = None,
+             judge: Optional[Callable[[str], Optional[str]]] = None):
+    """Adds the sign-in routes. judge(token) says what a pasted token is: "all", "personal",
+    "voice" or None. Returns (account_of, link_of): for a request, the signed-in Google account,
+    and what it is bound to ({"kind", "token"}); None for either when there is none."""
     s = settings if settings is not None else settings_from_env()
     trade = exchange or exchange_code
     secure = s.get("public_url", "").startswith("https://")
@@ -131,13 +145,66 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
                                "WHERE w.id_hash=? AND w.expires>?", (_hash(sid), time.time())).fetchone()
         return dict(row) if row else None
 
+    def link_of(request: Request) -> Optional[Dict[str, Any]]:
+        """What the signed-in account is bound to. A personal token that has since been deleted
+        binds to nothing: the account is asked to bind again."""
+        sid = request.cookies.get(SESSION_COOKIE)
+        if not sid:
+            return None
+        with db() as conn:
+            row = conn.execute(
+                "SELECT l.kind, l.token FROM web_sessions w JOIN google_links l ON l.sub=w.sub "
+                "LEFT JOIN upload_tokens t ON t.token=l.token "
+                "WHERE w.id_hash=? AND w.expires>? AND (l.kind='all' OR t.token IS NOT NULL)", (_hash(sid), time.time())).fetchone()
+        return dict(row) if row else None
+
+    def described(request: Request) -> Dict[str, Any]:
+        acct = account_of(request)
+        link = link_of(request) if acct else None
+        if link:
+            names = []
+            if link["kind"] == "personal":
+                with db() as conn:
+                    names = [r["name"] or r["character_id"] for r in conn.execute(
+                        "SELECT o.character_id, c.name FROM token_characters o LEFT JOIN characters c ON c.id=o.character_id "
+                        "WHERE o.token=? ORDER BY o.claimed_at", (link["token"],))]
+            link = {"kind": link["kind"], "characters": names}
+        return {"google": enabled(s), "account": {k: acct[k] for k in ("email", "name", "picture")} if acct else None,
+                "link": link}
+
     @app.get("/api/v1/me", include_in_schema=False)
     def me(request: Request):
-        """For the pages: whether Google sign-in is on, and who is signed in. Needs no token."""
+        """For the pages: whether Google sign-in is on, who is signed in, and what that account is
+        bound to (`link`: kind "all" or "personal", with the characters). Needs no token."""
+        return JSONResponse(described(request), headers=NO_STORE)
+
+    @app.post("/api/v1/me/link", include_in_schema=False)
+    def link(body: LinkIn, request: Request):
+        """Bind the signed-in account to the token pasted here (the one in the sync program)."""
         acct = account_of(request)
-        return JSONResponse({"google": enabled(s),
-                             "account": {k: acct[k] for k in ("email", "name", "picture")} if acct else None},
-                            headers=NO_STORE)
+        if not acct:
+            raise HTTPException(401, "sign in with Google first")
+        token = body.token.strip()
+        kind = judge(token) if judge else None
+        if kind == "voice":
+            raise HTTPException(400, "this is a character's code for the voice page, not an upload token")
+        if kind not in ("all", "personal"):
+            raise HTTPException(403, "invalid token")
+        with db() as conn:
+            # the server's own tokens are not stored: "all" stays right when they are changed
+            conn.execute("INSERT INTO google_links VALUES (?,?,?,?) ON CONFLICT(sub) DO UPDATE SET "
+                         "kind=excluded.kind, token=excluded.token, linked_at=excluded.linked_at",
+                         (acct["sub"], kind, token if kind == "personal" else None, _now_iso()))
+        return JSONResponse(described(request), headers=NO_STORE)
+
+    @app.post("/api/v1/me/unlink", include_in_schema=False)
+    def unlink(request: Request):
+        acct = account_of(request)
+        if not acct:
+            raise HTTPException(401, "sign in with Google first")
+        with db() as conn:
+            conn.execute("DELETE FROM google_links WHERE sub=?", (acct["sub"],))
+        return JSONResponse(described(request), headers=NO_STORE)
 
     @app.get("/auth/google/start", include_in_schema=False)
     def start(request: Request, next: Optional[str] = None):
@@ -212,4 +279,4 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
         r.delete_cookie(SESSION_COOKIE, path="/", secure=secure, httponly=True, samesite="lax")
         return r
 
-    return account_of
+    return account_of, link_of
