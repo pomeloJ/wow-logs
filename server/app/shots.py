@@ -4,9 +4,10 @@ The agent uploads each screenshot with the time it was taken. Where it was taken
 was going on are not stored with it: they are looked up from the character's recorded
 events when it is shown, so a screenshot uploaded before its events still gets a place.
 
-Uploading them is the player's choice, off until they turn it on in the sync program. The
-choice is kept here, one per token, so every character and every computer that uploads with
-the same token follows it. The newest screenshot is what a tool (an AI voice assistant) reads
+Uploading them is the player's choice, off until they turn it on in the sync program, and so
+is how many are kept (the newest 50 unless they choose otherwise; older ones are deleted).
+Both are kept here, one choice per token, so every character and every computer that uploads
+with the same token follows them. The newest screenshot is what a tool (an AI voice assistant) reads
 to see what the player sees right now.
 """
 import json
@@ -17,7 +18,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 MAX_BYTES = 8 * 1024 * 1024
@@ -30,8 +31,12 @@ MOMENTS = {"MOB_KILLED": lambda p: f"擊殺 {p.get('monster_name') or '怪物'}"
            "ENCOUNTER_END": lambda p: f"首領戰 {p.get('name') or ''}"}
 
 
+KEEP_DEFAULT, KEEP_MAX = 50, 500
+
+
 class SyncSettingsIn(BaseModel):
-    upload_screenshots: bool
+    upload_screenshots: Optional[bool] = None                       # left out: unchanged
+    keep_screenshots: Optional[int] = Field(None, ge=1, le=KEEP_MAX)
 
 
 def _fmt(dt: datetime) -> str:
@@ -54,6 +59,8 @@ class Shots:
             # for every character and computer that uploads with it
             conn.execute("CREATE TABLE IF NOT EXISTS sync_settings (token TEXT PRIMARY KEY, "
                          "upload_screenshots INTEGER NOT NULL, updated_at TEXT NOT NULL)")
+            if "keep_screenshots" not in {r[1] for r in conn.execute("PRAGMA table_info(sync_settings)")}:
+                conn.execute(f"ALTER TABLE sync_settings ADD COLUMN keep_screenshots INTEGER NOT NULL DEFAULT {KEEP_DEFAULT}")
 
     def path(self, shot_id: str, thumb: bool = False) -> str:
         return os.path.join(self.folder, f"{shot_id}{'.t' if thumb else ''}.jpg")
@@ -131,6 +138,7 @@ def register(app, db, can_read, can_write, claim, folder: str) -> Shots:
         with db() as conn:
             conn.execute("INSERT OR REPLACE INTO screenshots VALUES (?,?,?,?,?,?)",
                          (shot_id, character_id, _fmt(taken_at), width, height, _fmt(datetime.now(timezone.utc))))
+        prune(writer)
         return {"success": True, "id": shot_id}
 
     @app.put("/api/v1/screenshots/{shot_id}/thumb")
@@ -226,23 +234,55 @@ def register(app, db, can_read, can_write, claim, folder: str) -> Shots:
         return FileResponse(path, media_type="image/jpeg", headers={
             "Cache-Control": "no-store", "X-Taken-At": row["taken_at"], "X-Age-Seconds": str(age)})
 
+    def scope_of(writer: Optional[str]):
+        """Which characters' screenshots a token's choices are about: its own characters for a
+        person's token; for the server's own, the characters that belong to nobody."""
+        if writer:
+            return "character_id IN (SELECT character_id FROM token_characters WHERE token=?)", (writer,)
+        return "character_id NOT IN (SELECT character_id FROM token_characters)", ()
+
     def settings_of(writer: Optional[str]) -> Dict[str, Any]:
+        where, args = scope_of(writer)
         with db() as conn:
-            row = conn.execute("SELECT upload_screenshots, updated_at FROM sync_settings WHERE token=?",
+            row = conn.execute("SELECT upload_screenshots, keep_screenshots, updated_at FROM sync_settings WHERE token=?",
                                (writer or "owner",)).fetchone()
-        return {"upload_screenshots": bool(row and row["upload_screenshots"]), "updated_at": row["updated_at"] if row else None}
+            stored = conn.execute(f"SELECT COUNT(*) FROM screenshots WHERE {where}", args).fetchone()[0]
+        return {"upload_screenshots": bool(row and row["upload_screenshots"]),
+                "keep_screenshots": row["keep_screenshots"] if row else KEEP_DEFAULT,
+                "screenshots_stored": stored, "updated_at": row["updated_at"] if row else None}
+
+    def prune(writer: Optional[str]) -> int:
+        """Delete this token's oldest screenshots beyond the number it keeps. Returns how many."""
+        keep = settings_of(writer)["keep_screenshots"]
+        where, args = scope_of(writer)
+        with db() as conn:
+            gone = [r["id"] for r in conn.execute(f"SELECT id FROM screenshots WHERE {where} ORDER BY taken_at DESC "
+                                                  "LIMIT -1 OFFSET ?", (*args, keep))]
+            conn.executemany("DELETE FROM screenshots WHERE id=?", [(i,) for i in gone])
+        for shot_id in gone:
+            for thumb in (False, True):
+                if os.path.isfile(shots.path(shot_id, thumb)):
+                    os.remove(shots.path(shot_id, thumb))
+        return len(gone)
 
     @app.get("/api/v1/sync-settings", include_in_schema=False)
     def get_sync_settings(writer: Optional[str] = Depends(can_write)):
-        """What the sync program should do for this token's characters. Asked for by the sync
-        program; everything is off until the player turns it on."""
+        """What the sync program should do for this token's characters, and how many of their
+        screenshots are here. Asked for by the sync program; uploading is off until the player
+        turns it on, and the newest 50 screenshots are kept unless they choose another number."""
         return settings_of(writer)
 
     @app.put("/api/v1/sync-settings", include_in_schema=False)
     def put_sync_settings(body: SyncSettingsIn, writer: Optional[str] = Depends(can_write)):
+        """Change one choice or both; one left out stays as it was. Keeping fewer screenshots
+        deletes the oldest at once."""
+        held = settings_of(writer)
+        on = held["upload_screenshots"] if body.upload_screenshots is None else body.upload_screenshots
+        keep = held["keep_screenshots"] if body.keep_screenshots is None else body.keep_screenshots
         with db() as conn:
-            conn.execute("INSERT OR REPLACE INTO sync_settings VALUES (?,?,?)",
-                         (writer or "owner", int(body.upload_screenshots), _fmt(datetime.now(timezone.utc))))
+            conn.execute("INSERT OR REPLACE INTO sync_settings (token, upload_screenshots, keep_screenshots, updated_at) "
+                         "VALUES (?,?,?,?)", (writer or "owner", int(on), keep, _fmt(datetime.now(timezone.utc))))
+        prune(writer)
         return settings_of(writer)
 
     @app.get("/api/v1/screenshots/{shot_id}/image")

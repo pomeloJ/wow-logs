@@ -66,6 +66,9 @@ def scaled_jpeg(path: Path, width: int, quality: int) -> Tuple[bytes, int, int]:
 
 
 _sizes: Dict[str, int] = {}          # file -> its size when last looked at, to tell when the game is done writing it
+_settled: Dict[str, int] = {}        # folder -> its modification time when everything in it had been dealt with
+_retry_at: Dict[str, float] = {}     # folder -> when to try again after an upload that did not go through
+RETRY_AFTER = 30.0                   # seconds: an unreachable server is not asked every second
 
 
 def process_screenshots(game_dir: Path, db: Any, queue, uploader) -> int:
@@ -79,17 +82,26 @@ def process_screenshots(game_dir: Path, db: Any, queue, uploader) -> int:
     writing it, which is when its size stays the same from one look to the next."""
     folder = game_dir / "Screenshots"
     character = latest_character(db)
-    if not folder.is_dir() or not character:
+    key = str(folder)
+    try:
+        stamp = folder.stat().st_mtime_ns
+    except OSError:
+        return 0
+    # Cheap when nothing happened: a folder's time changes when a file is added to it, so an
+    # unchanged one holds nothing new. One look at the folder, however many pictures are in it.
+    if not character or _settled.get(key) == stamp or time.time() < _retry_at.get(key, 0):
         return 0
     done = kv_get(queue, "screenshots", {})
     new = [f for f in sorted(folder.iterdir()) if f.suffix.lower() in IMAGE_SUFFIXES and f.name not in done]
     if not new:
+        _settled[key] = stamp
         return 0
     if uploader is None or not uploader.screenshots_on(character):
         for f in new:
             done[f.name] = "off"
         kv_set(queue, "screenshots", done)
         kv_set(queue, "screenshots_since", None)    # turned on again later: from that moment
+        _settled[key] = stamp
         return 0
     since = kv_get(queue, "screenshots_since")
     if since is None:                               # just turned on: what is in the folder now stays here
@@ -135,11 +147,15 @@ def process_screenshots(game_dir: Path, db: Any, queue, uploader) -> int:
         elif state == "invalid":
             done[f.name] = f"rejected: {detail}"
         elif state == "skip":                       # no token for this character yet: try again later
+            _retry_at[key] = time.time() + RETRY_AFTER
             break
         else:
             log.warning("screenshot upload will be retried: %s", detail)
+            _retry_at[key] = time.time() + RETRY_AFTER
             break                                   # server unreachable: try the rest later too
     kv_set(queue, "screenshots", done)
+    if all(f.name in done for f in new):           # nothing left waiting: rest until the folder changes
+        _settled[key] = stamp
     return sent
 
 

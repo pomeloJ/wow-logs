@@ -71,7 +71,10 @@ def test_screenshot_upload_failures(tmp_path):
     shot(g, "b.jpg")
     down = FakeUploader(("retry", "network"))
     assert extras.process_screenshots(g, DB, q, down) == 0 and len(down.sent) == 1     # stops at the first failure
-    assert extras.process_screenshots(g, DB, q, FakeUploader()) == 2                   # and tries again later
+    up = FakeUploader()
+    assert extras.process_screenshots(g, DB, q, up) == 0 and not up.sent               # not again straight away
+    extras._retry_at.clear()                                                           # (the wait is over)
+    assert extras.process_screenshots(g, DB, q, up) == 2                               # and tries again later
     (g / "Screenshots" / "broken.jpg").write_bytes(b"not an image")
     os.utime(g / "Screenshots" / "broken.jpg", (time.time() - 60,) * 2)
     assert extras.process_screenshots(g, DB, q, FakeUploader()) == 0
@@ -354,3 +357,19 @@ def test_combat_log_that_was_off_while_playing_is_noticed(tmp_path):
     os.utime(f, (50000, 50000))
     assert extras.combat_log_state(tmp_path, saved_at=50000 + 600) == {"last": 50000.0, "missed": False}
     assert extras.combat_log_state(tmp_path, saved_at=50000 + 7200)["missed"] is True
+
+
+def test_an_unchanged_folder_costs_one_look(tmp_path, monkeypatch):
+    g, q, up = game(tmp_path), on_long_ago(Queue(":memory:")), FakeUploader()
+    shot(g, "a.jpg")
+    assert extras.process_screenshots(g, DB, q, up) == 1
+    reads = []
+    monkeypatch.setattr(extras, "kv_get", lambda *a, **k: reads.append(a) or {})
+    for _ in range(5):
+        assert extras.process_screenshots(g, DB, q, up) == 0
+    assert reads == []                                   # nothing was read: the folder had not changed
+    monkeypatch.undo()
+    time.sleep(0.05)
+    shot(g, "b.jpg", age=1.5)                            # a new picture changes the folder
+    assert extras.process_screenshots(g, DB, q, up) == 0  # (first look: size noted)
+    assert extras.process_screenshots(g, DB, q, up) == 1 and up.sent[-1][0] == "b"

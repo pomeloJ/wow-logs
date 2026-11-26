@@ -404,12 +404,16 @@ class Uploader:
         return bool(self.settings(character_id).get("upload_screenshots"))
 
     def set_screenshots(self, on: bool) -> List[str]:
-        """Turn screenshot upload on or off for every token this computer uses. Returns the
-        problems, one per token that could not be changed (empty: all done)."""
+        """Turn screenshot upload on or off for every token this computer uses."""
+        return self.set_settings(upload_screenshots=bool(on))
+
+    def set_settings(self, **changes: Any) -> List[str]:
+        """Change settings (upload_screenshots, keep_screenshots) for every token this computer
+        uses. Returns the problems, one per token that could not be changed (empty: all done)."""
         problems = []
         for token in dict.fromkeys(t for t in [self.cfg.api_token, *self.cfg.tokens.values()] if t):
             try:
-                r = self.client.put("/api/v1/sync-settings", json={"upload_screenshots": bool(on)},
+                r = self.client.put("/api/v1/sync-settings", json=changes,
                                     headers={"Authorization": f"Bearer {token}"})
             except httpx.HTTPError as e:
                 problems.append(f"連不上伺服器（{type(e).__name__}）")

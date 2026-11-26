@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, Response
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # Only these kinds of file ever go into the source zip: never a settings file with a token in it.
-ALLOWED = (".py", ".pyw", ".lua", ".toc", ".txt", ".xml")
+ALLOWED = (".py", ".pyw", ".lua", ".toc", ".txt", ".xml", ".png", ".ico")          # the pictures: the window's icon
 BUILD_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.(exe|zip|dmg|pkg|gz)$")
 MAX_BUILD = 150 * 1024 * 1024
 # Sent with every download. A file keeps its name from one version to the next, so a copy kept

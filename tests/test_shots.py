@@ -137,3 +137,31 @@ def test_screenshot_upload_setting_is_one_per_token(make_client, tmp_path):
     client.put("/api/v1/sync-settings", headers=AUTH, json={"upload_screenshots": False})
     assert client.get("/api/v1/sync-settings", headers=mine).json()["upload_screenshots"] is True
     assert client.get("/api/v1/sync-settings", headers=READ).status_code == 403                         # a read token uploads nothing
+
+
+def test_the_server_keeps_the_newest_screenshots_only(make_client, tmp_path):
+    import os
+    import sqlite3
+    client = make_client()
+    db = sqlite3.connect(tmp_path / "server.db")
+    with db:
+        db.execute("INSERT INTO upload_tokens VALUES ('person1', 'p', NULL, '2026-11-26T00:00:00Z', NULL, NULL)")
+    mine = {"Authorization": "Bearer person1"}
+    held = client.get("/api/v1/sync-settings", headers=mine).json()
+    assert (held["keep_screenshots"], held["screenshots_stored"]) == (50, 0)          # 50 unless chosen otherwise
+    # a partial change leaves the other choice alone
+    assert client.put("/api/v1/sync-settings", headers=mine, json={"upload_screenshots": True}).json()["keep_screenshots"] == 50
+    assert client.put("/api/v1/sync-settings", headers=mine, json={"keep_screenshots": 3}).json()["upload_screenshots"] is True
+    assert client.put("/api/v1/sync-settings", headers=mine, json={"keep_screenshots": 0}).status_code == 422
+    assert client.put("/api/v1/sync-settings", headers=mine, json={"keep_screenshots": 501}).status_code == 422
+    for i in range(5):                                       # five taken, one minute apart, by this person
+        assert put(client, f"mine{i}", cid="c-mine", minutes=i, headers=mine).status_code == 200
+    put(client, "someone-else", cid="c-other", minutes=0)    # the owner's, for a character of nobody's
+    listed = client.get("/api/v1/screenshots", headers=READ).json()["items"]
+    assert sorted(s["id"] for s in listed) == ["mine2", "mine3", "mine4", "someone-else"]   # the newest three of theirs
+    assert not os.path.exists(tmp_path / "shots" / "mine0.jpg") and not os.path.exists(tmp_path / "shots" / "mine0.t.jpg")
+    assert client.get("/api/v1/sync-settings", headers=mine).json()["screenshots_stored"] == 3
+    # keeping fewer deletes the oldest at once; the owner's own count is apart
+    assert client.put("/api/v1/sync-settings", headers=mine, json={"keep_screenshots": 1}).json()["screenshots_stored"] == 1
+    assert [s["id"] for s in client.get("/api/v1/screenshots?character_id=c-mine", headers=READ).json()["items"]] == ["mine4"]
+    assert client.get("/api/v1/sync-settings", headers=AUTH).json()["screenshots_stored"] == 1

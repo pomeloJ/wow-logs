@@ -30,9 +30,13 @@ def build() -> Path:
         sys.exit("builds are made on Windows or macOS")
     arch = {"AMD64": "x64", "x86_64": "x64", "arm64": "arm64", "ARM64": "arm64"}.get(platform.machine(), platform.machine().lower())
     sep = ";" if system == "windows" else ":"
+    assets = ROOT / "agent" / "adventuresync" / "assets"
+    # Windows wants an .ico; on macOS PyInstaller turns the PNG into the app's icon itself (with Pillow).
+    icon = assets / ("icon.ico" if system == "windows" else "icon.png")
     subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed", "--onefile",
-                    "--name", "AdventureSync", "--paths", str(ROOT / "agent"),
+                    "--name", "AdventureSync", "--paths", str(ROOT / "agent"), "--icon", str(icon),
                     "--add-data", f"{ROOT / 'addon' / 'AdventureCollector'}{sep}addon/AdventureCollector",
+                    "--add-data", f"{assets}{sep}adventuresync/assets",
                     "--distpath", str(ROOT / "dist"), "--workpath", str(ROOT / "build"), "--specpath", str(ROOT / "build"),
                     str(ROOT / "agent" / "AdventureSync.pyw")], check=True)
     if system == "windows":

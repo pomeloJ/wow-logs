@@ -395,3 +395,15 @@ def test_screenshot_setting_is_read_from_and_written_to_the_server(tmp_path):
     # a token the server refuses changes nothing, and says so
     bad = Uploader(Config(url="http://hub", api_token="nope"), Queue(":memory:"), client=web)
     assert bad.set_screenshots(True) and bad.screenshots_on() is False
+
+
+def test_how_many_screenshots_to_keep_is_set_from_the_sync_program(tmp_path):
+    from fastapi.testclient import TestClient
+    from app.main import create_app
+    from adventuresync.core import Config, Queue, Uploader
+    web = TestClient(create_app(db_path=str(tmp_path / "s.db"), write_token="w", read_token="r"))
+    up = Uploader(Config(url="http://hub", api_token="w"), Queue(":memory:"), client=web)
+    assert up.settings()["keep_screenshots"] == 50
+    assert up.set_settings(keep_screenshots=20) == [] and up.settings()["keep_screenshots"] == 20
+    assert up.settings()["upload_screenshots"] is False                   # the other choice untouched
+    assert up.set_settings(keep_screenshots=9999)                         # refused by the server, and said so

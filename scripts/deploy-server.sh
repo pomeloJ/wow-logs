@@ -22,7 +22,7 @@ rsync -az --delete --exclude .venv --exclude data --exclude .env --exclude clien
 # The client (addon, sync program, start scripts) for the setup page to hand out. Only source
 # files are sent: the agent's own config.toml, which holds the token, never leaves this computer.
 ssh -o BatchMode=yes "$HOST" "mkdir -p $DEST/client/adventuresync $DEST/client/addon"
-rsync -az --delete --exclude __pycache__ --include '*/' --include '*.py' --exclude '*' agent/adventuresync/ "$HOST:$DEST/client/adventuresync/"
+rsync -az --delete --exclude __pycache__ --include '*/' --include '*.py' --include '*.png' --include '*.ico' --exclude '*' agent/adventuresync/ "$HOST:$DEST/client/adventuresync/"
 rsync -az --delete addon/ "$HOST:$DEST/client/addon/"
 rsync -az client/README.txt agent/requirements.txt agent/AdventureSync.pyw "$HOST:$DEST/client/"
 # World database (static game data), if one has been built with `python -m world_importer`.
