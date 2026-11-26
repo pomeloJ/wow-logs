@@ -364,17 +364,16 @@ def test_the_sync_program_says_whether_the_players_fights_come_through_the_comba
 
     fight(now - 9000, 20, 0)                            # before this version kept track: not held against anyone
     c = extras.combat_log_check(q, now - 5000)
-    assert c["state"] == "waiting" and "⚠" in combat_text(c)["text"]                 # nothing fought yet: still reminded
+    assert c["state"] == "waiting" and combat_text(c)["banner"].startswith("⚠")                 # nothing fought yet: still reminded
     fight(now - 3000, 20, 1)                            # the addon saw a fight; the log had nothing then
     c = extras.combat_log_check(q, now)
-    assert (c["state"], c["missed"]) == ("missing", 1) and "✗" in combat_text(c)["text"]
-    assert "/adventure combatlog auto" in combat_text(c)["text"]
+    assert (c["state"], c["missed"]) == ("missing", 1) and combat_text(c)["row"] == "✗ 沒收到"
+    assert "/adventure combatlog auto" in combat_text(c)["banner"]
     mine(now - 1200)                                    # switched on, and the player hit something
     fight(now - 1190, 15, 2)
     c = extras.combat_log_check(q, now)
     assert (c["state"], c["fights"], c["missed"]) == ("ok", 2, 1)                     # the newest fight is covered
-    text = combat_text(c)
-    assert text["text"].startswith("✓") and "1 場戰鬥沒有紀錄" in text["text"]
+    assert combat_text(c)["row"].startswith("✓ 有收到") and combat_text(c)["banner"] is None
     mine(now - 60)                                      # in the middle of a fight, before any save: proof enough
     fight(now - 600, 20, 3)                             # a fight the log missed, yet something came in since
     assert extras.combat_log_check(q, now)["state"] == "ok"

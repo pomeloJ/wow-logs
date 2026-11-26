@@ -328,17 +328,14 @@ def ago_text(epoch: Any, suffix: str = "存檔") -> str:
 
 
 def combat_text(c: Dict[str, Any]) -> Dict[str, Any]:
-    """The 戰鬥紀錄 line: a green tick while the player's fights come through, otherwise a warning."""
+    """The 戰鬥紀錄 line, short, and a banner for the top of the window when something is wrong."""
     hm = lambda t: time.strftime("%H:%M", time.localtime(t))      # noqa: E731
-    how = "遊戲裡可能沒開：按進遊戲時提醒視窗的「確認開啟」，或在遊戲輸入 /adventure combatlog auto 讓它每次登入自動開。"
     if c["state"] == "ok":
-        text = f"✓ 有收到你的戰鬥（最後一筆 {hm(c['last_seen'])}）"
-        if c["missed"]:
-            text += f"\n這幾小時有 {c['missed']} 場戰鬥沒有紀錄，可能是那時還沒開。"
-        return {"text": text, "foreground": OK}
+        return {"row": f"✓ 有收到（{hm(c['last_seen'])}）", "color": OK, "banner": None}
     if c["state"] == "missing":
-        return {"text": f"✗ {hm(c['newest_fight'])} 的戰鬥沒有收到戰鬥紀錄。\n" + how, "foreground": BAD}
-    return {"text": "⚠ 還沒收到這次遊玩的戰鬥。打到怪後這裡會出現綠色勾勾；打了還是沒有，就是" + how, "foreground": WARN}
+        return {"row": "✗ 沒收到", "color": BAD, "bad": True,
+                "banner": f"✗ 戰鬥紀錄沒開：{hm(c['newest_fight'])} 的戰鬥沒記到　遊戲裡輸入 /adventure combatlog auto"}
+    return {"row": "⚠ 還沒收到", "color": WARN, "bad": False, "banner": "⚠ 還沒收到戰鬥紀錄，請確認遊戲裡有開"}
 
 
 def main(config: Optional[str] = None) -> int:
@@ -553,6 +550,22 @@ def main(config: Optional[str] = None) -> int:
 
     addon_button = ttk.Button(addon_bar, command=get_addon)
     addon_button.pack(side="right")
+
+    # the combat log: a banner that cannot be missed while the player's fights are not coming through
+    combat_bar = tk.Frame(root, padx=px(18), pady=px(10))
+    combat_label = tk.Label(combat_bar, font=font(12, "bold"), anchor="w", justify="left")
+    combat_label.pack(fill="x")
+
+    def show_combat(c: Dict[str, Any]) -> None:
+        said = combat_text(c)
+        shown["combat"].configure(text=said["row"], foreground=said["color"])
+        if not said["banner"]:
+            combat_bar.pack_forget()
+            return
+        back, ink = ("#fde2e1", BAD) if said.get("bad") else ("#ffefc9", WARN)
+        combat_bar.configure(background=back)
+        combat_label.configure(text=said["banner"], background=back, foreground=ink)
+        combat_bar.pack(fill="x", after=head)
 
     # ---------------------------------------------------------------- tabs
     tabs = ttk.Notebook(root)
@@ -885,7 +898,7 @@ def main(config: Optional[str] = None) -> int:
                     shown["files"].configure(text="\n".join(r["files"]) if r["files"] else "找不到：請先安裝插件，進遊戲後按一次「存檔」")
                     combat = r.get("combat")
                     if combat is not None:
-                        shown["combat"].configure(**combat_text(combat))
+                        show_combat(combat)
                     show_auto(bool(r["auto"]))
         except queues.Empty:
             pass
