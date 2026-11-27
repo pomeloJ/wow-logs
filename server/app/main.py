@@ -134,6 +134,7 @@ limited token ever shows chat messages. `GET /api/v1/token` says what a token is
 `character_id` everything else asks for. For a tool that answers questions:
 
 * how the character is doing now: `/characters/{id}/snapshot`, `/items`, `/bank`, `/quests`
+* trades with other players (who, what each side gave, money): `/characters/{id}/trades`
 * what happened lately: `/stats/activity`, `/events`
 * group play: `/characters/{id}/groups`, then `/groups/{group_id}` (or `latest`) and its `/skills` and `/analysis`
 * fighting alone: `/characters/{id}/solo` lists the stretches; their ids work with the same `/groups/{group_id}...` endpoints

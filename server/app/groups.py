@@ -22,7 +22,7 @@ ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
 # window's link instead of the item. Those records are left out wherever loot is counted.
 ROLL_LINES = ("戰利品", "Loot")
 HIDDEN = ("LOCATION_SAMPLE", "CHAT_MESSAGE", "MAP_SCREENSHOT", "PARTY_POSITIONS", "GROUP_METER", "PARTY_LOOT",
-          "GROUP_ENCOUNTER", "THREAT")
+          "GROUP_ENCOUNTER", "THREAT", "TRADE_COMPLETED")
 HIGHLIGHTS = ("LEVEL_UP", "ACHIEVEMENT_EARNED", "PLAYER_DIED", "PARTY_MEMBER_DIED", "GROUP_MEMBER_LEVEL_UP",
               "INSTANCE_ENTERED", "ENCOUNTER_END")
 SOLO_GAP = 20 * 60 * 1000          # ms without a hit after which a stretch of fighting alone is over

@@ -116,6 +116,15 @@ def describe(kind: str, p: Dict[str, Any]) -> str:
         return f"與 {p.get('npc_name') or 'NPC'} 互動{where}"
     if kind in ("INSTANCE_ENTERED", "INSTANCE_LEFT"):
         return ("進入副本 " if kind == "INSTANCE_ENTERED" else "離開副本 ") + str(p.get("name") or "")
+    if kind == "TRADE_COMPLETED":
+        def side(x):
+            x = x if isinstance(x, dict) else {}
+            parts = [f"{i.get('name') or i.get('item_id')}" + (f" x{i.get('count')}" if (i.get("count") or 1) > 1 else "")
+                     for i in x.get("items") or [] if isinstance(i, dict)]
+            if x.get("money"):
+                parts.append(money(x["money"]))
+            return "、".join(parts) or "沒有東西"
+        return f"和 {p.get('with') or '對方'} 交易：給出 {side(p.get('gave'))}，收到 {side(p.get('got'))}{where}"
     if kind == "ACHIEVEMENT_EARNED":
         return f"獲得成就 {p.get('name') or p.get('achievement_id')}"
     names = {"SESSION_START": "登入遊戲", "FLIGHT_STARTED": "開始飛行", "FLIGHT_ENDED": "飛行結束",

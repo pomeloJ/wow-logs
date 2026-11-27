@@ -831,3 +831,76 @@ def test_secret_threat_values_are_left_out_and_counted():
     assert t.get("mob_guid") is None and t.get("mob_name") is None and t["samples"] == "0.0,1,80,100,100,3"
     d = g.db.debug.threat
     assert d.secret == 1 and d.secret_mob == 3 and d["values"] == 1
+
+
+TRADE_MOCK = r"""
+MOCK.mine, MOCK.theirs, MOCK.myMoney, MOCK.theirMoney = {}, {}, 0, 0
+local name, guid, class = UnitName, UnitGUID, UnitClass
+function UnitName(u) if u == "NPC" then return "波波" end return name(u) end
+function UnitGUID(u) if u == "NPC" then return "Player-1-0000B0B0" end return guid(u) end
+function UnitClass(u) if u == "NPC" then return "戰士", "WARRIOR", 1 end return class(u) end
+MAX_TRADE_ITEMS = 7
+ERR_TRADE_COMPLETE, ERR_TRADE_CANCELLED = "交易完成。", "交易取消。"
+local function info(t) return function(i) local e = t[i] if not e then return nil end return e[1], 1, e[2], e[3], e[4], e[5] end end
+local function link(t) return function(i) local e = t[i] return e and ("|Hitem:" .. e[6] .. "::|h[" .. e[1] .. "]|h") or nil end end
+GetTradePlayerItemInfo = function(i) return info(MOCK.mine)(i) end
+GetTradeTargetItemInfo = function(i) return info(MOCK.theirs)(i) end
+GetTradePlayerItemLink = function(i) return link(MOCK.mine)(i) end
+GetTradeTargetItemLink = function(i) return link(MOCK.theirs)(i) end
+function GetPlayerTradeMoney() return MOCK.myMoney end
+function GetTargetTradeMoney() return MOCK.theirMoney end
+"""
+
+
+def trades(g):
+    return [dict(e["payload"]) for e in g.events() if e["event_type"] == "TRADE_COMPLETED"]
+
+
+def test_a_completed_trade_is_recorded_with_both_sides():
+    g = Game()
+    g.login()
+    g.lua.execute(TRADE_MOCK)
+    g.fire("TRADE_SHOW")
+    # name, count, quality, 5th, 6th (the enchantment is 5th on the player's side, 6th on theirs), item id
+    g.lua.execute('MOCK.mine[1] = { "亞麻布", 20, 1, nil, nil, 2589 } MOCK.myMoney = 150 '
+                  'MOCK.theirs[2] = { "銅礦石", 5, 1, true, nil, 2770 } '
+                  'MOCK.theirs[7] = { "皮甲護手", 1, 2, true, "附魔手套 - 敏捷", 3000 }')
+    g.fire("TRADE_PLAYER_ITEM_CHANGED", 1)
+    g.fire("TRADE_TARGET_ITEM_CHANGED", 2)
+    g.fire("TRADE_ACCEPT_UPDATE", 1, 0)
+    # as the trade goes through the window empties before the game says it is done
+    g.lua.execute("MOCK.mine, MOCK.theirs, MOCK.myMoney = {}, {}, 0")
+    g.fire("TRADE_PLAYER_ITEM_CHANGED", 1)
+    g.fire("TRADE_CLOSED")
+    g.fire("UI_INFO_MESSAGE", 0, "交易完成。")
+    [t] = trades(g)
+    assert (t["with"], t["with_guid"], t["with_class"]) == ("波波", "Player-1-0000B0B0", "WARRIOR")
+    gave, got = dict(t["gave"]), dict(t["got"])
+    assert gave["money"] == 150 and [dict(i) for i in gave["items"].values()] == [
+        {"item_id": 2589, "name": "亞麻布", "count": 20, "quality": 1}]
+    assert got["money"] == 0 and [dict(i)["name"] for i in got["items"].values()] == ["銅礦石"]
+    assert dict(got["not_traded"])["enchantment"] == "附魔手套 - 敏捷"
+    assert g.db.debug.trade.by_message == 1 and "已記錄和 波波 的交易" in list(g.mock.out.values())[-1]
+
+
+def test_cancelled_or_changed_trades():
+    g = Game()
+    g.login()
+    g.lua.execute(TRADE_MOCK)
+    g.fire("TRADE_SHOW")
+    g.lua.execute('MOCK.mine[1] = { "亞麻布", 20, 1, nil, nil, 2589 }')
+    g.fire("TRADE_PLAYER_ITEM_CHANGED", 1)
+    g.fire("UI_INFO_MESSAGE", 0, "交易取消。")
+    g.fire("TRADE_CLOSED")
+    assert trades(g) == [] and g.db.debug.trade.cancelled == 1
+    # pressed, then the other side changed their offer (the press is undone), then both pressed
+    g.fire("TRADE_SHOW")
+    g.fire("TRADE_ACCEPT_UPDATE", 1, 0)
+    g.lua.execute('MOCK.theirMoney = 500')
+    g.fire("TRADE_MONEY_CHANGED")
+    g.fire("TRADE_ACCEPT_UPDATE", 0, 0)
+    g.fire("TRADE_ACCEPT_UPDATE", 1, 1)
+    g.fire("TRADE_CLOSED")                                # no message at all: both pressed is enough
+    g.fire("UI_INFO_MESSAGE", 0, "交易完成。")             # a late message does not count it twice
+    [t] = trades(g)
+    assert dict(t["got"])["money"] == 500 and g.db.debug.trade.by_close == 1

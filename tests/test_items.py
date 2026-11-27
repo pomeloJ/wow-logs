@@ -125,3 +125,22 @@ def test_the_bank_as_it_was_last_seen(client):
     assert client.get("/api/v1/characters/c2/bank", headers=S).status_code == 403
     assert client.get("/api/v1/characters/c1/bank").status_code == 401
     assert "/api/v1/characters/{character_id}/bank" in client.get("/openapi.json").json()["paths"]
+
+
+def test_trades_are_listed_with_both_sides(client):
+    snapshot(client)
+    snapshot(client, "c2")
+    def trade(n, minute, who, gave, got):
+        return {"event_id": f"c1:t{n}", "character_id": "c1", "event_type": "TRADE_COMPLETED",
+                "timestamp": f"2026-11-20T12:{minute:02d}:00Z",
+                "payload": {"with": who, "with_class": "WARRIOR", "with_level": 24, "gave": gave, "got": got, "zone_name": "赤脊山"}}
+    client.post("/api/v1/events/batch", headers=AUTH, json={"schema_version": 1, "device_id": "mac", "events": [
+        trade(1, 0, "波波", {"money": 150, "items": [{"item_id": 2589, "name": "亞麻布", "count": 20}]}, {"money": 0, "items": []}),
+        trade(2, 5, "艾莉", {"money": 0, "items": []}, {"money": 500, "items": [{"item_id": 2770, "name": "銅礦石", "count": 5}]})]})
+    r = client.get("/api/v1/characters/c1/trades", headers=READ).json()["trades"]
+    assert [t["with"] for t in r] == ["艾莉", "波波"] and r[1]["gave"]["items"][0]["name"] == "亞麻布"
+    assert [t["with"] for t in client.get("/api/v1/characters/c1/trades?with=波波", headers=READ).json()["trades"]] == ["波波"]
+    tok = client.post("/api/v1/characters/c1/voice-token", headers=AUTH).json()["token"]
+    assert client.get("/api/v1/characters/c2/trades", headers={"Authorization": f"Bearer {tok}"}).status_code == 403
+    from app.voice import describe
+    assert describe("TRADE_COMPLETED", r[0]).startswith("和 艾莉 交易：給出 沒有東西，收到 銅礦石 x5、5銀")

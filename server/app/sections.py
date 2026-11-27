@@ -39,6 +39,7 @@ ROUTES = {
     f"{P}/locations": "location", f"{P}/world/route": "location", f"{P}/world/route/image": "location",
     f"{P}/events": "activity", f"{P}/stats/activity": "activity", f"{P}/stats/summary": "activity",
     f"{P}/characters/{{character_id}}/items": "items", f"{P}/characters/{{character_id}}/bank": "items",
+    f"{P}/characters/{{character_id}}/trades": "items",
     f"{P}/characters/{{character_id}}/quests": "quests", f"{P}/world/quest-pins": "quests",
     f"{P}/world/quest-zones": "quests", f"{P}/world/zone-quests": "quests",
     f"{P}/groups": "groups", f"{P}/characters/{{character_id}}/groups": "groups", f"{P}/characters/{{character_id}}/solo": "groups",
@@ -63,7 +64,7 @@ FIELDS = {
 # the kinds of event that belong to a part other than "activity"
 EVENTS = {
     "location": {"LOCATION_SAMPLE", "ZONE_CHANGED", "FLIGHT_STARTED", "FLIGHT_ENDED", "PARTY_POSITIONS"},
-    "items": {"ITEM_LOOTED", "MONEY_CHANGED", "PARTY_LOOT"},
+    "items": {"ITEM_LOOTED", "MONEY_CHANGED", "PARTY_LOOT", "TRADE_COMPLETED"},
     "quests": {"QUEST_ACCEPTED", "QUEST_COMPLETED", "QUEST_REMOVED"},
     "groups": {"GROUP_JOINED", "GROUP_LEFT", "GROUP_MEMBER_JOINED", "GROUP_MEMBER_LEFT", "PARTY_MEMBER_DIED",
                "GROUP_MEMBER_LEVEL_UP", "GROUP_METER", "GROUP_ENCOUNTER", "ENCOUNTER_END", "PARTY_LOOT", "PARTY_POSITIONS",

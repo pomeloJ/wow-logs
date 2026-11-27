@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.3.5"
+local VERSION = "0.3.6"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -1961,6 +1961,128 @@ end
 ns.aiShot = aiShot
 ns.aiState = AI
 ns.shotCode = shotCode
+
+-- ------------------------------------------------------------ trades
+-- A trade with another player, once it went through: who with, and what each side put in
+-- (items and money). The trade window is empty by the time the game says the trade is done,
+-- so what is in it is copied each time it changes, and kept as it was when someone pressed
+-- Trade (nothing can change after that without undoing the press). Cancelled trades are not
+-- recorded. The last slot on each side is the one that is "not traded" (an item given to be
+-- enchanted): it is kept apart, with the enchantment named.
+local trade                    -- the open trade window: { with = ..., last = copy, frozen = copy }
+local tradeSeen = { opened = 0, done = 0, cancelled = 0, by_message = 0, by_close = 0 }
+
+local function tradeSide(info, link, money)
+    local slots = plain(MAX_TRADE_ITEMS) or 7
+    local side = { money = plain(safe(money)) or 0, items = {} }
+    for i = 1, slots do
+        local name, _, count, quality, a5, a6 = safe(info, i)
+        name = plain(name)
+        if type(name) == "string" and name ~= "" then
+            local l = plain(safe(link, i))
+            local e = { item_id = type(l) == "string" and tonumber(l:match("item:(%d+)")) or nil, name = name,
+                        count = plain(count) or 1, quality = plain(quality) }
+            if i == slots then
+                -- the player's own call answers enchantment fifth, the other side's sixth
+                local enchant = plain(info == GetTradePlayerItemInfo and a5 or a6)
+                e.enchantment = type(enchant) == "string" and enchant ~= "" and enchant or nil
+                side.not_traded = e
+            else
+                side.items[#side.items + 1] = e
+            end
+        end
+    end
+    return side
+end
+
+local function tradeCopy()
+    if not trade then return end
+    trade.last = { gave = tradeSide(GetTradePlayerItemInfo, GetTradePlayerItemLink, GetPlayerTradeMoney),
+                   got = tradeSide(GetTradeTargetItemInfo, GetTradeTargetItemLink, GetTargetTradeMoney) }
+end
+
+local function tradeNote()
+    if not db then return end
+    if type(db.debug) ~= "table" then db.debug = {} end
+    local d = {}
+    for k, v in pairs(tradeSeen) do d[k] = v end
+    d.at = now()
+    db.debug.trade = d
+end
+
+local function tradeDone(how)
+    local t = trade
+    trade = nil
+    if not t or not charId then return end
+    local seen = t.frozen or t.last
+    if not seen then return end
+    tradeSeen.done = tradeSeen.done + 1
+    tradeSeen[how] = tradeSeen[how] + 1
+    addEvent("TRADE_COMPLETED", here({ with = t.with, with_guid = t.guid, with_class = t.class, with_level = t.level,
+        gave = seen.gave, got = seen.got }))
+    dirty.bags = true
+    tradeNote()
+    say(string.format("已記錄和 %s 的交易：給出 %d 樣%s，收到 %d 樣%s", t.with or "對方", #seen.gave.items,
+        seen.gave.money > 0 and ("＋" .. seen.gave.money .. " 銅") or "", #seen.got.items,
+        seen.got.money > 0 and ("＋" .. seen.got.money .. " 銅") or ""))
+end
+
+function handlers.TRADE_SHOW()
+    local name = plain(safe(UnitName, "NPC"))
+    if type(name) ~= "string" and type(TradeFrameRecipientNameText) == "table" then
+        name = plain(safe(TradeFrameRecipientNameText.GetText, TradeFrameRecipientNameText))
+    end
+    local _, class = safe(UnitClass, "NPC")
+    trade = { with = name, guid = plain(safe(UnitGUID, "NPC")), class = plain(class), level = plain(safe(UnitLevel, "NPC")) }
+    tradeSeen.opened = tradeSeen.opened + 1
+    tradeCopy()
+end
+
+function handlers.TRADE_PLAYER_ITEM_CHANGED() tradeCopy() end
+function handlers.TRADE_TARGET_ITEM_CHANGED() tradeCopy() end
+function handlers.TRADE_MONEY_CHANGED() tradeCopy() end
+function handlers.TRADE_UPDATE() tradeCopy() end
+
+function handlers.TRADE_ACCEPT_UPDATE(player, target)
+    if not trade then return end
+    tradeCopy()
+    if player == 1 or target == 1 or player == true or target == true then
+        trade.frozen = trade.last                -- what was on the table when Trade was pressed
+        trade.both = (player == 1 or player == true) and (target == 1 or target == true)
+    else
+        trade.frozen, trade.both = nil, nil       -- something changed: the press was undone
+    end
+end
+
+-- The game says it in the middle of the screen: "交易完成" / "交易取消".
+local function tradeMessage(text)
+    if not trade or type(text) ~= "string" then return end
+    if trade.closed and now() - trade.closed > 3 then trade = nil return end   -- long shut: not about it
+    if (ERR_TRADE_COMPLETE and text == ERR_TRADE_COMPLETE) or text:find("交易完成") then
+        tradeDone("by_message")
+    elseif (ERR_TRADE_CANCELLED and text == ERR_TRADE_CANCELLED) or text:find("交易取消") then
+        trade = nil
+        tradeSeen.cancelled = tradeSeen.cancelled + 1
+        tradeNote()
+    end
+end
+
+local seenInfo = handlers.UI_INFO_MESSAGE
+function handlers.UI_INFO_MESSAGE(a, b)
+    seenInfo(a, b)
+    tradeMessage(plain(type(b) == "string" and b or a))
+end
+
+function handlers.TRADE_CLOSED()
+    -- both had pressed Trade: it went through even if no message came (or comes later)
+    if trade and trade.both then
+        tradeDone("by_close")
+    elseif trade then
+        trade.closed = now()                      -- the message may still come, a moment later
+    end
+end
+
+ns.tradeState = function() return trade end
 
 -- ------------------------------------------------------------ map screenshot
 -- Takes a screenshot with the world map open and records where the map sits on

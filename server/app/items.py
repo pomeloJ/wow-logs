@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Query
 
 SLOT_NAMES = {1: "頭部", 2: "頸部", 3: "肩部", 4: "襯衣", 5: "胸部", 6: "腰部", 7: "腿部", 8: "腳部", 9: "手腕",
               10: "手部", 11: "戒指一", 12: "戒指二", 13: "飾品一", 14: "飾品二", 15: "背部", 16: "主手",
@@ -192,6 +192,32 @@ def register(app, db, can_read, world=None) -> None:
                           if not e.get("name") and isinstance(e.get("item_id"), int)]
         return {"character_id": character_id, "captured_at": captured,
                 "bank": bank(d, world.item_names(ids) if world and ids else {})}
+
+    @app.get("/api/v1/characters/{character_id}/trades")
+    def character_trades(character_id: str, limit: int = Query(50, ge=1, le=500), with_name: Optional[str] = Query(None, alias="with"),
+                         scope: Optional[str] = Depends(can_read)):
+        """Trades with other players that went through, newest first (addon 0.3.6 and later).
+
+        Each: `with` (the other player, with `with_class` and `with_level`), `gave` and `got`
+        (`money` in copper and `items` with item id, name, count and quality), and `not_traded`
+        on a side when an item was handed over only to be enchanted (it comes back), with the
+        `enchantment`. `with` narrows to one player. Cancelled trades are not recorded."""
+        if scope is not None and character_id != scope:
+            raise HTTPException(403, "this link only covers one character")
+        where, args = "character_id=? AND event_type='TRADE_COMPLETED'", [character_id]
+        with db() as conn:
+            rows = conn.execute(f"SELECT event_id, timestamp, payload_json FROM events WHERE {where} "
+                                "ORDER BY timestamp DESC, event_id DESC", args).fetchall()
+        out = []
+        for r in rows:
+            p = json.loads(r["payload_json"])
+            if not isinstance(p, dict) or (with_name and p.get("with") != with_name):
+                continue
+            out.append({"event_id": r["event_id"], "timestamp": r["timestamp"],
+                        **{k: p.get(k) for k in ("with", "with_class", "with_level", "zone_name", "gave", "got")}})
+            if len(out) >= limit:
+                break
+        return {"character_id": character_id, "trades": out}
 
     @app.get("/api/v1/characters/{character_id}/items")
     def character_items(character_id: str, scope: Optional[str] = Depends(can_read)):
