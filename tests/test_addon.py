@@ -667,6 +667,23 @@ def test_the_combat_log_is_switched_on_at_every_login():
     assert g.mock.logging is True and g.db.settings.combatLogAuto is True
 
 
+def test_the_name_probe_shows_every_value_the_name_calls_return():
+    g = Game()
+    g.login()
+    g.lua.execute('UnitFullName = function(u) return "起承", "轉虫合", nil end '
+                  'GetUnitName = function(u, full) if full then error("nope") end return "起承" end '
+                  'GetPlayerInfoByGUID = nil')
+    out = g.slash("names")
+    lines = list(g.db.debug.names.lines.values())
+    assert any(line.startswith("[player] UnitGUID = ") for line in lines)
+    assert '  UnitFullName = "起承", "轉虫合", nil:nil' in lines            # every value, the trailing nil too
+    assert any(line.startswith("  GetUnitName(true) = （錯誤：") for line in lines)
+    assert '  GetUnitName(false) = "起承"' in lines
+    assert "  GetPlayerInfoByGUID = （沒有這個函式）" in lines
+    assert not any(line.startswith("[party1]") for line in lines)        # no group: no members asked about
+    assert len(out) >= len(lines)                                         # and all of it in the chat
+
+
 def test_blocked_calls_are_recorded_even_before_login():
     g = Game()
     g.load_addon()

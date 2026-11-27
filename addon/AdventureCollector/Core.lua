@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.3.1"
+local VERSION = "0.3.2"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -1780,6 +1780,55 @@ if frame then
     end)
 end
 
+-- ------------------------------------------------------------ name probe
+-- What this client's name calls really answer, every value as it comes back (type and text):
+-- the full name (main and second name) is to be taken from what is seen here, not assumed.
+-- Printed, and kept in the saved file (debug.names) to be read back.
+local function shown(v)
+    if isSecret(v) then return "<secret>" end
+    if type(v) == "string" then return '"' .. v .. '"' end
+    return type(v) .. ":" .. tostring(v)
+end
+
+local function counted(...) return select("#", ...), { ... } end
+
+local function every(f, ...)
+    if type(f) ~= "function" then return "（沒有這個函式）" end
+    local n, packed = counted(pcall(f, ...))
+    if not packed[1] then return "（錯誤：" .. tostring(packed[2]) .. "）" end
+    local out = {}
+    for i = 2, n do out[#out + 1] = shown(packed[i]) end
+    return #out > 0 and table.concat(out, ", ") or "（沒有回傳值）"
+end
+
+local function nameProbe()
+    local lines = {
+        "GetRealmName() = " .. every(GetRealmName),
+        "GetNormalizedRealmName() = " .. every(GetNormalizedRealmName),
+    }
+    for _, unit in ipairs({ "player", "target", "party1", "party2", "party3", "party4" }) do
+        local ok, exists = pcall(UnitExists, unit)
+        if unit == "player" or (ok and exists and not isSecret(exists)) then
+            local guid = plain(safe(UnitGUID, unit))
+            lines[#lines + 1] = "[" .. unit .. "] UnitGUID = " .. shown(guid)
+            lines[#lines + 1] = "  UnitName = " .. every(UnitName, unit)
+            lines[#lines + 1] = "  UnitFullName = " .. every(UnitFullName, unit)
+            lines[#lines + 1] = "  GetUnitName(true) = " .. every(GetUnitName, unit, true)
+            lines[#lines + 1] = "  GetUnitName(false) = " .. every(GetUnitName, unit, false)
+            if type(guid) == "string" then
+                lines[#lines + 1] = "  GetPlayerInfoByGUID = " .. every(GetPlayerInfoByGUID, guid)
+            end
+        end
+    end
+    if db then
+        if type(db.debug) ~= "table" then db.debug = {} end
+        db.debug.names = { at = now(), version = VERSION, lines = lines }
+    end
+    say("名稱測試（也存進存檔 debug.names；選一個目標、組隊時再跑一次會更完整）：")
+    for _, line in ipairs(lines) do say(line) end
+end
+ns.nameProbe = nameProbe
+
 -- ------------------------------------------------------------ slash
 local function status()
     if not db then say("not initialised yet") return end
@@ -1803,6 +1852,8 @@ SlashCmdList.ADVENTURECOLLECTOR = function(msg)
     msg = string.lower(tostring(msg or "")):match("^%s*(.-)%s*$")
     if msg:match("^chat") then
         ns.chatCommand(msg)
+    elseif msg == "names" then
+        nameProbe()
     elseif msg == "on" or msg == "off" then
         if db then
             db.settings.enabled = (msg == "on")
