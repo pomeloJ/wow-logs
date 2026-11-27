@@ -880,7 +880,7 @@ def test_a_completed_trade_is_recorded_with_both_sides():
         {"item_id": 2589, "name": "亞麻布", "count": 20, "quality": 1}]
     assert got["money"] == 0 and [dict(i)["name"] for i in got["items"].values()] == ["銅礦石"]
     assert dict(got["not_traded"])["enchantment"] == "附魔手套 - 敏捷"
-    assert g.db.debug.trade.by_message == 1 and "已記錄和 波波 的交易" in list(g.mock.out.values())[-1]
+    assert g.db.debug.trade.done == 1 and "已記錄和 波波 的交易" in list(g.mock.out.values())[-1]
 
 
 def test_cancelled_or_changed_trades():
@@ -893,14 +893,26 @@ def test_cancelled_or_changed_trades():
     g.fire("UI_INFO_MESSAGE", 0, "交易取消。")
     g.fire("TRADE_CLOSED")
     assert trades(g) == [] and g.db.debug.trade.cancelled == 1
-    # pressed, then the other side changed their offer (the press is undone), then both pressed
+    # both offer money and both press Trade: the game refuses it with an error, nothing is recorded
+    g.fire("TRADE_SHOW")
+    g.lua.execute('MOCK.myMoney, MOCK.theirMoney = 17, 15')
+    g.fire("TRADE_MONEY_CHANGED")
+    g.fire("TRADE_ACCEPT_UPDATE", 1, 0)
+    g.fire("TRADE_ACCEPT_UPDATE", 1, 1)
+    g.fire("UI_ERROR_MESSAGE", 0, "只有一方可以交易金錢。")
+    g.fire("TRADE_CLOSED")
+    assert trades(g) == [] and g.db.debug.trade.failed == 1
+    # pressed, then the other side changed their offer (the press is undone), then both pressed;
+    # the window shuts first and "trade complete" comes a moment after
+    g.lua.execute('MOCK.myMoney, MOCK.theirMoney = 0, 0')
     g.fire("TRADE_SHOW")
     g.fire("TRADE_ACCEPT_UPDATE", 1, 0)
     g.lua.execute('MOCK.theirMoney = 500')
     g.fire("TRADE_MONEY_CHANGED")
     g.fire("TRADE_ACCEPT_UPDATE", 0, 0)
     g.fire("TRADE_ACCEPT_UPDATE", 1, 1)
-    g.fire("TRADE_CLOSED")                                # no message at all: both pressed is enough
-    g.fire("UI_INFO_MESSAGE", 0, "交易完成。")             # a late message does not count it twice
+    g.fire("TRADE_CLOSED")
+    g.fire("UI_INFO_MESSAGE", 0, "交易完成。")
+    g.fire("UI_INFO_MESSAGE", 0, "交易完成。")             # said twice: still one trade
     [t] = trades(g)
-    assert dict(t["got"])["money"] == 500 and g.db.debug.trade.by_close == 1
+    assert dict(t["got"])["money"] == 500 and g.db.debug.trade.done == 1

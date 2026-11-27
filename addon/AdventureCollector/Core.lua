@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.3.6"
+local VERSION = "0.3.7"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -1966,11 +1966,12 @@ ns.shotCode = shotCode
 -- A trade with another player, once it went through: who with, and what each side put in
 -- (items and money). The trade window is empty by the time the game says the trade is done,
 -- so what is in it is copied each time it changes, and kept as it was when someone pressed
--- Trade (nothing can change after that without undoing the press). Cancelled trades are not
--- recorded. The last slot on each side is the one that is "not traded" (an item given to be
+-- Trade (nothing can change after that without undoing the press). Only the game's own "trade
+-- complete" counts: seen in the game, both pressing Trade is not enough (both offering money
+-- makes the trade fail after both pressed). Cancelled and failed trades are not recorded. The last slot on each side is the one that is "not traded" (an item given to be
 -- enchanted): it is kept apart, with the enchantment named.
 local trade                    -- the open trade window: { with = ..., last = copy, frozen = copy }
-local tradeSeen = { opened = 0, done = 0, cancelled = 0, by_message = 0, by_close = 0 }
+local tradeSeen = { opened = 0, done = 0, cancelled = 0, failed = 0 }
 
 local function tradeSide(info, link, money)
     local slots = plain(MAX_TRADE_ITEMS) or 7
@@ -2010,14 +2011,13 @@ local function tradeNote()
     db.debug.trade = d
 end
 
-local function tradeDone(how)
+local function tradeDone()
     local t = trade
     trade = nil
     if not t or not charId then return end
     local seen = t.frozen or t.last
     if not seen then return end
     tradeSeen.done = tradeSeen.done + 1
-    tradeSeen[how] = tradeSeen[how] + 1
     addEvent("TRADE_COMPLETED", here({ with = t.with, with_guid = t.guid, with_class = t.class, with_level = t.level,
         gave = seen.gave, got = seen.got }))
     dirty.bags = true
@@ -2048,9 +2048,8 @@ function handlers.TRADE_ACCEPT_UPDATE(player, target)
     tradeCopy()
     if player == 1 or target == 1 or player == true or target == true then
         trade.frozen = trade.last                -- what was on the table when Trade was pressed
-        trade.both = (player == 1 or player == true) and (target == 1 or target == true)
     else
-        trade.frozen, trade.both = nil, nil       -- something changed: the press was undone
+        trade.frozen = nil                        -- something changed: the press was undone
     end
 end
 
@@ -2059,7 +2058,7 @@ local function tradeMessage(text)
     if not trade or type(text) ~= "string" then return end
     if trade.closed and now() - trade.closed > 3 then trade = nil return end   -- long shut: not about it
     if (ERR_TRADE_COMPLETE and text == ERR_TRADE_COMPLETE) or text:find("交易完成") then
-        tradeDone("by_message")
+        tradeDone()
     elseif (ERR_TRADE_CANCELLED and text == ERR_TRADE_CANCELLED) or text:find("交易取消") then
         trade = nil
         tradeSeen.cancelled = tradeSeen.cancelled + 1
@@ -2067,19 +2066,25 @@ local function tradeMessage(text)
     end
 end
 
-local seenInfo = handlers.UI_INFO_MESSAGE
+local seenInfo, seenError = handlers.UI_INFO_MESSAGE, handlers.UI_ERROR_MESSAGE
 function handlers.UI_INFO_MESSAGE(a, b)
     seenInfo(a, b)
     tradeMessage(plain(type(b) == "string" and b or a))
 end
 
-function handlers.TRADE_CLOSED()
-    -- both had pressed Trade: it went through even if no message came (or comes later)
-    if trade and trade.both then
-        tradeDone("by_close")
-    elseif trade then
-        trade.closed = now()                      -- the message may still come, a moment later
+-- A red error while trading (e.g. only one side may offer money) means it did not go through.
+function handlers.UI_ERROR_MESSAGE(a, b)
+    seenError(a, b)
+    local text = plain(type(b) == "string" and b or a)
+    if trade and type(text) == "string" and text:find("交易") then
+        trade.failed = text
+        tradeSeen.failed = tradeSeen.failed + 1
+        tradeNote()
     end
+end
+
+function handlers.TRADE_CLOSED()
+    if trade then trade.closed = now() end        -- "trade complete" may still come, a moment later
 end
 
 ns.tradeState = function() return trade end
