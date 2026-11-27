@@ -501,3 +501,9 @@ def test_buffs_and_debuffs_with_their_times(client):
     assert a["debuffs"] == [{"who": "小德", "spell": "破甲攻擊", "spell_id": 7405, "times": 1, "stacks": 3,
                              "up_seconds": 4, "by": "暗皮戰士"}]
     assert a["dots"][0]["applied"] == 1
+    # the session's page gets the effects on the group (not on enemies) through its link
+    tok = client.get("/api/v1/groups?character_id=c1", headers=READ).json()["items"][0]["token"]
+    shared = client.get(f"/api/v1/shared/party/{tok}/auras").json()["auras"]
+    assert [x["spell"] for x in shared] == ["破甲攻擊", "王者祝福"]
+    assert client.get(f"/api/v1/shared/party/{tok}/aggro").json() == {"fights": []}
+    assert "debuffs" in client.get(f"/api/v1/shared/party/{tok}/research").json()

@@ -776,6 +776,23 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
             cid, a, b, me = window(conn, token, None, None)
             return {"targets": combat.across(conn, cid, a, b, me, who, spell, pet)}
 
+    @app.get("/api/v1/shared/party/{token}/aggro")
+    def shared_aggro(token: str):
+        """For the session's page: threat in each fight of the session, with every reading."""
+        from . import threat
+        with db() as conn:
+            cid, a, b, me = window(conn, token, None, None)
+            iso = lambda ms: datetime.fromtimestamp(ms / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            return {"fights": threat.fights(conn, cid, iso(a), iso(b), me, series=True, limit=300)}
+
+    @app.get("/api/v1/shared/party/{token}/auras")
+    def shared_auras(token: str):
+        """For the session's page: every buff and debuff on the group, with its times."""
+        with db() as conn:
+            cid, a, b, me = window(conn, token, None, None)
+            rows = [x for x in combat.auras(conn, cid, a, b, me) if not x["on_enemy"]]
+            return {"start": a, "end": b, "auras": rows[:5000]}
+
     @app.get("/api/v1/combat/npcs")
     def npc_database(character_id: str, scope: Optional[str] = Depends(can_read)):
         """Everything this character's logs have shown about each kind of enemy, over all time."""

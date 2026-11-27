@@ -149,24 +149,39 @@ def register(app, db, can_read) -> None:
         entry. Empty until the addon 0.3.4 or later has been played with."""
         if scope is not None and character_id != scope:
             raise HTTPException(403, "this link only covers one character")
-        where, args = ["character_id=?", "event_type='THREAT'"], [character_id]
-        for value, op in ((start_time, ">="), (end_time, "<=")):
+        start = end = None
+        for value, name in ((start_time, "start"), (end_time, "end")):
             if value is not None:
                 if value.tzinfo is None:
                     value = value.replace(tzinfo=timezone.utc)
-                where.append(f"timestamp{op}?")
-                args.append(value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+                if name == "start":
+                    start = value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                else:
+                    end = value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         with db() as conn:
             row = conn.execute("SELECT name FROM characters WHERE id=?", (character_id,)).fetchone()
-            rows = conn.execute(f"SELECT event_id, timestamp, payload_json FROM events WHERE {' AND '.join(where)} "
-                                "ORDER BY timestamp DESC, event_id DESC LIMIT ?", (*args, limit)).fetchall()
-        me = row["name"] if row else None
-        fights = []
-        for r in rows:
-            try:
-                payload = json.loads(r["payload_json"])
-            except ValueError:
-                continue
-            if isinstance(payload, dict):
-                fights.append({"event_id": r["event_id"], "timestamp": r["timestamp"], **analyse(payload, me, series)})
-        return {"character_id": character_id, "fights": fights}
+            me = row["name"] if row else None
+            return {"character_id": character_id, "fights": fights(conn, character_id, start, end, me, series, limit)}
+
+
+def fights(conn, character_id: str, start: Optional[str], end: Optional[str], me: Optional[str],
+           series: bool = False, limit: int = 200) -> List[Dict[str, Any]]:
+    """The THREAT events between two times (ISO, either may be None), newest first, analysed."""
+    where, args = ["character_id=?", "event_type='THREAT'"], [character_id]
+    if start:
+        where.append("timestamp>=?")
+        args.append(start)
+    if end:
+        where.append("timestamp<=?")
+        args.append(end)
+    rows = conn.execute(f"SELECT event_id, timestamp, payload_json FROM events WHERE {' AND '.join(where)} "
+                        "ORDER BY timestamp DESC, event_id DESC LIMIT ?", (*args, limit)).fetchall()
+    out = []
+    for r in rows:
+        try:
+            payload = json.loads(r["payload_json"])
+        except ValueError:
+            continue
+        if isinstance(payload, dict):
+            out.append({"event_id": r["event_id"], "timestamp": r["timestamp"], **analyse(payload, me, series)})
+    return out

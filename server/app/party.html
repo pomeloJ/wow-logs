@@ -91,6 +91,13 @@ select { font: inherit; color: var(--ink); background: var(--panel); border: 1px
 .legend span { display: inline-flex; align-items: center; }
 .legend svg { margin-right: 5px; flex: none; }
 .chartbox { position: relative; }
+.gantt { display: grid; gap: 4px; }
+.g-row { display: grid; grid-template-columns: minmax(90px, 180px) 1fr; gap: 10px; align-items: center; font-size: 13px; }
+.g-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-name small { color: var(--muted); margin-left: 6px; font-size: 11px; }
+.g-track { position: relative; height: 14px; background: var(--bg); border-radius: 3px; overflow: hidden; }
+.g-track i { position: absolute; top: 2px; bottom: 2px; min-width: 2px; border-radius: 2px; background: var(--ok); }
+.g-track i.bad { background: var(--accent); }
 .chartbox > svg { display: block; width: 100%; height: 260px; overflow: visible; }
 .chartbox text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
 .chartbox text.name { fill: var(--ink); font-size: 12px; }
@@ -198,7 +205,7 @@ const API = "/api/v1/shared/party/" + encodeURIComponent(token);
 // asked for together with the session itself instead of after it. Unused when the session has no
 // combat log; then they are small and quick.
 const early = {};
-for (const part of ["research", "skills"]) {
+for (const part of ["research", "skills", "aggro", "auras"]) {
   early[part] = fetch(`${API}/${part}`).then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)));
   early[part].catch(() => {});                 // a failure is handled where it is used
 }
@@ -816,14 +823,14 @@ function petCard(d, P) {
 }
 
 // A line chart with a crosshair: series = [{ name, color, dash, values }], one value per step.
-function lineChart(box, series, t0, stepMs, clock) {
+function lineChart(box, series, t0, stepMs, clock, label = "每秒傷害") {
   const tip = el("div", { class: "tip", hidden: "" });
   const draw = () => {
     const W = box.clientWidth, H = 240, L = 40, R = 10, T = 12, B = 24, n = Math.max(...series.map(s => s.values.length));
     if (W < L + R + 60 || n < 2) return;
     const top = Math.max(1, ...series.flatMap(s => s.values)), X = i => L + i / (n - 1) * (W - L - R), Y = v => T + (1 - v / top) * (H - T - B);
-    const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "每秒傷害：" + series.map(s => `${s.name} 最高 ${Math.round(Math.max(...s.values))}`).join("、") });
-    const step = [5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000].find(x => top / x <= 4) || 10000;
+    const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": label + "：" + series.map(s => `${s.name} 最高 ${Math.round(Math.max(...s.values))}`).join("、") });
+    const step = [5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000, 10000, 20000, 50000].find(x => top / x <= 4) || 100000;
     for (let v = 0; v <= top; v += step) { const ln = sv("line", { x1: L, x2: W - R, y1: Y(v), y2: Y(v), "stroke-width": 1 }); ln.style.stroke = "var(--line)";
       const tx = sv("text", { x: L - 6, y: Y(v) + 4, "text-anchor": "end" }); tx.textContent = v; svg.append(ln, tx); }
     for (const [i, anchor] of [[0, "start"], [n - 1, "end"]]) { const tx = sv("text", { x: X(i), y: H - 6, "text-anchor": anchor }); tx.textContent = clock(t0 + i * stepMs); svg.append(tx); }
@@ -1055,6 +1062,81 @@ function buffCard(R, P) {
     el("div", { class: "small", text: "長條是這個增益在紀錄期間掛著的時間比例。開始記錄前就已經在身上的增益看不到「獲得」，所以會被低估或沒列出。" }));
 }
 
+// Threat, as the game itself counted it (the addon reads it while the enemy is the recorder's
+// target): one fight at a time, the threat of everyone on that enemy over time, who held it.
+function aggroCard(A, P, d) {
+  const fights = (A.fights || []).filter(f => f.units.length);
+  if (!fights.length) return null;
+  const who = u => u.name || d.owner.name;
+  const colorOf = u => u.pet ? { color: P(who(u)).color === "var(--muted)" ? "var(--muted)" : P(who(u)).color, dash: true } : P(who(u));
+  const pick = el("select", { "aria-label": "戰鬥" }, ...fights.map((f, i) => el("option", { value: i,
+    text: `${hm(f.timestamp)}　${f.mob_name || "看不到名字的目標"}　看到 ${f.seen_seconds} 秒` + (f.units.length > 1 ? `　${f.units.length} 人` : "") })));
+  const busy = fights.findIndex(f => f.units.length > 1);
+  pick.value = String(busy >= 0 ? busy : 0);
+  const box = el("div", { class: "chartbox" }), keys = el("div"), body = el("div"), moves = el("div", { class: "small" });
+  let redraw = null;
+  window.addEventListener("resize", () => redraw && redraw());
+  const show = () => {
+    const f = fights[pick.value], step = 0.5, from = f.seen_from, n = Math.max(2, Math.round(f.seen_seconds / step) + 1);
+    // the game only says when threat changed: between two readings it is held at the last one
+    const series = f.units.map(u => {
+      const pts = u.series || [], values = [];
+      let k = 0, v = 0;
+      for (let i = 0; i < n; i++) { const t = from + i * step; while (k < pts.length && pts[k][0] <= t + 1e-6) v = pts[k++][1]; values.push(v); }
+      return { name: who(u) + (u.pet ? "（寵物）" : ""), ...colorOf(u), values };
+    });
+    keys.replaceChildren(el("div", { class: "legend" }, ...series.map(x => el("span", null, swatch(x), N(x.name)))));
+    redraw = lineChart(box, series, 0, step * 1000, t => (from + t / 1000).toFixed(1) + " 秒", "仇恨");
+    body.replaceChildren(table(["誰", "排名", "最終仇恨", "最高仇恨", "平均每秒", "最高每秒", "坦怪秒數", "最高仇恨比例"], f.units.map(u => el("tr", null,
+      whoCell(P, who(u) + (u.pet ? "（寵物）" : "")), el("td", { text: "#" + u.rank }), el("td", { text: u.final_threat.toLocaleString() }), el("td", { text: u.peak_threat.toLocaleString() }),
+      el("td", { text: num(u.avg_tps) }), el("td", { text: num(u.peak_tps) }), el("td", { text: u.tanking_seconds ? u.tanking_seconds.toFixed(1) : "—" }),
+      el("td", { text: u.top_percent + "%" })))));
+    moves.textContent = f.aggro_changes.length ? "拉走仇恨：" + f.aggro_changes.map(c => `第 ${c.t.toFixed(1)} 秒 ${N(c.from || d.owner.name)} → ${N(c.to || d.owner.name)}`).join("、")
+      : "這隻怪從頭到尾沒有換過坦。";
+  };
+  pick.addEventListener("change", show);
+  const card = el("section", { class: "card c-full" }, el("h2", { text: "仇恨" }), el("div", { class: "pick" }, pick), keys, box, moves, body,
+    el("div", { class: "small", text: `數字是遊戲自己算的仇恨，由 ${N(d.owner.name)} 的插件在戰鬥中讀取。遊戲只讓插件讀「目前選取的目標」，所以每隻怪只有被選取那段時間的資料（「看到 N 秒」），沒選過的怪沒有仇恨紀錄。平均每秒是看到的這段時間內增加的仇恨；最高每秒是任何 3 秒以上區間裡最快的。最高仇恨比例到 100% 代表拉到或快拉到仇恨。` }));
+  setTimeout(show);
+  return card;
+}
+
+// Every buff and debuff on one member, from when to when, over the whole run.
+function auraCard(U, P, d) {
+  const all = U.auras || [];
+  if (!all.length) return null;
+  const names = [...new Set(all.map(a => a.target))];
+  const member = el("select", { "aria-label": "隊員" }, ...names.map(n => el("option", { value: n, text: N(n) })));
+  const kind = el("select", { "aria-label": "種類" }, el("option", { value: "DEBUFF", text: "減益（debuff）" }), el("option", { value: "BUFF", text: "增益（buff）" }), el("option", { value: "", text: "全部" }));
+  const body = el("div", { class: "gantt" }), axis = el("div", { class: "small" });
+  const fmt = ms => new Date(ms).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  const show = () => {
+    const rows = all.filter(a => a.target === member.value && (!kind.value || a.type === kind.value));
+    const byspell = new Map();
+    for (const a of rows) { const k = a.spell; if (!byspell.has(k)) byspell.set(k, { spell: k, type: a.type, list: [], up: 0 }); const r = byspell.get(k); r.list.push(a); r.up += a.seconds; }
+    const lines = [...byspell.values()].sort((a, b) => b.up - a.up).slice(0, 30), span = Math.max(1, U.end - U.start);
+    body.replaceChildren(...lines.map(r => el("div", { class: "g-row" },
+      el("span", { class: "g-name", title: r.spell }, r.spell, el("small", { text: `${r.list.length} 次　${dur(Math.round(r.up))}` })),
+      el("span", { class: "g-track" }, ...r.list.map(a => { const b = el("i", { class: r.type === "DEBUFF" ? "bad" : "" });
+        b.style.left = ((a.start - U.start) / span * 100).toFixed(2) + "%"; b.style.width = Math.max(0.3, a.seconds * 1000 / span * 100).toFixed(2) + "%";
+        b.title = `${a.spell}　來自 ${N(a.caster) || "?"}　${fmt(a.start)} 起 ${a.seconds} 秒` + (a.stacks ? `　最多 ${a.stacks} 層` : "") + (a.refreshes ? `　刷新 ${a.refreshes} 次` : "") + (a.still_up ? "　（到最後都還在）" : "");
+        return b; })))));
+    if (!lines.length) body.append(el("div", { class: "small", text: "這段時間沒有紀錄。" }));
+    axis.textContent = `橫軸是整場 ${fmt(U.start)} – ${fmt(U.end)}；滑鼠停在色塊上看是誰上的、幾秒、幾層。`;
+  };
+  member.addEventListener("change", show); kind.addEventListener("change", show); show();
+  return el("section", { class: "card c-full" }, el("h2", { text: "增益與減益時間軸" }), el("div", { class: "pick" }, member, kind), body, axis,
+    el("div", { class: "small", text: "來自戰鬥紀錄檔（/combatlog），隊員要在紀錄者附近才記得到。開始記錄前就在身上的效果，從第一次刷新或消失才看得到。" }));
+}
+
+function debuffCard(R, P) {
+  if (!(R.debuffs || []).length) return null;
+  return el("section", { class: "card c-full" }, el("h2", { text: "隊員身上的減益" }),
+    table(["隊員", "減益", "次數", "總秒數", "最多層", "來自"], R.debuffs.map(x => el("tr", null, whoCell(P, x.who), el("td", { class: "l", text: x.spell }),
+      el("td", { text: x.times.toLocaleString() }), el("td", { text: x.up_seconds.toLocaleString() }), el("td", { text: x.stacks ? x.stacks : "—" }), el("td", { class: "l", text: N(x.by) || "—" })))),
+    el("div", { class: "small", text: "敵人放在隊員身上的負面效果（中毒、緩速、減甲、網住……）：被上了幾次、加起來多久、最多疊幾層、最常是誰上的。" }));
+}
+
 function guardCard(R, P) {
   if (!R.guard.length) return null;
   return el("section", { class: "card c-full" }, el("h2", { text: "隊員防禦" }),
@@ -1262,11 +1344,14 @@ function render(d) {
   if ((d.skills || []).length) early.research.then(R => {
     const more = [["治療", healCard2(R, P), "a"], ["活躍", activityCard(R, P), "a"],
       ["防禦", defenceCard(R, P), "r"], ["怪物", npcCard(R), "r"], ["跨目標", acrossCard(d, P), "r"], ["等級差", gapCard(R), "r"], ["持續傷害", dotCard(R, P), "r"], ["隊員防禦", guardCard(R, P), "r"],
-      ["增益", buffCard(R, P), "r"], ["寵物", petFightCard(R, P), "r"], ["射擊", shotCard(R, P), "r"], ["資源", costCard(R, P), "r"]].filter(([, card]) => card);
+      ["增益", buffCard(R, P), "r"], ["減益", debuffCard(R, P), "r"], ["寵物", petFightCard(R, P), "r"], ["射擊", shotCard(R, P), "r"], ["資源", costCard(R, P), "r"]].filter(([, card]) => card);
     parts.push(...more);
     if (location.hash === "#r" && more.length) view = "r";
     place();
   }).catch(() => {});
+  early.aggro.then(A => { const card = aggroCard(A, P, d); if (card) { parts.push(["仇恨", card, "a"]); place(); } }).catch(() => {});
+  // after the research cards, so the timeline sits with them rather than first
+  early.research.catch(() => {}).then(() => early.auras).then(U => { const card = auraCard(U, P, d); if (card) { parts.push(["效果", card, "r"]); place(); } }).catch(() => {});
   if ((d.skills || []).length) app.append(el("div", { class: "small" }, el("a", { href: API + "/hits.csv", text: "下載這場的逐筆戰鬥紀錄（CSV，可用試算表開啟）" }), "　", el("a", { href: API + "/hits.json", text: "JSON" })));
 }
 
