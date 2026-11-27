@@ -611,10 +611,8 @@ async function tokensPanel() {
     const partName = Object.fromEntries(d.parts.map(p => [p.key, p.name]));
     const owned = d.owned || [];
     const charText = c => shownName(c) + (c.level ? ` Lv${c.level}` : "");
-    for (const v of d.view) {
-      const link = location.origin + "/#token=" + encodeURIComponent(v.token);
-      const name = v.label || "（沒有名稱）";
-      // which characters it shows: all of them (later ones too), or the ones ticked
+    // which characters a read-only token shows: all of them (later ones too), or the ones ticked
+    const charsRow = v => {
       const every = el("input", { type: "checkbox" });
       every.checked = v.characters === null;
       const picks = owned.map(c => { const b = el("input", { type: "checkbox", value: c.id });
@@ -632,6 +630,12 @@ async function tokensPanel() {
           }, "go")));
       who.hidden = true;
       const whoShown = v.characters === null ? ["全部角色"] : owned.filter(c => v.characters.includes(c.id)).map(charText);
+      return [el("div", { class: "owned" }, el("span", { text: "角色" }), chipsOf(whoShown, "沒有角色"),
+        button2("編輯", () => { who.hidden = !who.hidden; }, "mini")), who];
+    };
+    for (const v of d.view) {
+      const link = location.origin + "/#token=" + encodeURIComponent(v.token);
+      const name = v.label || "（沒有名稱）";
       const boxes = d.parts.map(p => { const c = el("input", { type: "checkbox", value: p.key }); c.checked = v.sections.includes(p.key); return [p, c]; });
       const editor = el("div", { class: "parts" }, ...boxes.map(([p, c]) => el("label", null, c, p.name)),
         el("span", { class: "always", text: "角色的名字、職業、等級與經驗一律看得到；聊天內容一律看不到。" }),
@@ -642,9 +646,7 @@ async function tokensPanel() {
       share.append(el("div", { class: "tk-item" + (v.token === fresh ? " fresh" : "") },
         el("div", { class: "tk-title" }, el("b", { text: name }),
           el("span", { class: "tk-meta inline", text: `建立於 ${full(v.created_at)}　·　最後使用 ${when(v.last_used_at)}` })),
-        el("div", { class: "owned" }, el("span", { text: "角色" }), chipsOf(whoShown, "沒有角色"),
-          button2("編輯", () => { who.hidden = !who.hidden; }, "mini")),
-        who,
+        ...charsRow(v),
         el("div", { class: "owned" }, el("span", { text: "可看" }), chipsOf(shown, "只有名字、職業、等級與經驗"),
           button2("編輯", () => { editor.hidden = !editor.hidden; }, "mini")),
         editor,
@@ -660,7 +662,34 @@ async function tokensPanel() {
       form.addEventListener("submit", e => { e.preventDefault(); act("POST", "tokens", { label: label.value.trim() }); });
       share.append(form);
     }
-    s.box.replaceChildren(s.head, sync, share, say);
+    // tokens for a voice assistant: the /voice page and the API, for the characters ticked
+    const voice = el("section", { class: "tk" },
+      el("div", { class: "tk-head" }, el("h3", { text: "語音 API 權杖" }), el("span", { class: "count", text: `${(d.voice || []).length} / ${d.max_voice || 0}` })),
+      el("p", { class: "tkhint", text: "給 AI 語音助理用：一個權杖就能查勾選的所有角色，網址加 &c=角色名 切換角色，也可以當 API 的權杖。只能看、不能上傳，聊天內容一律看不到。" }));
+    if (!(d.voice || []).length) voice.append(el("div", { class: "tk-empty", text: "還沒有語音 API 權杖。在下面輸入名稱建立一個。" }));
+    for (const v of d.voice || []) {
+      const name = v.label || "（沒有名稱）";
+      const url = `${location.origin}/voice?t=${encodeURIComponent(v.token)}`;
+      const [code, show] = secret(v.token, v.token === fresh);
+      voice.append(el("div", { class: "tk-item" + (v.token === fresh ? " fresh" : "") },
+        el("div", { class: "tk-title" }, el("b", { text: name }),
+          el("span", { class: "tk-meta inline", text: `建立於 ${full(v.created_at)}　·　最後使用 ${when(v.last_used_at)}` })),
+        el("div", { class: "tk-secret" }, code, show),
+        ...charsRow(v),
+        el("div", { class: "tk-meta", text: `查詢網址：${location.origin}/voice?t=（權杖）&c=角色名　·　列出角色：&show=characters` }),
+        el("div", { class: "tk-acts" }, copyButton(url, "複製語音網址", true), copyButton(v.token, "複製權杖"), el("span", { class: "grow" }),
+          button2("重新產生", ask({ title: `重新產生「${name}」？`, text: "舊的權杖和網址會立刻失效，語音助理要改填新的。名稱和角色不變。", ok: "重新產生" },
+            "POST", "tokens/regenerate", { id: v.id })),
+          button2("刪除", ask({ title: `刪除「${name}」？`, text: "用這個權杖的語音助理會立刻查不到資料。這個動作不能復原。", ok: "刪除", danger: true },
+            "POST", "tokens/delete", { id: v.id }), "bad"))));
+    }
+    if ((d.voice || []).length < (d.max_voice || 0)) {
+      const label = el("input", { type: "text", maxlength: "40", placeholder: "哪個助理用的，例如：手機語音", autocomplete: "off" });
+      const form = el("form", { class: "tk-new" }, label, el("button", { text: "＋ 建立語音 API 權杖" }));
+      form.addEventListener("submit", e => { e.preventDefault(); act("POST", "voice-tokens", { label: label.value.trim() }); });
+      voice.append(form);
+    }
+    s.box.replaceChildren(s.head, sync, share, voice, say);
   };
   s.box.replaceChildren(s.head, el("div", { class: "loading", role: "status" }, el("i"), "讀取中…"));
   try { draw(await call("GET", "tokens")); }

@@ -166,6 +166,10 @@ limited token ever shows chat messages. `GET /api/v1/token` says what a token is
   `{"detail": {"error": ..., "message": ..., "character_id": ...}}` with `error` one of
   `character_not_authorized` (403: this token may not read it), `character_not_found` (404: no
   such character) or `character_not_synced` (404: known, but no data uploaded yet)
+* a voice token (made in the web page under 管理權杖 → 語音 API 權杖) reads the characters its owner
+  ticked for it, every part but chat, and uploads nothing. Use it as the bearer token here, or on
+  the plain-text page `/voice?t=<token>&c=<character name>` (`show=characters` lists them)
+* `full_name` is the name as the game shows it ("亞克 斯迪"); `name` is the short one ("亞克")
 
 Times are UTC in ISO 8601. Positions are `map_id` with `x`, `y` in percent of that map.
 Damage figures exist only where the game's combat log was switched on while playing.
@@ -941,7 +945,14 @@ def create_app(
     world = world_api.World(world_db or os.environ.get("AH_WORLD_DB")
                             or os.path.join(os.path.dirname(os.path.abspath(db_path)), "world.db"))
     world_api.register(app, world, db, can_read)
-    voice.register(app, db, can_write, activity, world, claim)
+    def account_voice(conn, t: str):
+        """An account's voice token (auth.py): the characters it shows and its default one."""
+        row = conn.execute("SELECT kind FROM view_tokens WHERE token=?", (t,)).fetchone()
+        if not row or row["kind"] != "voice":
+            return None
+        return shared_by(conn, t)[0], default_of(conn, hashlib.sha256(("reader:" + t).encode()).hexdigest())
+
+    voice.register(app, db, can_write, activity, world, claim, account_voice)
     from . import combat, groups, setup, shots as shots_api
     setup.register(app, owner_only, os.path.join(os.path.dirname(os.path.abspath(db_path)), "builds"))
     combat.register(app, db, can_write, claim)

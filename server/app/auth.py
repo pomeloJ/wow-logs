@@ -136,6 +136,7 @@ class ShownIn(BaseModel):
 
 MAX_SYNC_TOKENS = 3            # the person's own token and two more, for more computers
 MAX_VIEW_TOKENS = 20
+MAX_VOICE_TOKENS = 5
 ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"          # as for the tokens /admin makes: no look-alikes
 
 
@@ -146,6 +147,12 @@ def new_sync_secret() -> str:
 
 def new_view_secret() -> str:
     return "v" + secrets.token_urlsafe(24)
+
+
+def new_voice_secret() -> str:
+    """Short enough to say or type into an assistant's settings, and only the letters that cannot
+    be mistaken for one another. Longer than a character's own voice code (12), so never the same."""
+    return "".join(secrets.choice(ALPHABET) for _ in range(16))
 
 
 def fingerprint(token: str) -> str:
@@ -192,6 +199,10 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
         # them, those added later included (what every token made before this column means)
         if "characters" not in {r[1] for r in conn.execute("PRAGMA table_info(view_tokens)")}:
             conn.execute("ALTER TABLE view_tokens ADD COLUMN characters TEXT")
+        # 'voice': an account's token for voice assistants (the /voice page and the API), which
+        # shows every part; NULL: a sharing token (every token made before this column)
+        if "kind" not in {r[1] for r in conn.execute("PRAGMA table_info(view_tokens)")}:
+            conn.execute("ALTER TABLE view_tokens ADD COLUMN kind TEXT")
 
     def account_of(request: Request) -> Optional[Dict[str, Any]]:
         sid = request.cookies.get(SESSION_COOKIE)
@@ -291,16 +302,18 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
                     "SELECT o.character_id, c.name, c.full_name FROM token_characters o LEFT JOIN characters c ON c.id=o.character_id "
                     "WHERE o.token=? ORDER BY o.claimed_at", (me,))]
             owned = owned_by(conn, link)
-            view = []
-            for r in conn.execute("SELECT token, label, sections, characters, created_at, last_used_at FROM view_tokens "
+            view, voice = [], []
+            for r in conn.execute("SELECT token, label, sections, characters, kind, created_at, last_used_at FROM view_tokens "
                                   "WHERE owner=? ORDER BY created_at", (owner_key(link),)):
                 shown = parts.parse(r["sections"])
-                view.append({"id": fingerprint(r["token"]), "token": r["token"], "label": r["label"],
-                             "created_at": r["created_at"], "last_used_at": r["last_used_at"],
-                             "sections": [k for k, _ in parts.PARTS if shown is None or k in shown],
-                             "characters": json.loads(r["characters"]) if r["characters"] else None})
+                (voice if r["kind"] == "voice" else view).append({
+                    "id": fingerprint(r["token"]), "token": r["token"], "label": r["label"],
+                    "created_at": r["created_at"], "last_used_at": r["last_used_at"],
+                    "sections": [k for k, _ in parts.PARTS if shown is None or k in shown],
+                    "characters": json.loads(r["characters"]) if r["characters"] else None})
         return {"kind": link["kind"], "sync": sync if link["kind"] == "personal" else None, "characters": names,
-                "owned": owned, "view": view, "max_sync": MAX_SYNC_TOKENS, "max_view": MAX_VIEW_TOKENS,
+                "owned": owned, "view": view, "voice": voice, "max_voice": MAX_VOICE_TOKENS,
+                "max_sync": MAX_SYNC_TOKENS, "max_view": MAX_VIEW_TOKENS,
                 "parts": [{"key": k, "name": n} for k, n in parts.PARTS]}
 
     def owned_by(conn, link: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -406,7 +419,8 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
         never chat, and uploads nothing."""
         link = bound(request)
         with db() as conn:
-            if conn.execute("SELECT COUNT(*) FROM view_tokens WHERE owner=?", (owner_key(link),)).fetchone()[0] >= MAX_VIEW_TOKENS:
+            if conn.execute("SELECT COUNT(*) FROM view_tokens WHERE owner=? AND kind IS NULL",
+                            (owner_key(link),)).fetchone()[0] >= MAX_VIEW_TOKENS:
                 raise HTTPException(409, f"at most {MAX_VIEW_TOKENS} sharing tokens")
             token = new_view_secret()
             conn.execute("INSERT INTO view_tokens (token, owner, label, sections, characters, created_at) VALUES (?,?,?,?,?,?)",
@@ -415,12 +429,33 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
                           picked(conn, link, body.characters), _now_iso()))
         return answer(link, token)
 
+    @app.post("/api/v1/me/voice-tokens", include_in_schema=False)
+    def new_voice_token(body: NewViewIn, request: Request):
+        """A token for a voice assistant: /voice?t=<it>&c=<character> and the API both read with
+        it. It sees every part of the characters chosen (null: all of them, later ones too), never
+        chat, and uploads nothing. Changed and stopped with the same calls as a sharing token."""
+        link = bound(request)
+        with db() as conn:
+            if conn.execute("SELECT COUNT(*) FROM view_tokens WHERE owner=? AND kind='voice'",
+                            (owner_key(link),)).fetchone()[0] >= MAX_VOICE_TOKENS:
+                raise HTTPException(409, f"at most {MAX_VOICE_TOKENS} voice tokens")
+            token = new_voice_secret()
+            conn.execute("INSERT INTO view_tokens (token, owner, label, sections, characters, kind, created_at) "
+                         "VALUES (?,?,?,NULL,?,'voice',?)",
+                         (token, owner_key(link), body.label.strip() or None, picked(conn, link, body.characters), _now_iso()))
+        return answer(link, token)
+
+    def either(link: Dict[str, Any], which: str) -> Dict[str, Any]:
+        """One of the account's read-only tokens: a sharing one or a voice one."""
+        held = tokens_of(link)
+        return pick(held["view"] + held["voice"], which)
+
     @app.post("/api/v1/me/tokens/characters", include_in_schema=False)
     def set_view_characters(body: ShownIn, request: Request):
-        """Which of the maker's characters a sharing token shows: some of them, or (null) all of
-        them, those added later too. Takes effect at its next request."""
+        """Which of the maker's characters a sharing (or voice) token shows: some of them, or
+        (null) all of them, those added later too. Takes effect at its next request."""
         link = bound(request)
-        old = pick(tokens_of(link)["view"], body.id)
+        old = either(link, body.id)
         with db() as conn:
             conn.execute("UPDATE view_tokens SET characters=? WHERE token=?", (picked(conn, link, body.characters), old["token"]))
         return answer(link)
@@ -436,19 +471,19 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
 
     @app.post("/api/v1/me/tokens/regenerate", include_in_schema=False)
     def regenerate_view_token(body: PickIn, request: Request):
-        """A new address for a sharing token: the old link stops working, the name stays."""
+        """A new address for a sharing (or voice) token: the old one stops working, the name stays."""
         link = bound(request)
-        old = pick(tokens_of(link)["view"], body.id)
-        new = new_view_secret()
+        old = either(link, body.id)
+        new = new_voice_secret() if old in tokens_of(link)["voice"] else new_view_secret()
         with db() as conn:
             conn.execute("UPDATE view_tokens SET token=?, last_used_at=NULL WHERE token=?", (new, old["token"]))
         return answer(link, new)
 
     @app.post("/api/v1/me/tokens/delete", include_in_schema=False)
     def delete_view_token(body: PickIn, request: Request):
-        """Stops one of the person's read-only tokens at once."""
+        """Stops one of the person's read-only tokens (sharing or voice) at once."""
         link = bound(request)
-        old = pick(tokens_of(link)["view"], body.id)
+        old = either(link, body.id)
         with db() as conn:
             conn.execute("DELETE FROM view_tokens WHERE token=?", (old["token"],))
         return answer(link)

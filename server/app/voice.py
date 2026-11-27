@@ -1,9 +1,10 @@
 """Plain-text character queries over a single GET URL, for voice assistants.
 
 A voice assistant can only open a URL, so the access token travels in the query string.
-That token is short, read-only and tied to one character. It also opens a read-only
-dashboard for that same character (see can_read in main.py). It cannot write anything
-and never returns chat messages.
+That token is short and read-only: a character's own code (one character), or an account's
+voice token (made under 管理權杖, for the characters chosen there), where `c` names the
+character asked about. It also opens a read-only dashboard (see can_read in main.py). It
+cannot write anything and never returns chat messages.
 """
 import json
 import secrets
@@ -35,7 +36,11 @@ STAT_NAMES = {"strength": "力量", "agility": "敏捷", "stamina": "耐力", "i
 RANGE_NAMES = {"today": "今天", "yesterday": "昨天", "week": "最近七天", "all": "全部紀錄"}
 
 HELP = """# 冒險紀錄查詢說明
-網址格式：/voice?t=<角色代碼>&show=<項目>&range=<時間>&q=<關鍵字>&limit=<筆數>
+網址格式：/voice?t=<代碼>&c=<角色>&show=<項目>&range=<時間>&q=<關鍵字>&limit=<筆數>
+- c：要查哪個角色，填角色名字（「亞克」或「亞克 斯迪」都可以）或角色 id。
+  代碼能看好幾個角色時才需要；沒填就用預設角色，沒設預設就用最近玩的那個（回答第一行會寫是誰）。
+  只能查這個代碼看得到的角色，查不到時會列出可以查的角色，不會換成別的角色回答。
+- show=characters：列出這個代碼可以查的角色
 - show（可用逗號合併多項，預設 overview,activity）：
   overview 角色概況、activity 活動統計、quests 任務日誌、todo 目前所在區域還沒做的任務、
   bags 背包、gear 裝備（含屬性）、compare 背包裡的裝備和身上的比較、
@@ -118,8 +123,11 @@ def describe(kind: str, p: Dict[str, Any]) -> str:
     return names.get(kind, kind)
 
 
-def register(app, db, can_write, activity: Callable, world=None, claim=lambda writer, character_id: None) -> None:
-    """`world` (optional) supplies item names and quest turn-in places from the world database."""
+def register(app, db, can_write, activity: Callable, world=None, claim=lambda writer, character_id: None,
+             account_voice: Callable = lambda conn, t: None) -> None:
+    """`world` (optional) supplies item names and quest turn-in places from the world database.
+    `account_voice(conn, t)` -> (character ids, default character id) for an account's voice
+    token, None for any other."""
     @app.post("/api/v1/characters/{character_id}/voice-token")
     def voice_token(character_id: str, rotate: bool = False, writer: Optional[str] = Depends(can_write)):
         """Return this character's voice token, creating it on first use. rotate=1 replaces it."""
@@ -141,15 +149,51 @@ def register(app, db, can_write, activity: Callable, world=None, claim=lambda wr
         return PlainTextResponse(body, status_code=status, media_type="text/plain; charset=utf-8",
                                  headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
 
+    def named(c: Dict[str, Any]) -> str:
+        return c.get("full_name") or c.get("name") or c["id"]
+
+    def matches(c: Dict[str, Any], asked: str) -> bool:
+        a = asked.strip().lower()
+        return a in {str(v).strip().lower() for v in (c["id"], c.get("name"), c.get("full_name"),
+                                                       (c.get("full_name") or "").replace(" ", "")) if v}
+
     @app.get("/voice", include_in_schema=False)
-    def voice(t: str = "", show: str = "overview,activity", range: str = "today",
+    def voice(t: str = "", c: Optional[str] = None, show: str = "overview,activity", range: str = "today",
               q: Optional[str] = None, type: Optional[str] = None,
               limit: int = Query(20, ge=1, le=100), tz: float = Query(8, ge=-12, le=14)):
         with db() as conn:
-            tok = conn.execute("SELECT character_id FROM voice_tokens WHERE token=?", (t,)).fetchone()
-            if not tok:
+            tok = conn.execute("SELECT character_id FROM voice_tokens WHERE token=?", (t,)).fetchone() if t else None
+            got = None if tok or not t else account_voice(conn, t)
+            if not tok and got is None:
                 return text("代碼無效。請確認網址裡的 t 參數。", 404)
-            cid = tok["character_id"]
+            ids, default = ([tok["character_id"]], None) if tok else got
+            info = {r["id"]: dict(r) for r in conn.execute(
+                f"SELECT id, name, full_name, updated_at FROM characters WHERE id IN ({','.join('?' * len(ids))})", ids)}                 if ids else {}
+            mine = sorted((info.get(i) or {"id": i} for i in ids), key=lambda x: str(x.get("updated_at") or ""), reverse=True)
+            everyone = [dict(r) for r in conn.execute("SELECT id, name, full_name FROM characters")] if c else []
+        listed = "、".join(named(x) for x in mine) or "（沒有）"
+        if not mine:
+            return text("這個代碼目前沒有可以查的角色。請到網頁「管理權杖」為它勾選角色。", 404)
+        if show.strip().lower() in ("characters", "chars", "list"):
+            return text("# 這個代碼可以查的角色\n" + "\n".join(f"- {named(x)}（c={x.get('name') or x['id']}）" for x in mine)
+                        + "\n\n網址加 &c=角色名 就會查那個角色。\n")
+        why = ""
+        if c and c.strip():
+            hit = [x for x in mine if matches(x, c)]
+            if len(hit) != 1:
+                if len(hit) > 1:
+                    return text(f"「{c}」對到不只一個角色，請用完整名字或角色 id。可以查的角色：{listed}", 400)
+                if any(matches(x, c) for x in everyone):
+                    return text(f"這個代碼沒有權限查「{c}」。可以查的角色：{listed}", 403)
+                return text(f"找不到角色「{c}」。可以查的角色：{listed}", 404)
+            cid = hit[0]["id"]
+        elif default in ids:
+            cid, why = default, "（預設角色）"
+        else:
+            cid = mine[0]["id"]
+            if len(mine) > 1:
+                why = "（沒有指定角色，用最近玩的這個）"
+        with db() as conn:
             snap = conn.execute("SELECT captured_at, payload_json FROM character_snapshots "
                                 "WHERE character_id=?", (cid,)).fetchone()
         d: Dict[str, Any] = json.loads(snap["payload_json"]) if snap else {}
@@ -197,10 +241,13 @@ def register(app, db, can_write, activity: Callable, world=None, claim=lambda wr
         if {"activity", "kills", "loot"} & set(wanted):
             act = activity(cid, start, end)
 
-        name = d.get("name") or "角色"
-        out = [f"# {name} 的冒險紀錄",
+        me = next(x for x in mine if x["id"] == cid)
+        name = me.get("full_name") or d.get("name") or me.get("name") or "角色"
+        out = [f"# {name} 的冒險紀錄{why}",
                f"資料更新時間：{local(snap['captured_at']) if snap else '尚無資料'}"
                f"（查詢時間 {now.strftime('%m月%d日 %H:%M')}）。資料只在遊戲存檔後才會更新。"]
+        if len(mine) > 1:
+            out.append(f"這個代碼可以查的角色：{listed}。網址加 &c=角色名 切換。")
 
         def section(title: str, lines: List[str], empty: str = "沒有資料。") -> None:
             out.append(f"\n## {title}")

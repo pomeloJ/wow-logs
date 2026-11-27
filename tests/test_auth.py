@@ -495,3 +495,47 @@ def test_a_sharing_token_can_show_only_some_characters(tmp_path):
     assert seen(web, Authorization=f"Bearer {one}") == ["char-c"]
     assert web.post("/api/v1/me/tokens/characters", json={"id": share["id"], "characters": ["char-a"]},
                     headers={"origin": "https://evil.example"}).status_code == 403
+
+
+def test_a_voice_token_reads_the_characters_chosen_on_the_voice_page_and_the_api(tmp_path):
+    web = signed_in(tmp_path)
+    mine = web.post("/api/v1/admin/tokens", json={"label": "小明"}).json()["token"]
+    for cid in ("char-a", "char-b", "char-c"):
+        upload(web, mine, cid)
+    upload(web, TOKEN, "char-other")                     # someone else's
+    old = web.post("/api/v1/characters/char-a/voice-token", headers={"Authorization": f"Bearer {mine}"}).json()["token"]
+    web.post("/api/v1/me/link", json={"token": mine})
+    made = web.post("/api/v1/me/voice-tokens", json={"label": "手機", "characters": ["char-a", "char-b"]}).json()
+    v, = made["voice"]
+    assert made["view"] == [] and v["characters"] == ["char-a", "char-b"] and len(made["made"]) == 16
+    t = made["made"]
+    say = lambda **q: web.get("/voice", params={"t": t, **q})            # noqa: E731
+    # several characters: named with c, by name or id; unnamed, the one played last, and said so
+    assert say(c="char-b").status_code == 200 and say(c="char-b").text.startswith("# char-b 的冒險紀錄\n")
+    first = say().text.splitlines()
+    assert first[0].endswith("（沒有指定角色，用最近玩的這個）") and first[2].startswith("這個代碼可以查的角色：")
+    assert {"char-a", "char-b"} <= set(first[2].split("：")[1].split("。")[0].split("、"))
+    assert "char-a" in say(show="characters").text and "char-c" not in say(show="characters").text
+    # never another character in its place
+    for asked, status, words in (("char-c", 403, "沒有權限"), ("char-other", 403, "沒有權限"), ("nobody", 404, "找不到")):
+        r = say(c=asked)
+        assert r.status_code == status and words in r.text and "char-a" in r.text, asked
+    # the API with it as the bearer: the same characters, a default kept for it, every part
+    B = {"Authorization": f"Bearer {t}"}
+    assert seen(web, **B) == ["char-a", "char-b"]
+    assert web.get("/api/v1/characters/char-c/snapshot", headers=B).json()["detail"]["error"] == "character_not_authorized"
+    web.put("/api/v1/characters/default", headers=B, json={"character_id": "char-b"})
+    assert say().text.startswith("# char-b 的冒險紀錄（預設角色）")
+    assert web.get("/api/v1/groups", params={"character_id": "char-a"}, headers=B).status_code == 200
+    # changed, renewed and stopped like a sharing token
+    web.post("/api/v1/me/tokens/characters", json={"id": v["id"], "characters": None})
+    assert seen(web, **B) == ["char-a", "char-b", "char-c"]
+    new = web.post("/api/v1/me/tokens/regenerate", json={"id": v["id"]}).json()
+    assert len(new["made"]) == 16 and say().status_code == 404
+    assert web.get("/voice", params={"t": new["made"], "c": "char-c"}).status_code == 200
+    web.post("/api/v1/me/tokens/delete", json={"id": new["voice"][0]["id"]})
+    assert web.get("/voice", params={"t": new["made"]}).status_code == 404
+    # a character's own code is as before: one character, c not needed
+    r = web.get("/voice", params={"t": old})
+    assert r.status_code == 200 and r.text.startswith("# char-a 的冒險紀錄\n") and "可以查的角色" not in r.text
+    assert web.get("/voice", params={"t": old, "c": "char-b"}).status_code == 403
