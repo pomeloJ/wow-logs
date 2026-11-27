@@ -251,6 +251,7 @@ class Meter:
         # One row per hit, miss and heal of this pass, for the server's own statistics (not kept
         # between scans). pos is where the line being read starts in the file.
         self.rows: Optional[List[List[Any]]] = None
+        self.cuts: List[Tuple[int, str]] = []                        # (row index, character) where whose log it is changed
         self.pos = 0
         self.starts: Dict[Any, float] = {}                           # casts under way: (caster, ability) -> began
         # finished minutes not sent yet (kept while it is still unknown whose log this is)
@@ -292,7 +293,7 @@ class Meter:
                                    for n in {self.named(k) for k in table}}
             more = {"taken": self._named(self.taken), "spells": spells, "best": best, "fight": round(self.fight),
                     "hits": pairs(self.hits), "over": self._named(self.over), "hurt": self.hurt,
-                    "cc": pairs(self.cc)}
+                    "cc": pairs(self.cc), "me": self.me}
             self.done.append((self.bucket, self._named(self.damage), self._named(self.healing), more))
         self.bucket, self.damage, self.healing = None, {}, {}
         self.taken, self.spells, self.best, self.fight = {}, {}, {}, 0
@@ -360,6 +361,19 @@ class Meter:
                           int(f[9]) if aura and f[9].isdigit() else None, f[10] if aura else None, None, kind,
                           *[None] * 9, f[12] if aura and len(f) > 12 else None, *[None] * 5, f[5]])
 
+    def _became(self, guid: str) -> None:
+        """The log is someone else's from here on. The game keeps writing the same file when
+        the player logs out and comes back as another character (seen in the game: a second
+        character's play was filed under the first), so what was gathered so far is closed
+        as the earlier character's, and the rows from here on are marked as the new one's."""
+        if self.me is not None:
+            self.close()
+            self.enc = None
+            self.last = None
+        self.me = guid
+        if self.rows is not None:
+            self.cuts.append((len(self.rows), guid))
+
     def _roll(self, epoch: float) -> None:
         """Start a new minute when the clock has moved on."""
         minute = int(epoch // 60)
@@ -373,7 +387,8 @@ class Meter:
             return None
         if flags & PLAYER:
             if flags & MINE:
-                self.me = self.me or guid
+                if guid != self.me and guid.startswith("Player-"):
+                    self._became(guid)
                 return ""
             self.names[guid] = name.split("-")[0]
             return self.names[guid]
@@ -403,7 +418,7 @@ class Meter:
                 e = self.enc
                 self.enc_done.append([e["start"], epoch, e["name"], f[5] == "1", round((_num(f[6]) or 0) / 1000)
                                       if len(f) > 6 else round(epoch - e["start"]),
-                                      self._named(e["damage"]), self._named(e["healing"]), self._named(e["taken"])])
+                                      self._named(e["damage"]), self._named(e["healing"]), self._named(e["taken"]), self.me])
             self.enc = None
             return
         if len(f) < 9:
@@ -422,7 +437,7 @@ class Meter:
             who = self._who(f[1], f[2], flags)
             npc = NPC.match(f[5])
             if who is not None and npc:
-                self.kills.append([epoch, f[5], int(npc.group(1)), f[6] if f[6] != "nil" else None, who, self.zone])
+                self.kills.append([epoch, f[5], int(npc.group(1)), f[6] if f[6] != "nil" else None, who, self.zone, self.me])
             return
         if event == "SPELL_SUMMON":                # remember whose pet or totem this is
             owner = self._who(f[1], f[2], flags)
@@ -670,6 +685,7 @@ def process_combat_logs(game_dir: Path, db: Any, queue, idle_after: float = 120,
         meter = Meter(state.get("meter"))
         if uploader is not None:
             meter.rows = []
+        before = meter.me                           # whose log it was when this pass began
         if st.st_size > offset:
             with open(f, "rb") as fh:
                 fh.seek(offset)
@@ -690,23 +706,40 @@ def process_combat_logs(game_dir: Path, db: Any, queue, idle_after: float = 120,
                 kv_set(queue, READ, newest)
         if time.time() - st.st_mtime >= idle_after:  # nothing new for a while: the minute is over
             meter.close()
-        character = meter.me or (fallback if fallback and fallback.startswith("Player-") else None)
+        guess = fallback if fallback and fallback.startswith("Player-") else None
+        character = meter.me or guess
         if meter.rows:
             note_seen(queue, meter.rows)
-            # Every hit goes to the server as it is. Until that has worked, nothing about this
-            # part of the file is remembered, so it is read again on the next scan.
-            if not character:
-                continue
+            # Every hit goes to the server as it is, each stretch under the character whose log
+            # it was. Until all of that has worked, nothing about this part of the file is
+            # remembered, so it is read again on the next scan.
             for row in meter.rows:
                 row[3] = meter.named(row[3])
-            state_, detail = uploader.upload_hits(character, f.name, meter.rows)
-            if state_ == "skip":                    # no token for this character yet: read it again later
+            marks = [(0, before or (meter.cuts[0][1] if meter.cuts else None) or guess)]
+            for at, owner in meter.cuts:            # the first owner becoming known is no change of owner
+                if owner != marks[-1][1]:
+                    marks.append((at, owner))
+            stretches = [(owner, meter.rows[at:(marks[k + 1][0] if k + 1 < len(marks) else len(meter.rows))])
+                         for k, (at, owner) in enumerate(marks)]
+            again = False
+            for owner, part in stretches:
+                if not part:
+                    continue
+                if not owner:
+                    again = True
+                    break
+                state_, detail = uploader.upload_hits(owner, f.name, part)
+                if state_ == "skip":                # no token for this character yet: read it again later
+                    again = True
+                    break
+                if state_ == "retry":
+                    log.warning("combat log rows will be sent again later: %s", detail)
+                    again = True
+                    break
+                if state_ != "ok":
+                    log.error("the server refused combat log rows from %s: %s", f.name, detail)
+            if again:
                 continue
-            if state_ == "retry":
-                log.warning("combat log rows will be sent again later: %s", detail)
-                continue
-            if state_ != "ok":
-                log.error("the server refused combat log rows from %s: %s", f.name, detail)
         events = []
         if character:
             whole = lambda table: {k: round(v) for k, v in table.items()}     # noqa: E731
@@ -727,13 +760,15 @@ def process_combat_logs(game_dir: Path, db: Any, queue, idle_after: float = 120,
                 for part in ("over", "hurt"):
                     if more.get(part):
                         payload[part] = whole(more[part])
+                owner = more.get("me") or character             # the minute is the character's who played it
                 events.append({
-                    "event_id": f"combatlog:{character}:{minute}", "character_id": character,
+                    "event_id": f"combatlog:{owner}:{minute}", "character_id": owner,
                     "event_type": "GROUP_METER", "timestamp": iso(minute * 60 + 59), "payload": payload})
             meter.done = []
-            for start, end, name, success, seconds, damage, healing, taken in meter.enc_done:
+            for start, end, name, success, seconds, damage, healing, taken, *rest in meter.enc_done:
+                owner = (rest[0] if rest else None) or character
                 events.append({
-                    "event_id": f"combatlog:enc:{character}:{int(start)}", "character_id": character,
+                    "event_id": f"combatlog:enc:{owner}:{int(start)}", "character_id": owner,
                     "event_type": "GROUP_ENCOUNTER", "timestamp": iso(end),
                     "payload": {"source": "combatlog", "name": name, "success": success, "duration": seconds,
                                 "damage": whole(damage), "healing": whole(healing), "taken": whole(taken)}})
@@ -741,14 +776,15 @@ def process_combat_logs(game_dir: Path, db: Any, queue, idle_after: float = 120,
             due = [k for k in meter.kills if saved_at is not None and k[0] <= saved_at]
             if due:
                 known = recorded_kills(queue)
-                for at, guid, npc, name, who, zone in due:
+                for at, guid, npc, name, who, zone, *rest in due:
+                    owner = (rest[0] if rest else None) or character
                     same = [t for t in known.get(npc, []) if abs(t - at) <= 5]
                     if same:                        # the addon has this one: each of its kills matches once
                         known[npc].remove(min(same, key=lambda t: abs(t - at)))
                         continue
                     payload = {"source": "combatlog", "monster_id": npc, "monster_name": name,
                                "monster_guid": guid, "zone_name": zone, "killed_by": meter.named(who) or None}
-                    events.append({"event_id": f"combatlog:kill:{guid}", "character_id": character,
+                    events.append({"event_id": f"combatlog:kill:{guid}", "character_id": owner,
                                    "event_type": "MOB_KILLED", "timestamp": iso(at),
                                    "payload": {k: v for k, v in payload.items() if v is not None}})
                 meter.kills = [k for k in meter.kills if k not in due]

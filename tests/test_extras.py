@@ -216,6 +216,35 @@ def test_no_log_folder_or_unknown_owner(tmp_path):
     assert queued(q)[0]["character_id"] == ME and queued(q)[0]["payload"]["damage"] == {"小鈴": 80}
 
 
+def test_a_second_character_in_the_same_log_file_gets_its_own_fights(tmp_path):
+    # Seen in the game: the log stays on across logging out, the same file goes on, and a second
+    # character's play was filed under the first one.
+    g, q, up = game(tmp_path), Queue(":memory:"), FakeUploader()
+    alt_id = "Player-1-0000EEEE"
+    alt = f'{alt_id},"小號-伺服器",0x511,0x0'
+    write_log(g, [
+        f"11/22/2026 20:05:10.000  SWING_DAMAGE,{P},{MOB},50,-1,1,0,0,0,nil,nil,nil",
+        f"11/22/2026 20:05:11.000  SWING_DAMAGE,{MOB},{P},20,-1,1,0,0,0,nil,nil,nil",
+        f"11/22/2026 20:05:40.000  SWING_DAMAGE,{alt},{MOB},70,-1,1,0,0,0,nil,nil,nil",       # the same minute, after the switch
+        f"11/22/2026 20:06:05.000  SWING_DAMAGE,{alt},{MOB},30,-1,1,0,0,0,nil,nil,nil",
+        f"11/22/2026 20:06:06.000  PARTY_KILL,{alt},{MOB},0",
+    ])
+    kill_time = extras.parse_line("11/22/2026 20:06:06.000  X,1", 2026)[0]
+    assert extras.process_combat_logs(g, DB, q, saved_at=kill_time + 60, uploader=up) == 4
+    assert [(who, len(rows)) for who, _, rows in up.sent] == [(ME, 2), (alt_id, 2)]    # each one's hits under its own name
+    assert max(r[1] for r in up.sent[0][2]) < min(r[1] for r in up.sent[1][2])
+    meters = sorted((e["character_id"], e["timestamp"][14:16], e["payload"]["damage"])
+                    for e in queued(q) if e["event_type"] == "GROUP_METER")
+    assert meters == sorted([(ME, "05", {"": 50}), (alt_id, "05", {"": 70}), (alt_id, "06", {"": 30})])
+    kill, = [e for e in queued(q) if e["event_type"] == "MOB_KILLED"]
+    assert kill["character_id"] == alt_id
+    assert extras.process_combat_logs(g, DB, q, saved_at=kill_time + 90, uploader=up) == 0 and len(up.sent) == 2
+    # the next character is told apart on a later pass too
+    write_log(g, [f"11/22/2026 20:09:00.000  SWING_DAMAGE,{P},{MOB},5,-1,1,0,0,0,nil,nil,nil"], mode="a")
+    extras.process_combat_logs(g, DB, q, uploader=up)
+    assert up.sent[-1][0] == ME
+
+
 def test_kills_come_from_the_log_when_the_addon_missed_them(tmp_path):
     g, q = game(tmp_path), Queue(":memory:")
     adv = "0000000000000000,950,1000,120,40,300,0,0,0,1,80,100,0,-1234.56,789.01,1439,3.14,23"
