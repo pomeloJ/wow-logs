@@ -33,7 +33,8 @@ def build() -> Path:
     assets = ROOT / "agent" / "adventuresync" / "assets"
     # Windows wants an .ico; on macOS PyInstaller turns the PNG into the app's icon itself (with Pillow).
     icon = assets / ("icon.ico" if system == "windows" else "icon.png")
-    subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed", "--onefile",
+    extra = ["--version-file", str(version_file(f"AdventureSync-windows-{arch}.exe"))] if system == "windows" else []
+    subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed", "--onefile", *extra,
                     "--name", "AdventureSync", "--paths", str(ROOT / "agent"), "--icon", str(icon),
                     "--add-data", f"{ROOT / 'addon' / 'AdventureCollector'}{sep}addon/AdventureCollector",
                     "--add-data", f"{assets}{sep}adventuresync/assets",
@@ -47,6 +48,37 @@ def build() -> Path:
                                        ROOT / "dist", "AdventureSync.app"))
     print(f"built {out} (version {version()}, {out.stat().st_size / 1048576:.1f} MB)")
     return out
+
+
+PUBLISHER = "Adventure Hub"
+PRODUCT = "AdventureSync"
+
+
+def version_file(filename: str) -> Path:
+    """The details Windows shows under the program's Properties > Details (publisher, product,
+    version). A program without them looks more suspicious to virus scanners."""
+    numbers = tuple(int(n) for n in re.findall(r"\d+", version()))[:4]
+    numbers += (0,) * (4 - len(numbers))
+    strings = {"CompanyName": PUBLISHER, "FileDescription": "AdventureSync - sync program for Adventure Hub",
+               "FileVersion": version(), "InternalName": PRODUCT, "LegalCopyright": f"(c) {PUBLISHER}",
+               "OriginalFilename": filename, "ProductName": PRODUCT, "ProductVersion": version()}
+    table = ",\n".join(f"            StringStruct({k!r}, {v!r})" for k, v in strings.items())
+    path = ROOT / "build" / "version-info.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"""VSVersionInfo(
+  ffi=FixedFileInfo(filevers={numbers}, prodvers={numbers}, mask=0x3f, flags=0x0, OS=0x40004,
+                    fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[
+    StringFileInfo([
+      StringTable('040904B0', [
+{table}
+      ])
+    ]),
+    VarFileInfo([VarStruct('Translation', [0x0409, 1200])])
+  ]
+)
+""", encoding="utf-8")
+    return path
 
 
 def version() -> str:
