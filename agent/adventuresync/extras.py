@@ -24,6 +24,8 @@ from typing import Any, Dict, List, Optional, Tuple
 log = logging.getLogger("adventuresync")
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tga"}
+AURA_EVENTS = ("SPELL_AURA_APPLIED", "SPELL_AURA_REMOVED", "SPELL_AURA_REFRESH", "SPELL_AURA_APPLIED_DOSE",
+               "SPELL_AURA_REMOVED_DOSE", "SPELL_AURA_BROKEN", "SPELL_AURA_BROKEN_SPELL")
 FULL_WIDTH, THUMB_WIDTH = 1920, 480
 
 
@@ -64,6 +66,45 @@ def scaled_jpeg(path: Path, width: int, quality: int) -> Tuple[bytes, int, int]:
         out = io.BytesIO()
         img.save(out, "JPEG", quality=quality)
         return out.getvalue(), img.width, img.height
+
+
+# The AI screenshot key (addon) draws the position as 72 black and white squares along the
+# bottom-left edge of the picture: CODE_CELL unscaled UI units each, the screen being 768 of
+# those high. Read back here, so a picture carries the place of its own moment to the server.
+CODE_CELL = 5
+CODE_SYNC = [1, 0, 1, 1, 0, 0, 1, 0]
+
+
+def read_code(path: Path) -> Optional[Dict[str, Any]]:
+    """{map_id, x, y, facing} coded into an AI screenshot, or None for any other picture."""
+    from PIL import Image
+    with Image.open(path) as img:
+        g = img.convert("L")
+        w, h = g.size
+        unit = h / 768
+        bits = []
+        for i in range(72):
+            cx, cy = int((i + 0.5) * CODE_CELL * unit), int(h - 0.5 * CODE_CELL * unit)
+            r = max(0, int(unit) - 1)
+            px = [g.getpixel((min(w - 1, max(0, cx + dx)), min(h - 1, max(0, cy + dy))))
+                  for dx in range(-r, r + 1) for dy in range(-r, r + 1)]
+            bits.append(1 if sum(px) / len(px) >= 128 else 0)
+
+    def num(a: int, n: int) -> int:
+        return int("".join(map(str, bits[a:a + n])), 2)
+    if bits[:8] != CODE_SYNC:
+        return None
+    m, x, y, f, check = num(8, 16), num(24, 17), num(41, 17), num(58, 9), num(67, 5)
+    if (m + x + y + f) % 32 != check:
+        return None
+    place: Dict[str, Any] = {}
+    if m:
+        place["map_id"] = m
+    if x <= 100000 and y <= 100000:
+        place["x"], place["y"] = x / 1000, y / 1000
+    if f < 360:
+        place["facing"] = f
+    return place or None
 
 
 _sizes: Dict[str, int] = {}          # file -> its size when last looked at, to tell when the game is done writing it
@@ -130,6 +171,10 @@ def process_screenshots(game_dir: Path, db: Any, queue, uploader) -> int:
             done[f.name] = "map"
             continue
         try:
+            place = read_code(f)
+        except Exception:
+            place = None
+        try:
             full, w, h = scaled_jpeg(f, FULL_WIDTH, 85)
             thumb, _, _ = scaled_jpeg(f, THUMB_WIDTH, 80)
         except Exception as e:
@@ -140,7 +185,8 @@ def process_screenshots(game_dir: Path, db: Any, queue, uploader) -> int:
             continue
         _sizes.pop(str(f), None)
         shot_id = re.sub(r"[^A-Za-z0-9_-]", "_", f.stem)[:80]
-        state, detail = uploader.upload_screenshot(shot_id, character, iso(st.st_mtime), w, h, full, thumb)
+        state, detail = uploader.upload_screenshot(shot_id, character, iso(st.st_mtime), w, h, full, thumb,
+                                                   **({"place": place} if place else {}))
         if state == "ok":
             done[f.name] = "uploaded"
             sent += 1
@@ -359,8 +405,9 @@ class Meter:
                           _num(f[25]), took, *[None] * 13, f[5] if npc else None])
 
     def _note(self, epoch: float, f: List[str], way: str, who: str, pet: bool, kind: Optional[str] = None,
-              other: Optional[str] = None) -> None:
-        """An aura gained or lost, or a death, as a row."""
+              other: Optional[str] = None, stacks: Optional[int] = None) -> None:
+        """An aura gained or lost (APPLIED, REFRESH, REMOVED, or APPLIED_DOSE / REMOVED_DOSE with
+        the stacks it has now in `amount`), or a death, as a row."""
         if self.rows is None:
             return
         aura = way == "aura"
@@ -368,7 +415,7 @@ class Meter:
         self.rows.append([self.pos, round(epoch * 1000), way, who, int(pet), f[2] if aura and f[2] != "nil" else f[6],
                           other, int(npc.group(1)) if npc else None,
                           int(f[9]) if aura and f[9].isdigit() else None, f[10] if aura else None, None, kind,
-                          *[None] * 9, f[12] if aura and len(f) > 12 else None, *[None] * 5, f[5]])
+                          stacks, *[None] * 8, f[12] if aura and len(f) > 12 else None, *[None] * 5, f[5]])
 
     def _became(self, guid: str) -> None:
         """The log is someone else's from here on. The game keeps writing the same file when
@@ -465,18 +512,26 @@ class Meter:
                 if len(self.starts) > 200:
                     self.starts.pop(next(iter(self.starts)))
             return
-        if event in ("SPELL_AURA_APPLIED", "SPELL_AURA_REMOVED", "SPELL_AURA_REFRESH") and self.rows is not None and len(f) > 12:
+        if event in AURA_EVENTS and self.rows is not None and len(f) > 12:
             try:
                 dest = int(f[7], 16)
             except ValueError:
                 dest = 0
-            kind = event[11:]
+            kind, stacks = event[11:], None
+            if kind in ("BROKEN", "BROKEN_SPELL"):          # broken by damage or a spell: it ends there
+                if kind == "BROKEN_SPELL":                  # ..., the breaking spell's id, name, school, BUFF|DEBUFF
+                    f = f[:12] + f[-1:]
+                kind = "REMOVED"
+            elif kind.endswith("_DOSE"):                    # ..., BUFF|DEBUFF, how many stacks now
+                stacks = int(f[13]) if len(f) > 13 and f[13].isdigit() else None
+                f = f[:13]
             if dest & PLAYER and dest & (MINE | PARTY | RAID):         # something on a member: filed under them
-                self._note(epoch, f, "aura", self._who(f[5], f[6], dest) or "", False, kind)
+                self._note(epoch, f, "aura", self._who(f[5], f[6], dest) or "", False, kind, stacks=stacks)
             elif not dest & (MINE | PARTY | RAID):                     # something a member put on someone else
                 who = self._who(f[1], f[2], flags)
                 if who is not None:
-                    self._note(epoch, f, "aura", who, bool(flags & (PET | GUARDIAN)), kind, f[6] if f[6] != "nil" else None)
+                    self._note(epoch, f, "aura", who, bool(flags & (PET | GUARDIAN)), kind, f[6] if f[6] != "nil" else None,
+                               stacks=stacks)
             return
         if event == "UNIT_DIED" and self.rows is not None:
             try:

@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.3.4"
+local VERSION = "0.3.5"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -1164,7 +1164,10 @@ local function sampleThreat()
                 status = type(status) == "number" and status or 0
                 -- seen in this game: whoever holds the enemy reads a raw percent of 255 (it is
                 -- measured against the tank, that is against itself); the holder is 100 of both
-                if tanking == true or status >= 2 then pct, raw = 100, 100 end
+                -- and at the start of a fight units with no threat yet can read "tanking" (3) and
+                -- odd percents (232): with no threat nobody holds the enemy
+                if value <= 0 then pct, raw, status = 0, 0, 0
+                elseif tanking == true or status >= 2 then pct, raw = 100, 100 end
                 threatRow(mob, idx, t, string.format("%d,%d,%d,%d", math.floor(value + 0.5),
                     math.floor((type(pct) == "number" and pct or 0) + 0.5),
                     math.floor((type(raw) == "number" and raw or 0) + 0.5), status), status)
@@ -1513,6 +1516,7 @@ local function formName()
 end
 
 local function bar(cur, max)
+    if isSecret(cur) then return "遊戲隱藏" end
     cur, max = plain(cur), plain(max)
     if type(cur) ~= "number" then return NA end
     if type(max) == "number" and max > 0 then
@@ -1520,8 +1524,6 @@ local function bar(cur, max)
     end
     return tostring(cur)
 end
-
-local POWER = { [0] = "法力", [1] = "怒氣", [2] = "集中值", [3] = "能量" }
 
 local function guidInfo(guid)
     guid = plain(guid)
@@ -1581,130 +1583,151 @@ local function tooltipInfo()
     return out
 end
 
-local function trackedQuestIds()
-    local ids = {}
-    if type(C_QuestLog) == "table" and type(C_QuestLog.GetNumQuestWatches) == "function"
-        and type(C_QuestLog.GetQuestIDForQuestWatchIndex) == "function" then
-        for i = 1, plain(safe(C_QuestLog.GetNumQuestWatches)) or 0 do
-            local id = plain(safe(C_QuestLog.GetQuestIDForQuestWatchIndex, i))
-            if type(id) == "number" then ids[#ids + 1] = id end
-        end
-    end
-    if #ids == 0 and type(GetNumQuestWatches) == "function" and type(GetQuestIndexForWatch) == "function"
-        and type(C_QuestLog) == "table" then
-        for i = 1, plain(safe(GetNumQuestWatches)) or 0 do
-            local index = plain(safe(GetQuestIndexForWatch, i))
-            local info = type(index) == "number" and safe(C_QuestLog.GetInfo, index) or nil
-            local id = type(info) == "table" and plain(info.questID) or nil
-            if type(id) == "number" then ids[#ids + 1] = id end
-        end
-    end
-    return ids
-end
-
--- The tracked quests, or (none tracked) the unfinished ones in the log, with their progress.
-local function questLines(lines, data)
-    local log = safe(scanners.quests) or {}
-    local byId = {}
-    for _, q in ipairs(log) do byId[q.quest_id] = q end
-    local ids, note = trackedQuestIds(), "追蹤中"
-    if #ids == 0 then
-        note = "沒有追蹤任務，列出日誌中未完成的"
-        for _, q in ipairs(log) do if not q.complete then ids[#ids + 1] = q.quest_id end end
-    end
-    lines[#lines + 1] = LABEL:format("任務") .. note .. (#ids == 0 and "：無" or "")
-    data.quests = {}
-    for n, id in ipairs(ids) do
-        if n > 4 then lines[#lines + 1] = "    …另有 " .. (#ids - 4) .. " 個" break end
-        data.quests[#data.quests + 1] = id
-        local q = byId[id] or {}
-        local done = q.complete
-        if done == nil and type(C_QuestLog) == "table" then done = plain(safe(C_QuestLog.IsComplete, id)) and true or false end
-        lines[#lines + 1] = string.format("    [%d] %s — %s", id, fmt(q.title or questTitle(id)),
-            done and "|cff66ff66已完成，可交付|r" or "進行中")
-        for i, o in ipairs(q.objectives or {}) do
-            if i > 3 then break end
-            lines[#lines + 1] = "        " .. (o.finished and "✓ " or "· ") .. o.text
-        end
-    end
-end
-
-local RECENT = {
-    ITEM_LOOTED = function(p) return "拾取 " .. fmt(p.item_name) .. " x" .. fmt(p.count) .. " (item " .. fmt(p.item_id) .. ")" end,
-    MOB_KILLED = function(p) return "擊殺 " .. fmt(p.monster_name) .. " (NPC " .. fmt(p.monster_id) .. ")" end,
-    QUEST_ACCEPTED = function(p) return "接受任務 [" .. fmt(p.quest_id) .. "] " .. fmt(p.quest_name) end,
-    QUEST_COMPLETED = function(p) return "交付任務 [" .. fmt(p.quest_id) .. "] " .. fmt(p.quest_name) end,
-    QUEST_REMOVED = function(p) return "移除任務 [" .. fmt(p.quest_id) .. "] " .. fmt(p.quest_name) end,
-    LEVEL_UP = function(p) return "升到 " .. fmt(p.level) .. " 級" end,
-    PLAYER_DIED = function() return "死亡" end,
-    COMBAT = function(p) return "戰鬥 " .. fmt(p.duration) .. " 秒" end,
-}
-
 local function ago(ts, t)
     local s = math.max(0, t - (tonumber(ts) or t))
     return s < 60 and (s .. " 秒前") or (math.floor(s / 60) .. " 分前")
-end
-
-local function recentLines(lines)
-    local t, got = now(), {}
-    for i = #db.events, math.max(1, #db.events - 300), -1 do
-        local e = db.events[i]
-        if type(e) == "table" and (t - (tonumber(e.ts) or 0)) > 900 then break end
-        local describe = type(e) == "table" and RECENT[e.event_type]
-        if describe then
-            got[#got + 1] = "    " .. ago(e.ts, t) .. "  " .. describe(type(e.payload) == "table" and e.payload or {})
-            if #got >= 6 then break end
-        end
-    end
-    lines[#lines + 1] = LABEL:format("近期") .. (#got == 0 and "15 分鐘內沒有紀錄" or "")
-    for _, l in ipairs(got) do lines[#lines + 1] = l end
-    if #AI.messages > 0 then
-        lines[#lines + 1] = LABEL:format("系統提示")
-        for i = #AI.messages, 1, -1 do
-            lines[#lines + 1] = "    " .. ago(AI.messages[i].ts, t) .. "  " .. AI.messages[i].text
-        end
-    end
 end
 
 local function remember(text)
     text = plain(text)
     if type(text) ~= "string" or text == "" then return end
     AI.messages[#AI.messages + 1] = { ts = now(), text = text }
-    if #AI.messages > 3 then table.remove(AI.messages, 1) end
+    if #AI.messages > 2 then table.remove(AI.messages, 1) end
 end
 function handlers.UI_INFO_MESSAGE(a, b) remember(type(b) == "string" and b or a) end
 function handlers.UI_ERROR_MESSAGE(a, b) remember(type(b) == "string" and b or a) end
 
--- The panel's text, and the same facts as data for the AI_SCREENSHOT event.
-local function aiText(mouse, mouseUnit, mouseId, mouseName)
+-- Health and power. Seen in this game: the current values come back as secret values, which an
+-- addon may not read or count with but may write on screen. So the panel shows them (the game
+-- formats them into the text, see aiLayout) while the saved record leaves them out. What each
+-- way of asking gave is kept in db.debug.resources.
+local function probe(fn, ...)
+    if type(fn) ~= "function" then return nil, "missing" end
+    local ok, v = pcall(fn, ...)
+    if not ok then return nil, "error" end
+    if isSecret(v) then return nil, "secret", v end
+    if type(v) ~= "number" then return nil, type(v) end
+    return v, "number"
+end
+
+local function escape(text) return (text:gsub("%%", "%%%%")) end
+
+-- text (what can be read, for the record and as a fallback), the numbers, and how to show it:
+-- a format and its arguments, secret ones among them
+local function resource(label, cur, max, pct, seen)
+    local c, cs, hidden = probe(unpack(cur))
+    local m, ms, hiddenMax = probe(unpack(max))
+    seen[label], seen[label .. "_max"] = cs, ms
+    if c then
+        local text = (m and m > 0) and string.format("%s %d/%d (%d%%)", label, c, m, math.floor(c * 100 / m + 0.5))
+            or (label .. " " .. c)
+        return text, c, m, nil, escape(text), {}
+    end
+    local p, ps, hiddenPct = probe(unpack(pct))
+    seen[label .. "_pct"] = ps
+    if p then
+        if p <= 1 then p = p * 100 end
+        local text = string.format("%s %d%%", label, math.floor(p + 0.5))
+        return text, nil, m, p, escape(text), {}
+    end
+    local text = label .. " " .. (cs == "secret" and "遊戲隱藏" or NA)
+    if hidden ~= nil then
+        local top = m or hiddenMax
+        if top ~= nil then return text, nil, m, nil, escape(label) .. " %d/%d", { hidden, top } end
+        return text, nil, m, nil, escape(label) .. " %d", { hidden }
+    end
+    if hiddenPct ~= nil then return text, nil, m, nil, escape(label) .. " %d%%", { hiddenPct } end
+    return text, nil, m, nil, escape(text), {}
+end
+
+local POWER = { [0] = "法力", [1] = "怒氣", [2] = "集中值", [3] = "能量" }
+
+local function resourceLine(data)
+    local seen, out, show, args = {}, {}, {}, {}
+    local function add(text, f, a)
+        out[#out + 1], show[#show + 1] = text, f
+        for _, v in ipairs(a) do args[#args + 1] = v end
+    end
+    local text, cur, max, pct, f, a = resource("生命", { UnitHealth, "player" }, { UnitHealthMax, "player" },
+        { UnitHealthPercent, "player" }, seen)
+    add(text, f, a)
+    data.health, data.health_max, data.health_pct = cur, max, pct
+    -- a druid's power follows the form: energy as a cat, rage as a bear, mana otherwise; mana
+    -- is shown as well while in a form, since it is what casting needs again
+    local kind = plain(safe(UnitPowerType, "player"))
+    kind = type(kind) == "number" and kind or 0
+    local label = POWER[kind] or "能量"
+    text, cur, max, pct, f, a = resource(label, { UnitPower, "player", kind }, { UnitPowerMax, "player", kind },
+        { UnitPowerPercent, "player", kind }, seen)
+    add(text, f, a)
+    data.power_type, data.power, data.power_max, data.power_pct = kind, cur, max, pct
+    if kind ~= 0 and select(2, safe(UnitClass, "player")) == "DRUID" then
+        local mtext, mcur, mmax, _, mf, ma = resource("法力", { UnitPower, "player", 0 }, { UnitPowerMax, "player", 0 },
+            { UnitPowerPercent, "player", 0 }, seen)
+        add(mtext, mf, ma)
+        data.mana, data.mana_max = mcur, mmax
+    end
+    if db then
+        if type(db.debug) ~= "table" then db.debug = {} end
+        seen.at = now()
+        db.debug.resources = seen
+    end
+    return table.concat(out, " · "), table.concat(show, " · "), args
+end
+
+-- The minimap: zoom, rotation and how far it reaches, so a route can be drawn on it. How many
+-- yards it spans is the game's fixed table per zoom step (indoors smaller), not read from it.
+local MINIMAP_OUT = { 466.67, 400, 333.33, 266.67, 200, 133.33 }
+local MINIMAP_IN = { 300, 240, 180, 120, 80, 50 }
+
+local function minimapLine(mapID, data)
+    local m = Minimap
+    if type(m) ~= "table" then return nil end
+    local zoom, levels = plain(safe(m.GetZoom, m)), plain(safe(m.GetZoomLevels, m))
+    local cvar = type(C_CVar) == "table" and C_CVar.GetCVar or GetCVar
+    local rotate = plain(safe(cvar, "rotateMinimap"))
+    local indoors = plain(safe(IsIndoors)) and true or false
+    local span = type(zoom) == "number" and (indoors and MINIMAP_IN or MINIMAP_OUT)[zoom + 1] or nil
+    local parts = { "縮放 " .. (type(zoom) == "number" and (zoom .. "/" .. fmt(type(levels) == "number" and levels - 1 or nil)) or NA) }
+    parts[#parts + 1] = rotate == nil and ("旋轉 " .. NA) or (rotate == "1" and "會旋轉（上方=面向）" or "不旋轉（上方=北）")
+    parts[#parts + 1] = indoors and "室內" or "戶外"
+    local pct
+    if span then
+        local w = type(C_Map) == "table" and type(mapID) == "number" and plain((safe(C_Map.GetMapWorldSize, mapID))) or nil
+        pct = type(w) == "number" and w > 0 and math.floor(span * 1000 / w + 0.5) / 10 or nil
+        parts[#parts + 1] = string.format("寬約 %d 碼", math.floor(span + 0.5)) .. (pct and ("（地圖寬 " .. pct .. "%）") or "")
+    end
+    data.minimap = { zoom = zoom, zoom_levels = levels, rotate = rotate == nil and nil or rotate == "1",
+                     indoors = indoors, yards = span and math.floor(span + 0.5) or nil, map_percent = pct }
+    return table.concat(parts, " · ")
+end
+
+-- The panel's text, and the same facts as data for the AI_SCREENSHOT event. Kept short: it
+-- sits in the bottom-left corner so the middle of the screen, the road ahead and the people
+-- and buildings on it stay in view. Quests and history are left to the server (MCP).
+local function aiText(mouse, mouseUnit, mouseId, mouseName, mapID, x, y, deg, dir)
     local lines, data = {}, { local_ts = time() }
     local t = now()
     local name, level = plain(safe(UnitName, "player")), plain(safe(UnitLevel, "player"))
-    lines[1] = "|cffffd100AdventureCollector AI 截圖|r  v" .. VERSION
-    lines[#lines + 1] = LABEL:format("時間") .. date("%Y-%m-%d %H:%M:%S", time()) .. "（本機）  "
-        .. date("!%H:%M:%S", t) .. " UTC"
-    lines[#lines + 1] = LABEL:format("角色") .. fmt(name) .. "  等級 " .. fmt(level)
-    local mapID, x, y = precisePosition()
+    lines[1] = "|cffffd100AI 截圖|r v" .. VERSION .. "  " .. date("%H:%M:%S", time()) .. "（" .. date("!%H:%M:%S", t) .. " UTC）"
+    lines[#lines + 1] = LABEL:format("角色") .. fmt(name) .. " " .. fmt(level) .. "級 · " .. fmt(formName())
+        .. " · " .. ((function()
+            local combat = plain(safe(UnitAffectingCombat, "player"))
+            data.in_combat = combat
+            return combat == nil and "戰鬥 " .. NA or combat and "|cffff5555戰鬥中|r" or "非戰鬥"
+        end)())
     local info = type(mapID) == "number" and safe(C_Map.GetMapInfo, mapID) or nil
     local sub = plain(safe(GetSubZoneText))
     lines[#lines + 1] = LABEL:format("地圖") .. fmt(type(info) == "table" and plain(info.name) or zoneName())
-        .. (type(sub) == "string" and sub ~= "" and (" / " .. sub) or "") .. "  UiMapID " .. fmt(mapID)
-    lines[#lines + 1] = LABEL:format("座標") .. (x and string.format("%.3f, %.3f", x, y) or NA)
-        .. "  (地圖百分比，左上 0,0)"
-    local deg, dir = facing()
-    lines[#lines + 1] = LABEL:format("面向") .. (deg and (deg .. "° " .. dir) or NA) .. "  (北 0°，順時針)"
-    local combat = plain(safe(UnitAffectingCombat, "player"))
-    lines[#lines + 1] = LABEL:format("狀態") .. "形態 " .. fmt(formName()) .. "  ·  "
-        .. (combat == nil and "戰鬥 " .. NA or combat and "|cffff5555戰鬥中|r" or "非戰鬥")
-    local res = { "生命 " .. bar(safe(UnitHealth, "player"), (safe(UnitHealthMax, "player"))) }
-    local kind = plain(safe(UnitPowerType, "player"))
-    if type(kind) == "number" then
-        res[#res + 1] = (POWER[kind] or "能量") .. " " .. bar(safe(UnitPower, "player", kind), (safe(UnitPowerMax, "player", kind)))
-    end
-    if kind ~= 0 and select(2, safe(UnitClass, "player")) == "DRUID" then
-        res[#res + 1] = "法力 " .. bar(safe(UnitPower, "player", 0), (safe(UnitPowerMax, "player", 0)))
-    end
-    lines[#lines + 1] = LABEL:format("資源") .. table.concat(res, "  ·  ")
+        .. (type(sub) == "string" and sub ~= "" and (" / " .. sub) or "") .. " · UiMapID " .. fmt(mapID)
+    lines[#lines + 1] = LABEL:format("座標") .. (x and string.format("%.3f, %.3f", x, y) or NA) .. " · "
+        .. LABEL:format("面向") .. (deg and (deg .. "° " .. dir) or NA)
+    lines[#lines + 1] = "|cff8a8a8a(座標=地圖百分比，左上 0,0；面向 北 0° 順時針)|r"
+    local res, show, args = resourceLine(data)
+    lines[#lines + 1] = LABEL:format("資源") .. res
+    AI.res = { index = #lines, fmt = LABEL:format("資源") .. show, args = args, n = #args }
+    local mini = minimapLine(mapID, data)
+    if mini then lines[#lines + 1] = LABEL:format("小地圖") .. mini end
     local target, targetId, targetName = unitLine("target")
     lines[#lines + 1] = LABEL:format("目標") .. (target or "無")
     if target then
@@ -1716,24 +1739,76 @@ local function aiText(mouse, mouseUnit, mouseId, mouseName)
     elseif mouse and (mouse.item or mouse.spell) then
         lines[#lines + 1] = LABEL:format("滑鼠") .. (mouse.item and ("物品 " .. fmt(mouse.item_name) .. " (item " .. mouse.item .. ")")
             or ("技能 " .. fmt(mouse.spell_name) .. " (spell " .. mouse.spell .. ")"))
-    else
-        lines[#lines + 1] = LABEL:format("滑鼠") .. (mouse and "提示框內容如下" or "沒有指向")
+    elseif mouse and #mouse.lines > 0 then
+        lines[#lines + 1] = LABEL:format("滑鼠") .. "提示框："
     end
-    if mouse and #mouse.lines > 0 then
+    if mouse and not mouseUnit then
         for i, l in ipairs(mouse.lines) do
-            if i > 8 then break end
+            if i > 4 then break end
             lines[#lines + 1] = "    |cffbbbbbb" .. l .. "|r"
         end
     end
-    questLines(lines, data)
-    recentLines(lines)
+    for i = #AI.messages, 1, -1 do
+        lines[#lines + 1] = LABEL:format("提示") .. AI.messages[i].text .. "（" .. ago(AI.messages[i].ts, t) .. "）"
+    end
     data.map_id, data.x, data.y, data.facing = mapID, x, y, deg
-    data.in_combat, data.target_id, data.target_name = combat, targetId, targetName
+    data.target_id, data.target_name = targetId, targetName
     data.mouse_npc_id, data.mouse_name = mouseId, mouseName
     data.mouse_item_id, data.mouse_spell_id = mouse and mouse.item, mouse and mouse.spell
+    AI.lines = lines
     return table.concat(lines, "\n"), data
 end
 
+-- ------------------------------------------------------------ AI screenshot: position code
+-- The position also goes into the picture as a row of black and white squares along the
+-- bottom-left edge, so the sync program can read it from the screenshot itself and send it
+-- along: the place shown with a picture is then the one of that very moment, not the last
+-- one saved (the addon's own records only reach the server after saving).
+-- 72 squares of CODE_CELL unscaled UI units (the screen is 768 of them high), left to right,
+-- white = 1: 8 bits 10110010, UiMapID 16, x 17 and y 17 (thousandths of a percent; all ones =
+-- not known), facing 9 (degrees; 511 = not known), check 5 (the sum of the four numbers mod 32).
+local CODE_CELL = 5
+local CODE_SYNC = { 1, 0, 1, 1, 0, 0, 1, 0 }
+
+local function shotCode(mapID, x, y, deg)
+    local bits = {}
+    local function put(v, n)
+        for i = n - 1, 0, -1 do bits[#bits + 1] = math.floor(v / 2 ^ i) % 2 end
+    end
+    for _, b in ipairs(CODE_SYNC) do bits[#bits + 1] = b end
+    local m = type(mapID) == "number" and mapID >= 0 and mapID < 65536 and mapID or 0
+    local cx = type(x) == "number" and math.floor(x * 1000 + 0.5) or 131071
+    local cy = type(y) == "number" and math.floor(y * 1000 + 0.5) or 131071
+    if cx < 0 or cx > 100000 or cy < 0 or cy > 100000 then cx, cy = 131071, 131071 end
+    local f = type(deg) == "number" and deg % 360 or 511
+    put(m, 16) put(cx, 17) put(cy, 17) put(f, 9) put((m + cx + cy + f) % 32, 5)
+    return bits
+end
+
+local function aiCode(bits)
+    if type(CreateFrame) ~= "function" or not UIParent then return nil end
+    local f = AI.code
+    if not f then
+        f = CreateFrame("Frame", "AdventureCollectorAICode", UIParent)
+        safe(f.SetIgnoreParentScale, f, true)
+        f:SetFrameStrata("FULLSCREEN_DIALOG")
+        f:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, 0)
+        f:SetSize(CODE_CELL * #bits, CODE_CELL)
+        f.cells = {}
+        for i = 1, #bits do
+            local c = f:CreateTexture(nil, "OVERLAY")
+            c:SetSize(CODE_CELL, CODE_CELL)
+            c:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", (i - 1) * CODE_CELL, 0)
+            f.cells[i] = c
+        end
+        AI.code = f
+    end
+    for i, b in ipairs(bits) do f.cells[i]:SetColorTexture(b, b, b, 1) end
+    f:Show()
+    return f
+end
+
+-- At most 30% of the screen wide and half of it high, in the bottom-left corner above the code.
 local function aiPanel()
     if AI.frame then return AI.frame end
     if type(CreateFrame) ~= "function" or not UIParent then return nil end
@@ -1741,44 +1816,82 @@ local function aiPanel()
     safe(f.SetIgnoreParentScale, f, true)       -- the same size in the picture whatever the UI scale
     f:SetFrameStrata("DIALOG")
     f:SetClampedToScreen(true)
-    f:SetWidth(600)
     local bg = f:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(f)
-    bg:SetColorTexture(0.02, 0.03, 0.06, 0.9)
-    local text = f:CreateFontString(nil, "OVERLAY")
-    text:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", db.settings.aiFontSize, "")
-    text:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -12)
-    text:SetWidth(572)
-    text:SetJustifyH("LEFT")
-    text:SetJustifyV("TOP")
-    safe(text.SetSpacing, text, 3)
-    f.text = text
+    bg:SetColorTexture(0.02, 0.03, 0.06, 0.92)
+    -- three blocks: before the resources, the resources (their own line, so values the game
+    -- hides can be written there by the game), and after
+    local function block()
+        local t = f:CreateFontString(nil, "OVERLAY")
+        t:SetJustifyH("LEFT")
+        t:SetJustifyV("TOP")
+        safe(t.SetSpacing, t, 1)
+        return t
+    end
+    f.text, f.res, f.text2 = block(), block(), block()
+    f.text:SetPoint("TOPLEFT", f, "TOPLEFT", 8, -6)
+    f.res:SetPoint("TOPLEFT", f.text, "BOTTOMLEFT", 0, -1)
+    f.text2:SetPoint("TOPLEFT", f.res, "BOTTOMLEFT", 0, -1)
     f:SetMovable(true)
     f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", function(self) self:StartMoving() end)
     f:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
         local point, _, _, px, py = self:GetPoint()
-        if type(point) == "string" then db.settings.aiPanelPos = { point = point, x = px, y = py } end
+        if type(point) == "string" then db.settings.aiPanelAt = { point = point, x = px, y = py } end
     end)
     f:Hide()
     AI.frame = f
     return f
 end
 
+-- Unscaled UI units: the screen is 768 high and as wide as its shape makes it.
+local function screenWidth()
+    local w, h = plain(safe(GetScreenWidth)), plain(safe(GetScreenHeight))
+    if type(w) == "number" and type(h) == "number" and h > 0 then return 768 * w / h end
+    return 1365
+end
+
+local function aiLayout(f, lines, res)
+    local width = math.floor(math.min(420, screenWidth() * 0.3))
+    local tallest = 768 * 0.5 - CODE_CELL - 6
+    f:SetWidth(width)
+    local at = res and res.index or #lines + 1
+    local parts = { { f.text, table.concat(lines, "\n", 1, at - 1) }, { f.res, lines[at] or "" },
+                    { f.text2, table.concat(lines, "\n", at + 1) } }
+    local size = db.settings.aiFontSize
+    local h
+    repeat                                       -- smaller type until it fits in half the screen
+        h = 0
+        for _, p in ipairs(parts) do
+            p[1]:SetWidth(width - 16)
+            p[1]:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", size, "")
+            p[1]:SetText(p[2])
+            local ph = plain(safe(p[1].GetStringHeight, p[1]))
+            h = h + (type(ph) == "number" and ph or (p[2] == "" and 0 or size + 2)) + 1
+        end
+        size = size - 1
+    until h + 12 <= tallest or size < 9
+    f:SetHeight(math.min(tallest, h + 12))
+    -- the values the game hides: it formats them into the text itself (measured above with the
+    -- readable text, which is as long); if it refuses, the readable text stays
+    if res and res.n > 0 then pcall(f.res.SetFormattedText, f.res, res.fmt, unpack(res.args, 1, res.n)) end
+end
+
 local function aiPlace(f)
     f:ClearAllPoints()
-    local pos = db.settings.aiPanelPos
+    local pos = db.settings.aiPanelAt
     if type(pos) == "table" and type(pos.point) == "string" then
         f:SetPoint(pos.point, UIParent, pos.point, pos.x or 0, pos.y or 0)
     else
-        f:SetPoint("LEFT", UIParent, "LEFT", 16, 40)   -- left edge, clear of the unit frames and the chat
+        f:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, CODE_CELL + 4)
     end
 end
 
 local function aiHide()
     AI.busy = nil
     if AI.frame then AI.frame:EnableMouse(false) AI.frame:Hide() end
+    if AI.code then AI.code:Hide() end
 end
 
 -- test: shown for a while without a screenshot, and draggable to where it should sit
@@ -1787,18 +1900,21 @@ local function aiShot(test)
     if not test and type(Screenshot) ~= "function" then say("此客戶端無法截圖") return end
     local mouse = tooltipInfo()                     -- before anything on screen changes
     local mouseUnit, mouseId, mouseName = unitLine("mouseover")
-    local text, data = aiText(mouse, mouseUnit, mouseId, mouseName)
+    -- one reading of where the character is, for the panel, the code in the picture and the event
+    local mapID, x, y = precisePosition()
+    local deg, dir = facing()
+    local text, data = aiText(mouse, mouseUnit, mouseId, mouseName, mapID, x, y, deg, dir)
     AI.lastText = text
+    AI.lastCode = shotCode(mapID, x, y, deg)
     AI.serial = AI.serial + 1
     local serial = AI.serial
     local f = aiPanel()
     if f then
         aiPlace(f)
-        f.text:SetText(text)
-        local h = plain(safe(f.text.GetStringHeight, f.text))
-        f:SetHeight((type(h) == "number" and h or 480) + 24)
+        aiLayout(f, AI.lines or { text }, AI.res)
         f:Show()
     end
+    aiCode(AI.lastCode)
     local after = type(C_Timer) == "table" and C_Timer.After or nil
     if test then
         AI.busy = "test"
@@ -1844,6 +1960,7 @@ end
 
 ns.aiShot = aiShot
 ns.aiState = AI
+ns.shotCode = shotCode
 
 -- ------------------------------------------------------------ map screenshot
 -- Takes a screenshot with the world map open and records where the map sits on
@@ -2065,7 +2182,7 @@ SlashCmdList.ADVENTURECOLLECTOR = function(msg)
     elseif msg:match("^aishot") then
         local what = msg:match("^aishot%s+(%S+)")
         if what == "reset" then
-            if db then db.settings.aiPanelPos = nil end
+            if db then db.settings.aiPanelAt = nil end
             say("AI 截圖面板回到預設位置")
         else
             aiShot(what == "test")

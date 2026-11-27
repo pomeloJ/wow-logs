@@ -17,8 +17,9 @@ class FakeUploader:
     def screenshots_on(self, character_id=None):
         return self.shots
 
-    def upload_screenshot(self, shot_id, character_id, taken_at, width, height, full, thumb):
+    def upload_screenshot(self, shot_id, character_id, taken_at, width, height, full, thumb, place=None):
         self.sent.append((shot_id, character_id, taken_at, width, height, len(full) > len(thumb) > 0))
+        self.places = getattr(self, "places", []) + [place]
         return self.result
 
     def upload_hits(self, character_id, source, rows):
@@ -455,3 +456,71 @@ def test_an_unchanged_folder_costs_one_look(tmp_path, monkeypatch):
     shot(g, "b.jpg", age=1.5)                            # a new picture changes the folder
     assert extras.process_screenshots(g, DB, q, up) == 0  # (first look: size noted)
     assert extras.process_screenshots(g, DB, q, up) == 1 and up.sent[-1][0] == "b"
+
+
+def coded_shot(path, bits, size, quality=75):
+    """A picture as the game takes it with the AI screenshot key: a busy scene and, in the
+    bottom-left corner, the squares the addon draws (5 UI units each, the screen 768 high)."""
+    import random
+    w, h = size
+    img = Image.new("RGB", size)
+    rnd = random.Random(1)
+    px = img.load()
+    for y in range(0, h, 7):                                   # blotchy ground and sky
+        for x in range(0, w, 7):
+            c = (rnd.randrange(256), rnd.randrange(256), rnd.randrange(256))
+            for dy in range(min(7, h - y)):
+                for dx in range(min(7, w - x)):
+                    px[x + dx, y + dy] = c
+    unit = h / 768
+    for i, b in enumerate(bits):
+        x0, x1 = round(i * 5 * unit), round((i + 1) * 5 * unit)
+        img.paste((255, 255, 255) if b else (0, 0, 0), (x0, h - round(5 * unit), x1, h))
+    img.save(path, "JPEG", quality=quality)
+
+
+def test_the_position_is_read_back_from_an_ai_screenshot(tmp_path):
+    from wowmock import Game
+    g = Game()
+    g.login()
+    bits = [int(b) for b in g.ns.shotCode(1439, 53.812, 75.1, 270).values()]
+    for size in ((1920, 1080), (1280, 720), (3456, 2234), (2560, 1080)):
+        path = tmp_path / f"s{size[0]}.jpg"
+        coded_shot(path, bits, size)
+        assert extras.read_code(path) == {"map_id": 1439, "x": 53.812, "y": 75.1, "facing": 270}, size
+    blind = [int(b) for b in g.ns.shotCode(1439, None, None, None).values()]   # in an instance: no x, y, facing
+    coded_shot(tmp_path / "i.jpg", blind, (1920, 1080))
+    assert extras.read_code(tmp_path / "i.jpg") == {"map_id": 1439}
+    Image.new("RGB", (1920, 1080), (200, 200, 200)).save(tmp_path / "plain.jpg")
+    assert extras.read_code(tmp_path / "plain.jpg") is None    # an ordinary screenshot: nothing claimed
+
+
+def test_an_ai_screenshot_is_uploaded_with_its_place(tmp_path):
+    from wowmock import Game
+    g, q, up = game(tmp_path), on_long_ago(Queue(":memory:")), FakeUploader()
+    w = Game()
+    w.login()
+    coded_shot(g / "Screenshots" / "f12.jpg", [int(b) for b in w.ns.shotCode(1436, 40.5, 60.25, 15).values()], (1920, 1080))
+    shot(g, "plain.jpg")
+    t = time.time() - 60
+    os.utime(g / "Screenshots" / "f12.jpg", (t, t))
+    assert extras.process_screenshots(g, DB, q, up) == 2
+    assert up.places == [{"map_id": 1436, "x": 40.5, "y": 60.25, "facing": 15}, None]
+
+
+def test_aura_stacks_and_broken_auras_are_sent(tmp_path):
+    g, q, up = game(tmp_path), Queue(":memory:"), FakeUploader()
+    write_log(g, [
+        f"11/22/2026 20:05:01.000  SWING_DAMAGE,{P},{MOB},{ME},0000000000000000,766,965,354,0,1622,0,0,0,1,132,1000,0,-42.59,209.80,0,5.5481,11,52,69,-1,1,0,0,0,nil,1,nil",
+        f"11/22/2026 20:05:02.000  SPELL_AURA_APPLIED,{MOB},{P},7405,\"破甲攻擊\",0x1,DEBUFF",
+        f"11/22/2026 20:05:03.000  SPELL_AURA_APPLIED_DOSE,{MOB},{P},7405,\"破甲攻擊\",0x1,DEBUFF,2",
+        f"11/22/2026 20:05:04.000  SPELL_AURA_REMOVED_DOSE,{MOB},{P},7405,\"破甲攻擊\",0x1,DEBUFF,1",
+        f"11/22/2026 20:05:05.000  SPELL_AURA_APPLIED,{P},{MOB},2637,\"休眠\",0x8,DEBUFF",
+        f"11/22/2026 20:05:06.000  SPELL_AURA_BROKEN_SPELL,{MATE},{MOB},2637,\"休眠\",0x8,19434,\"瞄準射擊\",1,DEBUFF",
+    ])
+    assert extras.process_combat_logs(g, DB, q, uploader=up) == 1
+    (_, _, rows), = up.sent
+    auras = [(r[3], r[9], r[11], r[12], r[21], r[6]) for r in rows if r[2] == "aura"]
+    assert auras == [("", "破甲攻擊", "APPLIED", None, "DEBUFF", None), ("", "破甲攻擊", "APPLIED_DOSE", 2, "DEBUFF", None),
+                     ("", "破甲攻擊", "REMOVED_DOSE", 1, "DEBUFF", None), ("", "休眠", "APPLIED", None, "DEBUFF", "雷鱗巫師"),
+                     ("小鈴", "休眠", "REMOVED", None, "DEBUFF", "雷鱗巫師")]       # broken by a shot: it ends there

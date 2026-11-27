@@ -138,6 +138,8 @@ limited token ever shows chat messages. `GET /api/v1/token` says what a token is
 * group play: `/characters/{id}/groups`, then `/groups/{group_id}` (or `latest`) and its `/skills` and `/analysis`
 * fighting alone: `/characters/{id}/solo` lists the stretches; their ids work with the same `/groups/{group_id}...` endpoints
 * combat outside a group: `/characters/{id}/combat/skills` and `/combat/analysis`
+* buffs and debuffs with their times (on the group and the player, and what the group put on enemies):
+  `/characters/{id}/combat/auras`, for a session (`group_id`) or a stretch of time
 * threat (the game's own figures, per enemy and fight: threat per second, ranking, who held the enemy when):
   `/characters/{id}/threat` with `start_time` / `end_time`, e.g. a group's or a solo stretch's times
 * the game world (quests, monsters, items): everything under `/world`
@@ -149,9 +151,11 @@ limited token ever shows chat messages. `GET /api/v1/token` says what a token is
   or `/screenshots/latest/image` (the JPEG itself); `max_age` leaves out a stale one. There are
   screenshots only when the player has turned on screenshot upload in the sync program; a new
   one arrives a few seconds after it is taken in the game. With the addon's AI screenshot key (F12) the
-  picture carries a panel with the live map id, position to three decimals, facing (degrees clockwise from
-  north), target and mouse-over with their NPC/item/spell ids, tracked quest progress and recent events;
-  read the position off it and pass it to `/world/route` as `from_map`, `from_x`, `from_y`
+  picture carries a small panel in the bottom-left corner with the live map id, position to three decimals,
+  facing (degrees clockwise from north), health and power, the minimap's zoom, rotation and reach, and target
+  and mouse-over with their NPC/item/spell ids (quests and history: ask the API). The same position is coded
+  into the picture and read back by the sync program, so `place` with `source` `screenshot` is exactly what
+  the panel shows; pass it to `/world/route` as `from_map`, `from_x`, `from_y`
 
 **Several characters.** A token may see more than one character (`GET /api/v1/characters`).
 

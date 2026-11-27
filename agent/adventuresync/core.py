@@ -524,15 +524,17 @@ class Uploader:
         return _outcome(r)
 
     def upload_screenshot(self, shot_id: str, character_id: str, taken_at: str, width: int, height: int,
-                          full: bytes, thumb: bytes) -> Tuple[str, str]:
-        """Send a screenshot and its thumbnail. Same result convention as _send."""
+                          full: bytes, thumb: bytes, place: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
+        """Send a screenshot and its thumbnail. Same result convention as _send. `place` is
+        where the picture itself says it was taken (map_id, x, y, facing), when it says so."""
         auth = self.auth(character_id)
         if auth is None:
             return "skip", "no token for this character"
         jpeg = {**auth, "Content-Type": "image/jpeg"}
         try:
             r = self.client.put(f"/api/v1/screenshots/{shot_id}", content=full, headers=jpeg, params={
-                "character_id": character_id, "taken_at": taken_at, "width": width, "height": height})
+                "character_id": character_id, "taken_at": taken_at, "width": width, "height": height,
+                **(place or {})})
             if r.status_code == 200:
                 r = self.client.put(f"/api/v1/screenshots/{shot_id}/thumb", content=thumb, headers=jpeg)
         except httpx.HTTPError as e:

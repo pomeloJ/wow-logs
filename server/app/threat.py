@@ -56,27 +56,32 @@ def parse(samples: Any) -> List[tuple]:
 
 
 def _peak_rate(points: List[tuple]) -> Optional[float]:
-    """Highest threat gained per second over any stretch of at least WINDOW seconds."""
+    """Highest threat gained per second over any stretch of at least WINDOW seconds, so never
+    below the average over the whole of a stretch that long."""
     best = None
-    i = 0
-    for j in range(len(points)):
-        while i < j and points[j][0] - points[i + 1][0] >= WINDOW:
-            i += 1
-        span = points[j][0] - points[i][0]
-        if span >= WINDOW:
+    for i in range(len(points)):
+        for j in range(len(points) - 1, i, -1):
+            span = points[j][0] - points[i][0]
+            if span < WINDOW:
+                break
             rate = (points[j][1] - points[i][1]) / span
             best = rate if best is None or rate > best else best
     return None if best is None else round(best, 1)
 
 
 def analyse(payload: Dict[str, Any], me: Optional[str], series: bool = False) -> Dict[str, Any]:
-    rows = parse(payload.get("samples"))
+    # Seen in this game: as a fight starts, units with no threat yet can read "tanking" (status 3)
+    # and odd percents (232, 255). Nobody holds an enemy with no threat, so such a row counts as 0.
+    rows = [r if r[2] > 0 else (r[0], r[1], 0.0, 0.0, 0.0, 0) for r in parse(payload.get("samples"))]
     units = [u if isinstance(u, dict) else {} for u in (payload.get("units") or [])]
     end = max([r[0] for r in rows] + [0.0])
     duration = payload.get("duration")
     if isinstance(duration, (int, float)) and not isinstance(duration, bool):
         end = max(end, float(duration))
-    span = max(1.0, end)
+    # Only the target can be read: the enemy is seen from its first reading to its last one,
+    # which in a fight against several is only part of the fight.
+    seen_from = rows[0][0] if rows else 0.0
+    seen_to = rows[-1][0] if rows else 0.0
 
     def label(i: int) -> Dict[str, Any]:
         u = units[i - 1] if 0 < i <= len(units) else {}
@@ -92,10 +97,12 @@ def analyse(payload: Dict[str, Any], me: Optional[str], series: bool = False) ->
         tanking = 0.0
         for k, r in enumerate(mine):
             if r[5] >= 2:
-                tanking += (mine[k + 1][0] if k + 1 < len(mine) else end) - r[0]
-        final = mine[-1][2]
-        entry = {**label(i), "final_threat": int(final), "peak_threat": int(max(r[2] for r in mine)),
-                 "avg_tps": round(final / span, 1), "peak_tps": _peak_rate([(r[0], r[2]) for r in mine]),
+                tanking += (mine[k + 1][0] if k + 1 < len(mine) else seen_to) - r[0]
+        first, final = mine[0], mine[-1]
+        gained, took = final[2] - first[2], final[0] - first[0]
+        entry = {**label(i), "final_threat": int(final[2]), "peak_threat": int(max(r[2] for r in mine)),
+                 "avg_tps": round(gained / took, 1) if took >= 1 else None,
+                 "peak_tps": _peak_rate([(r[0], r[2]) for r in mine]),
                  "top_percent": int(max(r[3] for r in mine)), "tanking_seconds": round(tanking, 1),
                  "readings": len(mine)}
         if series:
@@ -114,7 +121,8 @@ def analyse(payload: Dict[str, Any], me: Optional[str], series: bool = False) ->
                                 "to_me": label(r[1])["is_me"], "from_me": label(holder)["is_me"]})
             holder = r[1]
     return {"mob_name": payload.get("mob_name"), "mob_guid": payload.get("mob_guid"),
-            "started": _iso(payload.get("started")), "duration": round(end, 1), "cut": bool(payload.get("cut")),
+            "started": _iso(payload.get("started")), "duration": round(end, 1),
+            "seen_from": seen_from, "seen_seconds": round(seen_to - seen_from, 1), "cut": bool(payload.get("cut")),
             "units": out, "aggro_changes": changes,
             "lost_aggro": sum(1 for c in changes if c["from_me"]), "gained_aggro": sum(1 for c in changes if c["to_me"])}
 
@@ -127,10 +135,13 @@ def register(app, db, can_read) -> None:
         """Threat in each fight, newest first, from the game's own threat figures (see the addon's
         UnitDetailedThreatSituation readings). One entry per enemy and fight.
 
-        Per unit (the character, its pet and group members): `final_threat`, `peak_threat`,
-        `avg_tps` (final threat over the fight's length), `peak_tps` (best stretch of at least 3 s),
+        `duration` is the whole fight; the enemy itself is seen from `seen_from` (seconds into the
+        fight) for `seen_seconds`, while it was the target. Per unit (the character, its pet and
+        group members): `final_threat`, `peak_threat`, `avg_tps` (threat gained per second while
+        seen; null under a second), `peak_tps` (best stretch of at least 3 s),
         `top_percent` (highest percent of what pulls aggro; 100 means it had or was pulling it),
-        `tanking_seconds` and `rank` by final threat. `aggro_changes` lists who took the enemy
+        `tanking_seconds` (while seen) and `rank` by final threat. A unit with no threat never
+        counts as holding the enemy, whatever the game says for it at the start of a fight. `aggro_changes` lists who took the enemy
         from whom and when (`t` in seconds from the start); `lost_aggro` / `gained_aggro` count
         those for the character. `series=true` adds every reading as [t, threat, percent, status].
 

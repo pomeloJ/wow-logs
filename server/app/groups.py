@@ -436,7 +436,7 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
             for r in e["damage"]:
                 r.update(dps=round(r["amount"] / seconds, 1), pct=round(r["amount"] / dealt * 100, 1) if dealt else None)
         return d
-    PARTS = ("defence", "level_gaps", "dots", "guard", "buffs", "heals", "activity", "pets", "autoshot", "casts")
+    PARTS = ("defence", "level_gaps", "dots", "guard", "buffs", "debuffs", "heals", "activity", "pets", "autoshot", "casts")
 
     def mine(scope: Optional[str], character_id: str) -> None:
         if scope is not None and character_id != scope:
@@ -636,7 +636,8 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
         `level_gaps` hit and miss rates by how many levels the target was above the attacker;
         `dots` effects put on enemies, how much of the time they were up and what they ticked for;
         `guard` what happened to attacks aimed at each member (hit, missed, dodged, parried);
-        `buffs` effects on each member and their uptime; `heals` each healing ability with overhealing;
+        `buffs` effects on each member and their uptime; `debuffs` harmful effects on each member (how
+        often, how long, most stacks, from whom); `heals` each healing ability with overhealing;
         `activity` how much of the fighting time each member was attacking;
         `pets` each pet as a fighter; `autoshot` the rhythm of hunters' automatic shots;
         `casts` casts, cost and damage per point of mana, rage or energy.
@@ -689,6 +690,39 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
         with db() as conn:
             return analysis(conn, character_id, a, b, {}, parts, limit)
 
+    @app.get("/api/v1/characters/{character_id}/combat/auras")
+    def character_combat_auras(character_id: str, hours: float = Query(1, gt=0, le=24 * 366),
+                               start_time: Optional[datetime] = None, end_time: Optional[datetime] = None,
+                               group_id: Optional[str] = None, who: Optional[str] = None, spell: Optional[str] = None,
+                               kind: Optional[str] = Query(None, alias="type", pattern="^(BUFF|DEBUFF)$"),
+                               on: Optional[str] = Query(None, pattern="^(members|enemies)$"),
+                               limit: int = Query(200, ge=1, le=2000), scope: Optional[str] = Depends(can_read)):
+        """Buffs and debuffs with their times (needs the combat log), in the order they started.
+
+        Each: `target` (a member, or an enemy when `on_enemy`), `caster` (who put it on: for an
+        effect on a member the player or monster that cast it, for one on an enemy the member),
+        `spell`, `type` BUFF or DEBUFF, `start` and `end` (epoch ms; `end` null and `still_up`
+        when it had not worn off by the end), `seconds`, `refreshes` and the most `stacks`.
+
+        The stretch: a group or solo session (`group_id`, also `latest` / `solo-latest`), or the
+        last `hours` (1 unless given), or `start_time` to `end_time`. Narrow it with `who` (a target
+        or caster name), `spell`, `type`, or `on` (`members` / `enemies`). Effects on everyone near
+        the character are only there if the game wrote them into its combat log: on the group and
+        the player always, on enemies only what the group put on them."""
+        mine(scope, character_id)
+        with db() as conn:
+            if group_id:
+                s = find(conn, character_id, group_id)
+                a, b = _ms(s["started_at"]), _ms(s["ended_at"]) + 999
+            else:
+                a, b = stretch(hours, start_time, end_time)
+            who_ = owner(conn, character_id)
+            me = (who_["name"] if who_ else None) or "我"
+            rows = [x for x in combat.auras(conn, character_id, a, b, me)
+                    if (not who or who in (x["target"], x["caster"])) and (not spell or x["spell"] == spell)
+                    and (not kind or x["type"] == kind) and (not on or x["on_enemy"] == (on == "enemies"))]
+            return {"start": a, "end": b, "total": len(rows), "auras": rows[:limit]}
+
     def by_token(conn, token: str) -> Dict[str, Any]:
         row = conn.execute("SELECT group_id, character_id FROM group_shares WHERE token=?", (token,)).fetchone()
         if row:
@@ -731,7 +765,8 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
                     "level_gaps": combat.level_gaps(conn, cid, a, b, me, levels), "levels": levels,
                     "pets": combat.pets(conn, cid, a, b, me), "autoshot": combat.autoshot(conn, cid, a, b, me),
                     "casts": combat.casts(conn, cid, a, b, me), "dots": combat.dots(conn, cid, a, b, me),
-                    "buffs": combat.buffs(conn, cid, a, b, me), "guard": combat.guard(conn, cid, a, b, me),
+                    "buffs": combat.buffs(conn, cid, a, b, me), "debuffs": combat.debuffs(conn, cid, a, b, me),
+                    "guard": combat.guard(conn, cid, a, b, me),
                     "heals": combat.heals(conn, cid, a, b, me), "activity": combat.activity(conn, cid, a, b, me)}
 
     @app.get("/api/v1/shared/party/{token}/across")

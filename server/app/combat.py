@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS player_names (
     character_id TEXT NOT NULL, full TEXT NOT NULL, short TEXT NOT NULL,
     PRIMARY KEY (character_id, full));
 """
+DOSE = ("APPLIED_DOSE", "REMOVED_DOSE")           # an aura's stacks changing (count in `amount`), not a new one
 UNIT = COLUMNS.index("unit") + 2                  # where the unit sits in a stored row (source, pos, character_id, ...)
 
 
@@ -503,6 +504,8 @@ def dots(conn, character_id: str, start_ms: int, end_ms: int, me: str) -> List[D
     for r in conn.execute("SELECT who, pet, spell, kind, guid, ts FROM combat_hits WHERE character_id=? AND ts>=? AND ts<=? "
                           "AND way='aura' AND miss='DEBUFF' AND enemy IS NOT NULL ORDER BY ts, pos",
                           (character_id, start_ms, end_ms)):
+        if r["kind"] in DOSE:
+            continue
         e = found.setdefault((r["who"] or me, r["spell"], r["pet"]), {"open": {}, "up": 0, "applied": 0, "targets": set()})
         if r["kind"] == "REMOVED":
             if r["guid"] in e["open"]:
@@ -534,6 +537,8 @@ def buffs(conn, character_id: str, start_ms: int, end_ms: int, me: str) -> List[
     found: Dict[Any, Dict[str, Any]] = {}
     for r in conn.execute("SELECT who, spell, kind, unit, ts FROM combat_hits WHERE character_id=? AND ts>=? AND ts<=? "
                           "AND way='aura' AND miss='BUFF' AND enemy IS NULL ORDER BY ts, pos", (character_id, start_ms, end_ms)):
+        if r["kind"] in DOSE:
+            continue
         who = r["who"] or me
         e = found.setdefault((who, r["spell"]), {"since": None, "up": 0, "applied": 0, "by": {}})
         if r["kind"] == "REMOVED":
@@ -556,6 +561,67 @@ def buffs(conn, character_id: str, start_ms: int, end_ms: int, me: str) -> List[
                                         "uptime": round(min(1.0, e["up"] / span), 3),
                                         "by": max(e["by"], key=e["by"].get) if e["by"] else None})
     return [{"who": w, "buffs": sorted(b, key=lambda x: -x["up_seconds"])[:20]} for w, b in out.items()]
+
+
+def _intervals(conn, character_id: str, start_ms: int, end_ms: int, me: str, extra: str = "", args=()):
+    """Every aura from its start to its end, out of the APPLIED / REFRESH / REMOVED rows. One
+    on a member (`target` the member, `caster` who put it on) or one a member put on an enemy
+    (`target` the enemy, `caster` the member)."""
+    open_: Dict[Any, Dict[str, Any]] = {}
+    done: List[Dict[str, Any]] = []
+    for r in conn.execute("SELECT ts, who, pet, unit, enemy, spell_id, spell, kind, amount, miss, guid FROM combat_hits "
+                          f"WHERE character_id=? AND ts>=? AND ts<=? AND way='aura'{extra} ORDER BY ts, pos",
+                          (character_id, start_ms, end_ms, *args)):
+        on_enemy = r["enemy"] is not None
+        key = (r["guid"], r["spell_id"] or r["spell"], r["miss"])
+        a = open_.get(key)
+        if r["kind"] == "REMOVED":
+            if a:
+                a["end"] = r["ts"]
+                done.append(open_.pop(key))
+            continue
+        if a is None:
+            caster = (r["unit"] or "").split("-")[0] or None
+            a = open_[key] = {
+                "target": r["enemy"] if on_enemy else (r["who"] or me), "on_enemy": on_enemy,
+                "caster": (r["who"] or me) if on_enemy else (me if caster is None else caster),
+                "pet": bool(r["pet"]) if on_enemy else False, "spell": r["spell"], "spell_id": r["spell_id"],
+                "type": r["miss"], "start": r["ts"], "end": None, "refreshes": 0, "stacks": None}
+            if r["kind"] == "APPLIED":
+                continue
+        if r["kind"] in DOSE:
+            if isinstance(r["amount"], (int, float)):
+                a["stacks"] = max(a["stacks"] or 1, int(r["amount"]))
+        elif r["kind"] in ("REFRESH", "APPLIED"):
+            a["refreshes"] += 1
+    return done + list(open_.values())
+
+
+def auras(conn, character_id: str, start_ms: int, end_ms: int, me: str) -> List[Dict[str, Any]]:
+    """Buffs and debuffs one by one, in the order they started: on whom, from whom, from when
+    to when. One still up at the end has `end` null and is counted to the end of the stretch."""
+    out = []
+    for a in sorted(_intervals(conn, character_id, start_ms, end_ms, me), key=lambda x: x["start"]):
+        until = a["end"] if a["end"] is not None else end_ms
+        out.append({**a, "seconds": round(max(0, until - a["start"]) / 1000, 1), "still_up": a["end"] is None})
+    return out
+
+
+def debuffs(conn, character_id: str, start_ms: int, end_ms: int, me: str) -> List[Dict[str, Any]]:
+    """Harmful effects on each member: how often, for how long, the most stacks, and who put them on."""
+    found: Dict[Any, Dict[str, Any]] = {}
+    for a in _intervals(conn, character_id, start_ms, end_ms, me, " AND enemy IS NULL AND miss='DEBUFF'"):
+        e = found.setdefault((a["target"], a["spell"]), {"who": a["target"], "spell": a["spell"], "spell_id": a["spell_id"],
+                                                         "times": 0, "up_ms": 0, "stacks": None, "by": {}})
+        e["times"] += 1
+        e["up_ms"] += max(0, (a["end"] if a["end"] is not None else end_ms) - a["start"])
+        if a["stacks"]:
+            e["stacks"] = max(e["stacks"] or 0, a["stacks"])
+        e["by"][a["caster"]] = e["by"].get(a["caster"], 0) + 1
+    out = [{**{k: v for k, v in e.items() if k not in ("up_ms", "by")}, "up_seconds": round(e["up_ms"] / 1000),
+            "by": max(e["by"], key=e["by"].get) if e["by"] else None} for e in found.values()]
+    out.sort(key=lambda x: (-x["up_seconds"], -x["times"]))
+    return out
 
 
 def guard(conn, character_id: str, start_ms: int, end_ms: int, me: str) -> List[Dict[str, Any]]:

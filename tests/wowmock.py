@@ -196,6 +196,7 @@ function CreateFrame(kind, name)
     end
     if name == "AdventureCollectorCombatLogSign" then MOCK.sign = f
     elseif name == "AdventureCollectorAIPanel" then MOCK.aipanel = f
+    elseif name == "AdventureCollectorAICode" then MOCK.aicode = f
     elseif kind == "Button" then MOCK.button = f else MOCK.frame = f end
     return f
 end

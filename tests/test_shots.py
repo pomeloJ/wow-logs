@@ -33,7 +33,8 @@ def test_upload_list_and_place_on_the_timeline(client):
     r = client.get("/api/v1/screenshots?character_id=c1", headers=READ).json()
     assert r["total"] == 2 and [s["id"] for s in r["items"]] == ["later", "WoWScrnShot_112226_200500"]   # newest first
     shot = r["items"][1]
-    assert shot["place"] == {"map_id": 1439, "zone": "黑海岸", "x": 41.0, "y": 50.5}     # the nearest recorded position
+    assert shot["place"] == {"map_id": 1439, "zone": "黑海岸", "x": 41.0, "y": 50.5, "facing": None,
+                             "source": "events", "seconds_off": 30}               # the nearest recorded position
     assert shot["moment"] == "擊殺 雷鱗巫師" and (shot["width"], shot["height"]) == (1920, 1080)
     assert r["items"][0]["place"] is None and r["items"][0]["moment"] is None          # nothing recorded around it
     assert "秘密" not in str(r)
@@ -167,3 +168,25 @@ def test_the_server_keeps_the_newest_screenshots_only(make_client, tmp_path):
     assert client.put("/api/v1/sync-settings", headers=mine, json={"keep_screenshots": 1}).json()["screenshots_stored"] == 1
     assert [s["id"] for s in client.get("/api/v1/screenshots?character_id=c-mine", headers=READ).json()["items"]] == ["mine4"]
     assert client.get("/api/v1/sync-settings", headers=AUTH).json()["screenshots_stored"] == 1
+
+
+def test_the_place_a_picture_carries_wins_over_any_record(client):
+    events(client, "c1", [(4, "LOCATION_SAMPLE", {"map_id": 1439, "x": 40.0, "y": 50.0, "zone_name": "黑海岸"})])
+    r = client.put("/api/v1/screenshots/coded", content=JPEG, headers=AUTH, params={
+        "character_id": "c1", "taken_at": (T0 + timedelta(minutes=5)).isoformat(),
+        "map_id": 1439, "x": 41.234, "y": 50.5, "facing": 270})
+    assert r.status_code == 200
+    place = client.get("/api/v1/characters/c1/screenshots/latest", headers=READ).json()["place"]
+    assert place == {"map_id": 1439, "zone": "黑海岸", "x": 41.234, "y": 50.5, "facing": 270,
+                     "source": "screenshot", "seconds_off": 0}
+    assert client.put("/api/v1/screenshots/bad", content=JPEG, headers=AUTH, params={
+        "character_id": "c1", "taken_at": T0.isoformat(), "x": 140}).status_code == 422
+
+
+def test_an_ai_screenshots_own_record_beats_a_nearer_one(client):
+    events(client, "c1", [
+        (5, "LOCATION_SAMPLE", {"map_id": 1439, "x": 40.0, "y": 50.0}),
+        (5.05, "AI_SCREENSHOT", {"map_id": 1439, "x": 42.0, "y": 51.0, "facing": 90})])
+    assert put(client, "f12").status_code == 200
+    place = client.get("/api/v1/characters/c1/screenshots/latest", headers=READ).json()["place"]
+    assert (place["x"], place["facing"], place["source"]) == (42.0, 90, "ai_screenshot")

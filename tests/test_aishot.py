@@ -22,7 +22,7 @@ def test_panel_holds_position_facing_target_and_quests_then_hides():
     assert "53.800, 75.100" in text
     assert "270° 西" in text                          # bearing clockwise from north
     assert "NPC ID 1726" in text and "精英" in text and "敵對" in text and "連擊點數 3" in text
-    assert "[12] 人民軍" in text and "迪菲亞盜賊 3/15" in text
+    assert "人民軍" not in text                       # quests and history are left to the server
     assert "法力 320/640" in text
     assert (g.mock.shots or 0) == shots + 1
     assert g.ns.aiState.busy is None and g.mock.aipanel.shown is False
@@ -40,14 +40,15 @@ def test_unavailable_values_are_said_not_guessed():
     assert "目標|r  無" in text
 
 
-def test_recent_events_and_system_messages_appear():
+def test_system_messages_appear_but_not_the_history():
     g = setup()
     g.fire("CHAT_MSG_LOOT", "你拾取了物品：|cffffffff|Hitem:2589::::::::|h[亞麻布]|h|r。")
-    g.fire("UI_INFO_MESSAGE", 0, "迪菲亞盜賊已殺死：4/15")
+    for msg in ("一", "二", "迪菲亞盜賊已殺死：4/15"):
+        g.fire("UI_INFO_MESSAGE", 0, msg)
     g.slash("aishot")
     text = g.ns.aiState.lastText
-    assert "拾取 亞麻布 x1 (item 2589)" in text
-    assert "迪菲亞盜賊已殺死：4/15" in text
+    assert "亞麻布" not in text
+    assert "迪菲亞盜賊已殺死：4/15" in text and "二" in text and "提示|r  一" not in text   # the last two
 
 
 def test_test_mode_takes_no_screenshot_and_failure_hides():
@@ -83,3 +84,55 @@ def test_map_rect_recorded_once_per_map():
     g.mock.x = 0.6
     g.tick(15)
     assert sum(e["event_type"] == "MAP_RECT" for e in g.events()) == 1
+
+
+def decode(bits):
+    """What the sync program reads back from the squares (see adventuresync.extras.read_code)."""
+    def num(a, n):
+        return int("".join(str(b) for b in bits[a:a + n]), 2)
+    assert bits[:8] == [1, 0, 1, 1, 0, 0, 1, 0]
+    m, x, y, f, check = num(8, 16), num(24, 17), num(41, 17), num(58, 9), num(67, 5)
+    assert (m + x + y + f) % 32 == check
+    return m, x, y, f
+
+
+def test_the_position_in_the_panel_is_the_one_coded_into_the_picture():
+    g = setup(facing=1.5707963)
+    g.slash("aishot")
+    bits = [int(b) for b in g.ns.aiState.lastCode.values()]
+    assert len(bits) == 72 and decode(bits) == (1439, 53800, 75100, 270)
+    ev = [dict(e["payload"]) for e in g.events() if e["event_type"] == "AI_SCREENSHOT"][-1]
+    assert (ev["map_id"], ev["x"], ev["y"], ev["facing"]) == (1439, 53.8, 75.1, 270)
+    assert g.mock.aicode.shown is False                 # hidden with the panel once the picture is taken
+    # not known: all ones, and still a valid code
+    assert decode([int(b) for b in g.ns.shotCode(None, None, None, None).values()]) == (0, 131071, 131071, 511)
+
+
+def test_secret_health_is_said_hidden_and_a_percent_is_used_when_given():
+    g = setup()
+    g.lua.execute('MOCK.secret = "S" UnitHealth = function() return "S" end '
+                  'UnitPowerType = function() return 1 end UnitPower = function(_, k) return k == 1 and 35 or "S" end '
+                  'UnitPowerMax = function(_, k) return k == 1 and 100 or 640 end '
+                  'UnitPowerPercent = function(_, k) return k == 0 and 0.4 or nil end')
+    g.slash("aishot")
+    text = g.ns.aiState.lastText
+    assert "生命 遊戲隱藏" in text and "怒氣 35/100 (35%)" in text and "法力 40%" in text   # a bear
+    assert g.db.debug.resources["生命"] == "secret" and g.db.debug.resources["生命_pct"] == "missing"
+    # what the game hides is handed back to it to write on the panel, never kept
+    res = g.ns.aiState.res
+    assert res.fmt.endswith("生命 %d/%d · 怒氣 35/100 (35%%) · 法力 40%%") and list(res.args.values()) == ["S", 980]
+    ev = [dict(e["payload"]) for e in g.events() if e["event_type"] == "AI_SCREENSHOT"][-1]
+    assert ev.get("health") is None and ev["power"] == 35 and "S" not in str(ev)
+
+
+def test_minimap_and_the_panel_size():
+    g = setup()
+    g.lua.execute('Minimap = { GetZoom = function() return 2 end, GetZoomLevels = function() return 6 end } '
+                  'C_CVar = { GetCVar = function(k) return k == "rotateMinimap" and "0" or nil end } '
+                  'function IsIndoors() return false end C_Map.GetMapWorldSize = function() return 3000, 2000 end '
+                  'function GetScreenWidth() return 1920 end function GetScreenHeight() return 1080 end')
+    g.slash("aishot")
+    text = g.ns.aiState.lastText
+    assert "縮放 2/5 · 不旋轉（上方=北） · 戶外 · 寬約 333 碼（地圖寬 11.1%）" in text
+    ev = [dict(e["payload"]) for e in g.events() if e["event_type"] == "AI_SCREENSHOT"][-1]
+    assert dict(ev["minimap"])["yards"] == 333 and dict(ev["minimap"])["rotate"] is False

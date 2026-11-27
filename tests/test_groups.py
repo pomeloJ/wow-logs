@@ -223,7 +223,7 @@ def test_party_page_data_from_members(client):
     assert whole["fight"]["boss"] is None and whole["members"][0]["name"] == "波波" and len(whole["log"]) == 3
     assert whole["skills"][0]["spell"] == "月火術" and "小德" in whole["dps_over_time"]["series"] and "at" in whole["log"][0]
     an = client.get(f"{mine}/{gid}/analysis", headers=READ).json()
-    assert set(an) == {"group_id", "defence", "level_gaps", "dots", "guard", "buffs", "heals", "activity", "pets", "autoshot", "casts"}
+    assert set(an) == {"group_id", "defence", "level_gaps", "dots", "guard", "buffs", "debuffs", "heals", "activity", "pets", "autoshot", "casts"}
     assert an["defence"][0]["name"] == "迪菲亞盜賊"
     part = client.get(f"{mine}/{gid}/analysis", params={"parts": "defence,activity", "limit": 1}, headers=READ).json()
     assert set(part) == {"group_id", "defence", "activity"} and len(part["defence"]) == 1
@@ -456,3 +456,48 @@ def test_full_names_come_from_the_combat_log_and_are_only_shown(client):
     snap(61, {"name": "小德", "level": 22})
     assert client.get("/api/v1/characters/c1", headers=READ).json()["full_name"] == "小德 真名"
     assert client.get("/api/v1/characters", headers=READ).json()["items"][0]["full_name"] == "小德 真名"
+
+
+def test_buffs_and_debuffs_with_their_times(client):
+    client.put("/api/v1/characters/c1/snapshot", headers=AUTH, json={
+        "captured_at": T0.isoformat(), "device_id": "mac", "data": {"name": "小德", "class": "DRUID", "level": 24}})
+    ev = [(0, "GROUP_JOINED", {"group_id": GID, "members": [{"name": "波波", "class": "HUNTER", "level": 22}]}),
+          (30, "GROUP_LEFT", {"group_id": GID, "duration": 1800})]
+    client.post("/api/v1/events/batch", headers=AUTH, json={"schema_version": 1, "device_id": "mac", "events": [
+        {"event_id": f"a:{i}", "character_id": "c1", "event_type": t, "timestamp": (T0 + timedelta(minutes=m)).isoformat(), "payload": p}
+        for i, (m, t, p) in enumerate(ev)]})
+    t = int((T0 + timedelta(minutes=5)).timestamp() * 1000)
+    me_guid, mob = "Player-1-00000001", "Creature-0-1-0-1-568-AAA"
+
+    def aura(n, at, who, kind, spell, kind_of, *, enemy=None, unit="暗皮戰士", guid=me_guid, stacks=None):
+        return [n, t + at, "aura", who, 0, unit, enemy, None, 7405 if spell == "破甲攻擊" else 1, spell, 1, kind, stacks,
+                *[None] * 8, kind_of, *[None] * 5, guid]
+    rows = [
+        aura(1, 0, "", "APPLIED", "破甲攻擊", "DEBUFF"),
+        aura(2, 1000, "", "APPLIED_DOSE", "破甲攻擊", "DEBUFF", stacks=2),
+        aura(3, 2000, "", "APPLIED_DOSE", "破甲攻擊", "DEBUFF", stacks=3),
+        aura(4, 2500, "", "REFRESH", "破甲攻擊", "DEBUFF"),
+        aura(5, 4000, "", "REMOVED", "破甲攻擊", "DEBUFF"),
+        aura(6, 500, "", "APPLIED", "王者祝福", "BUFF", unit="艾莉-伺服器"),                    # never seen to wear off
+        aura(7, 1500, "", "APPLIED", "精靈之火", "DEBUFF", enemy="暗皮戰士", unit="小德-伺服器", guid=mob),
+        aura(8, 3500, "", "REMOVED", "精靈之火", "DEBUFF", enemy="暗皮戰士", unit="小德-伺服器", guid=mob),
+    ]
+    assert client.post("/api/v1/combat/hits", headers=AUTH, json={"character_id": "c1", "source": "l", "rows": rows}).status_code == 200
+    r = client.get(f"/api/v1/characters/c1/combat/auras?group_id={GID}", headers=READ).json()
+    by = {a["spell"]: a for a in r["auras"]}
+    sunder = by["破甲攻擊"]
+    assert (sunder["target"], sunder["caster"], sunder["type"], sunder["on_enemy"]) == ("小德", "暗皮戰士", "DEBUFF", False)
+    assert (sunder["seconds"], sunder["stacks"], sunder["refreshes"], sunder["still_up"]) == (4.0, 3, 1, False)
+    kings = by["王者祝福"]
+    assert kings["caster"] == "艾莉" and kings["still_up"] and kings["end"] is None
+    fire = by["精靈之火"]
+    assert (fire["target"], fire["caster"], fire["on_enemy"], fire["seconds"]) == ("暗皮戰士", "小德", True, 2.0)
+    assert [a["spell"] for a in r["auras"]] == ["破甲攻擊", "王者祝福", "精靈之火"]           # in the order they started
+    only = client.get(f"/api/v1/characters/c1/combat/auras?group_id={GID}&type=DEBUFF&on=members", headers=READ).json()
+    assert [a["spell"] for a in only["auras"]] == ["破甲攻擊"]
+    assert client.get(f"/api/v1/characters/c1/combat/auras?group_id={GID}&type=X", headers=READ).status_code == 422
+    # summed up per member, and stack rows never count as new applications anywhere
+    a = client.get(f"/api/v1/characters/c1/groups/{GID}/analysis?parts=debuffs,dots", headers=READ).json()
+    assert a["debuffs"] == [{"who": "小德", "spell": "破甲攻擊", "spell_id": 7405, "times": 1, "stacks": 3,
+                             "up_seconds": 4, "by": "暗皮戰士"}]
+    assert a["dots"][0]["applied"] == 1

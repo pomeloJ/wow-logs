@@ -55,6 +55,11 @@ class Shots:
             conn.execute("CREATE TABLE IF NOT EXISTS screenshots (id TEXT PRIMARY KEY, character_id TEXT NOT NULL, "
                          "taken_at TEXT NOT NULL, width INTEGER, height INTEGER, uploaded_at TEXT NOT NULL)")
             conn.execute("CREATE INDEX IF NOT EXISTS ix_shots_char ON screenshots(character_id, taken_at)")
+            # where the picture itself says it was taken (the addon's AI screenshot codes it in)
+            have = {r[1] for r in conn.execute("PRAGMA table_info(screenshots)")}
+            for col, kind in (("map_id", "INTEGER"), ("x", "REAL"), ("y", "REAL"), ("facing", "INTEGER")):
+                if col not in have:
+                    conn.execute(f"ALTER TABLE screenshots ADD COLUMN {col} {kind}")
             # what the sync program does, per token ("owner" for the server's own): one choice
             # for every character and computer that uploads with it
             conn.execute("CREATE TABLE IF NOT EXISTS sync_settings (token TEXT PRIMARY KEY, "
@@ -75,16 +80,28 @@ class Shots:
         place: Optional[Dict[str, Any]] = None
         moment: Optional[str] = None
         best_place = best_moment = None
+        zones: Dict[int, str] = {}
         for e in near:
             gap = abs((_dt(e["timestamp"]) - at).total_seconds())
             p = json.loads(e["payload_json"])
+            if isinstance(p.get("map_id"), int) and p.get("zone_name"):
+                zones.setdefault(p["map_id"], p["zone_name"])
+            # an AI screenshot's own record is the exact moment; anything else only the nearest
+            exact = e["event_type"] == "AI_SCREENSHOT" and gap <= 5
             if isinstance(p.get("map_id"), int) and isinstance(p.get("x"), (int, float)) \
-                    and (best_place is None or gap < best_place):
-                best_place = gap
-                place = {"map_id": p["map_id"], "zone": p.get("zone_name"), "x": p["x"], "y": p.get("y")}
+                    and (best_place is None or exact or gap < best_place) and best_place != -1:
+                best_place = -1 if exact else gap
+                place = {"map_id": p["map_id"], "zone": p.get("zone_name"), "x": p["x"], "y": p.get("y"),
+                         "facing": p.get("facing") if exact else None, "source": "ai_screenshot" if exact else "events",
+                         "seconds_off": round(gap)}
             if e["event_type"] in MOMENTS and gap <= 90 and (best_moment is None or gap < best_moment):
                 best_moment = gap
                 moment = MOMENTS[e["event_type"]](p).strip()
+        keys = row.keys()
+        if "map_id" in keys and row["map_id"] is not None:
+            # the picture's own code: the very moment it was taken, before any saving
+            place = {"map_id": row["map_id"], "zone": zones.get(row["map_id"]), "x": row["x"], "y": row["y"],
+                     "facing": row["facing"], "source": "screenshot", "seconds_off": 0}
         return {"id": row["id"], "taken_at": row["taken_at"], "width": row["width"], "height": row["height"],
                 "place": place, "moment": moment}
 
@@ -129,15 +146,21 @@ def register(app, db, can_read, can_write, claim, folder: str) -> Shots:
     @app.put("/api/v1/screenshots/{shot_id}")
     async def put_screenshot(shot_id: str, request: Request, character_id: str, taken_at: datetime,
                              width: Optional[int] = None, height: Optional[int] = None,
+                             map_id: Optional[int] = None, x: Optional[float] = Query(None, ge=0, le=100),
+                             y: Optional[float] = Query(None, ge=0, le=100), facing: Optional[int] = Query(None, ge=0, lt=360),
                              writer: Optional[str] = Depends(can_write)):
+        """Store a screenshot. map_id, x, y and facing: where the picture itself says it was taken
+        (read by the sync program from the AI screenshot's code), left out for other pictures."""
         check_id(shot_id)
         owned(writer, shot_id, character_id)
         if taken_at.tzinfo is None:
             raise HTTPException(400, "taken_at must include a timezone")
         store(shots.path(shot_id), await jpeg_body(request))
         with db() as conn:
-            conn.execute("INSERT OR REPLACE INTO screenshots VALUES (?,?,?,?,?,?)",
-                         (shot_id, character_id, _fmt(taken_at), width, height, _fmt(datetime.now(timezone.utc))))
+            conn.execute("INSERT OR REPLACE INTO screenshots (id, character_id, taken_at, width, height, uploaded_at, "
+                         "map_id, x, y, facing) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                         (shot_id, character_id, _fmt(taken_at), width, height, _fmt(datetime.now(timezone.utc)),
+                          map_id, x, y, facing))
         prune(writer)
         return {"success": True, "id": shot_id}
 
@@ -215,9 +238,15 @@ def register(app, db, can_read, can_write, claim, folder: str) -> Shots:
         """The character's newest screenshot: what the player saw a moment ago.
 
         When it was taken, `age_seconds` (how long ago), where and what was going on (`place`,
-        `moment`, from the recorded events), and `image`, the address of the picture itself
+        `moment`), and `image`, the address of the picture itself
         (JPEG, 1920 wide; `thumb` is a small one). With `max_age`, a screenshot older than that
         is answered with 404, so an assistant never describes a scene that is long gone.
+
+        `place.source` says how sure the place is: `screenshot` is read from the picture itself
+        (an AI screenshot, F12, codes the position into it: the same as its panel shows, from the
+        moment it was taken), `ai_screenshot` from the addon's record of that key press, `events`
+        the nearest recorded position, `seconds_off` away (the addon's records reach the server
+        only after saving, so this one can be well behind). `facing` is degrees clockwise from north.
 
         Screenshots arrive a few seconds after the player takes one (Print Screen in the game),
         and only once the player has turned on screenshot upload in the sync program."""

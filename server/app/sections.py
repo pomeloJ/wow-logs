@@ -46,6 +46,7 @@ ROUTES = {
     f"{P}/characters/{{character_id}}/groups/{{group_id}}/skills": "groups",
     f"{P}/characters/{{character_id}}/groups/{{group_id}}/analysis": "groups",
     f"{P}/characters/{{character_id}}/combat/skills": "groups", f"{P}/characters/{{character_id}}/combat/analysis": "groups",
+    f"{P}/characters/{{character_id}}/combat/auras": "groups",
     f"{P}/combat/npcs": "groups", f"{P}/characters/{{character_id}}/threat": "groups",
     f"{P}/screenshots": "screenshots", f"{P}/screenshots/{{shot_id}}/image": "screenshots",
     f"{P}/screenshots/{{shot_id}}/thumb": "screenshots", f"{P}/characters/{{character_id}}/screenshots/latest": "screenshots",
