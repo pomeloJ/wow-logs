@@ -1349,7 +1349,10 @@ function render(d) {
     if (location.hash === "#r" && more.length) view = "r";
     place();
   }).catch(() => {});
-  early.aggro.then(A => { const card = aggroCard(A, P, d); if (card) { parts.push(["仇恨", card, "a"]); place(); } }).catch(() => {});
+  // on the overview, right after the damage numbers, where it is looked for
+  early.aggro.then(A => { const card = aggroCard(A, P, d); if (!card) return;
+    const after = ["首領", "統計", "傷害", "成果"].map(l => parts.findIndex(p => p[0] === l && p[2] === "o")).find(i => i >= 0);
+    parts.splice(after == null ? parts.length : after + 1, 0, ["仇恨", card, "o"]); place(); }).catch(() => {});
   // after the research cards, so the timeline sits with them rather than first
   early.research.catch(() => {}).then(() => early.auras).then(U => { const card = auraCard(U, P, d); if (card) { parts.push(["效果", card, "r"]); place(); } }).catch(() => {});
   if ((d.skills || []).length) app.append(el("div", { class: "small" }, el("a", { href: API + "/hits.csv", text: "下載這場的逐筆戰鬥紀錄（CSV，可用試算表開啟）" }), "　", el("a", { href: API + "/hits.json", text: "JSON" })));
