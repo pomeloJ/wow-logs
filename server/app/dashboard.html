@@ -726,9 +726,10 @@ async function tokensPanel() {
       const name = v.label || "（沒有名稱）";
       const url = `${location.origin}/voice?t=${encodeURIComponent(v.token)}`;
       voice.append(card(v, name, null, dates(v, "最後使用"),
-        [field("網址", address(url)),
+        [field("權杖", address(v.token)),
          charsField(v),
          field("用法", el("ul", { class: "tk-how" },
+           el("li", null, "語音網址：", el("code", { text: "/voice?t=權杖" }), "（用「複製語音網址」）"),
            el("li", null, "切換角色：網址加 ", el("code", { text: "&c=角色名" })),
            el("li", null, "列出可查的角色：網址加 ", el("code", { text: "&show=characters" })),
            el("li", null, "當 API 權杖：", el("code", { text: "Authorization: Bearer 權杖" }))))],
