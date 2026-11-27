@@ -124,15 +124,26 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
         busy = sorted((_ms(g["started_at"]), _ms(g["ended_at"]) + 999)
                       for g in (groups if groups is not None else sessions(conn, character_id)))
         newest = spans[-1][1] if spans else 0
+        iso = lambda ms: datetime.fromtimestamp(ms // 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")   # noqa: E731
+
+        def worth(a: int, b: int) -> bool:
+            """Long enough for a page, or short but something was killed in it (seen in the
+            game: two quick kills, fifty seconds in all, and no page to look at them on)."""
+            if b - a >= SOLO_SHORTEST:
+                return True
+            return conn.execute("SELECT 1 FROM events WHERE character_id=? AND event_type='MOB_KILLED' "
+                                "AND timestamp BETWEEN ? AND ? LIMIT 1",
+                                (character_id, iso(a), iso(b + 5000))).fetchone() is not None
+
         out: List[Dict[str, Any]] = []
         for a, b in spans:
             for ga, gb in busy:                     # keep what is before a group session, go on after it
                 if gb < a or ga > b:
                     continue
-                if ga - a >= SOLO_SHORTEST:
+                if ga - 1000 >= a and worth(a, ga - 1000):
                     out.append((a, ga - 1000))
                 a = gb + 1
-            if b - a >= SOLO_SHORTEST:
+            if b >= a and worth(a, b):
                 out.append((a, b))
         found = []
         for a, b in out:

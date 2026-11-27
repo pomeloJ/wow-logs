@@ -389,13 +389,18 @@ def test_fighting_alone_is_cut_into_sessions_with_the_same_pages_as_a_group(clie
         None, None, None, None, None]
     rows = [hit(1, -60, 100), hit(2, -55, 120), hit(3, -50, 300, 1),          # alone, an hour before the group
             hit(4, -8, 50), hit(5, 5, 70), hit(6, 15, 80), hit(7, 28, 90), hit(8, 35, 110),   # into the group and out again
-            hit(9, 200, 40)]                                                  # one stray hit: too short to be a session
+            hit(9, 200, 40),                                                  # one stray hit: too short to be a session
+            hit(10, 300, 60), hit(11, 300.5, 75)]                             # short, but it killed something
     assert client.post("/api/v1/combat/hits", headers=AUTH, json={"character_id": "c1", "source": "l", "rows": rows}).status_code == 200
+    kill = {"event_id": "c1:9100", "character_id": "c1", "event_type": "MOB_KILLED",
+            "timestamp": (T0 + timedelta(minutes=300.5, seconds=2)).strftime("%Y-%m-%dT%H:%M:%SZ"), "payload": {"monster_name": "野棘捕獵者"}}
+    client.post("/api/v1/events/batch", headers=AUTH, json={"schema_version": 1, "device_id": "mac", "events": [kill]})
     solo = client.get("/api/v1/characters/c1/solo", headers=READ).json()["items"]
     assert [(s["started_at"][11:16], s["ended_at"][11:16], s["damage"]) for s in solo] == [
+        ("17:00", "17:00", 135),                                                          # thirty seconds and a kill
         ("12:20", "12:35", 200), ("11:52", "11:59", 50), ("11:00", "11:10", 520)]        # newest first; the group's part cut out
     assert all(s["group_id"].startswith("solo-") and s["members"] == [] and s["page"] == "/party/" + s["token"] for s in solo)
-    assert solo[0]["zone_name"] == "西部荒野" and solo[0]["kills"] == 1               # 組隊後的怪, killed at T0+30
+    assert solo[1]["zone_name"] == "西部荒野" and solo[1]["kills"] == 1               # 組隊後的怪, killed at T0+30
     # the group's own list is as before, and its numbers do not take in what was fought alone
     groups = client.get("/api/v1/groups?character_id=c1", headers=READ).json()["items"]
     assert len(groups) == 1 and not groups[0]["group_id"].startswith("solo")
