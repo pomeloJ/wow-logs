@@ -315,6 +315,12 @@ button.link { background: none; color: var(--muted); padding: 0; font-size: 13px
 .tk-main, .tk-more { display: flex; gap: 8px; flex-wrap: wrap; }
 .tk-add { display: flex; flex-direction: column; gap: 8px; margin: 14px 0 4px; padding: 14px 16px; border: 1px dashed var(--line); border-radius: 12px; }
 .tk-add b { font-size: 13px; }
+.tk-new-zone { margin-top: 26px; }
+.tk-sep { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; letter-spacing: .1em; }
+.tk-sep::before, .tk-sep::after { content: ""; flex: 1 1 auto; border-top: 1px solid var(--line); }
+.tk .tk-new-zone .tk-add { margin-top: 12px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel)); }
+.tk-new-zone .tk-add b { color: var(--accent); }
 .tk-add-row { display: flex; gap: 8px; } .tk-add-row input { flex: 1 1 auto; min-width: 0; margin: 0; } .tk-add-row button { flex: none; white-space: nowrap; }
 .tk-pane > .tk-empty { margin: 14px 0; padding: 18px; text-align: center; font-size: 13px; color: var(--muted); border: 1px dashed var(--line); border-radius: 12px; }
 @media (max-width: 520px) {
@@ -664,7 +670,8 @@ async function tokensPanel() {
       const name = el("input", { type: "text", maxlength: "40", placeholder, autocomplete: "off", "aria-label": title });
       const form = el("form", { class: "tk-add" }, el("b", { text: title }), el("div", { class: "tk-add-row" }, name, el("button", { text: button })));
       form.addEventListener("submit", e => { e.preventDefault(); act("POST", path, { label: name.value.trim() }); });
-      return form;
+      // set apart from the tokens above: a labelled rule, then a tinted box
+      return el("div", { class: "tk-new-zone" }, el("div", { class: "tk-sep", role: "separator" }, el("span", { text: "新增" })), form);
     };
     const intro = (lines, extra) => el("div", { class: "tk-intro" }, ...lines.map(t => el("p", { text: t })), extra || null);
     const empty = text => el("div", { class: "tk-empty", text });
@@ -733,7 +740,7 @@ async function tokensPanel() {
         [field("連結", address(link)),
          charsField(v),
          field("可看", el("div", { class: "tk-line" }, chipsOf(shown, "只有名字、職業、等級與經驗"), button2("編輯", () => { editor.hidden = !editor.hidden; }, "mini")), editor)],
-        [copyButton(link, "複製分享連結", true), copyButton(v.token, "複製權杖")],
+        [copyButton(link, "複製分享連結", true)],
         [button2("重新產生", ask({ title: `重新產生「${name}」的連結？`, text: "舊的分享連結會立刻失效，要把新連結再給對方一次。名稱、角色和可看區塊不變。", ok: "重新產生" },
            "POST", "tokens/regenerate", { id: v.id })),
          button2("刪除", ask({ title: `刪除「${name}」？`, text: "用這個連結的人會立刻看不到你的冒險紀錄。這個動作不能復原。", ok: "刪除", danger: true },
