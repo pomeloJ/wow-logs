@@ -263,6 +263,53 @@ button.link { background: none; color: var(--muted); padding: 0; font-size: 13px
 .invite-from img { width: 44px; height: 44px; border-radius: 50%; }
 .sheet .acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
 /* token and friend panels: one bordered card per item, actions along its foot */
+/* the token panel: one kind of token per tab, each token a card of labelled rows */
+.sheet.tokens { max-width: 680px; }
+.tk-tabs { display: flex; gap: 4px; padding: 4px; margin: 14px 0 4px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; }
+.tk-tabs button { flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 6px; border: 0; border-radius: 7px;
+  background: none; color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; white-space: nowrap; }
+.tk-tabs button small { font-size: 11px; opacity: .8; }
+.tk-tabs button[aria-selected="true"] { background: var(--panel); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+.tk-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tk-pane[hidden] { display: none; }
+.tk-intro { padding: 10px 2px 4px; }
+.tk-intro p { margin: 0 0 2px; font-size: 13px; color: var(--muted); line-height: 1.6; }
+.tk-intro .tk-field { margin-top: 10px; border-top: 0; padding: 0; }
+.tk-card { border: 1px solid var(--line); border-radius: 12px; background: var(--bg); margin: 14px 0; overflow: hidden; }
+.tk-card.fresh { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.tk-card > header { display: block; padding: 14px 16px 10px; margin: 0; }
+.tk.tk-pane { border-top: 0; padding-top: 0; margin-top: 0; }   /* the older .tk rules (editors, code) apply inside */
+.tk .tk-add { flex-direction: column; align-items: stretch; margin-top: 14px; }
+.tk-value .parts { padding: 10px 12px; gap: 8px 18px; }
+.tk-value .parts .parts-acts { margin-top: 2px; }
+.tk-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tk-name b { font-size: 16px; }
+.badge.new { background: var(--accent); color: #fff; }
+.tk-card > header .tk-meta { display: block; margin-top: 4px; }
+.tk-card code, .tk-intro code { font-size: 13px; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 3px 7px; overflow-wrap: anywhere; }
+.tk-card .tk-secret { display: flex; align-items: center; gap: 8px; }
+.tk-card .tk-secret code { flex: 1 1 auto; min-width: 0; }
+.tk-rows { padding: 0 16px; }
+.tk-field { display: grid; grid-template-columns: 4.5em minmax(0, 1fr); gap: 4px 12px; align-items: start; padding: 12px 0; border-top: 1px solid var(--line); }
+.tk-label { font-size: 12px; color: var(--muted); padding-top: 5px; }
+.tk-value { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.tk-line { display: flex; align-items: flex-start; gap: 8px; }
+.tk-line .pchips { flex: 1 1 auto; }
+.tk-value .tk-secret code { flex: 1 1 180px; }
+.tk-value .parts { margin: 0; }
+.tk-how { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.9; }
+.tk-how code { font-size: 12px; padding: 1px 6px; }
+.tk-card > footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 12px 16px;
+  border-top: 1px solid var(--line); background: var(--panel); }
+.tk-main, .tk-more { display: flex; gap: 8px; flex-wrap: wrap; }
+.tk-add { display: flex; flex-direction: column; gap: 8px; margin: 14px 0 4px; padding: 14px 16px; border: 1px dashed var(--line); border-radius: 12px; }
+.tk-add b { font-size: 13px; }
+.tk-add-row { display: flex; gap: 8px; } .tk-add-row input { flex: 1 1 auto; min-width: 0; margin: 0; } .tk-add-row button { flex: none; white-space: nowrap; }
+.tk-pane > .tk-empty { margin: 14px 0; padding: 18px; text-align: center; font-size: 13px; color: var(--muted); border: 1px dashed var(--line); border-radius: 12px; }
+@media (max-width: 520px) {
+  .tk-field { grid-template-columns: 1fr; } .tk-label { padding-top: 0; }
+  .tk-card > footer { flex-direction: column; align-items: stretch; } .tk-main, .tk-more { justify-content: flex-start; }
+}
 .tk-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
 .tk-head h3 { margin: 0; }
 .tk-head .count { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 0 8px; }
@@ -552,6 +599,7 @@ document.getElementById("tokens").addEventListener("click", () => tokensPanel())
 
 async function tokensPanel() {
   const s = sheet("管理權杖");
+  s.box.classList.add("tokens");
   const call = async (method, path, body) => {
     const r = await fetch(API + "/me/" + path, { method, body: body ? JSON.stringify(body) : undefined,
       headers: body ? { "Content-Type": "application/json" } : {} });
@@ -560,6 +608,7 @@ async function tokensPanel() {
     return r.json();
   };
   const when = iso => iso ? full(iso) : "還沒用過";
+  let pane = null;                                  // the tab open, kept while the panel is
   const draw = (d, fresh) => {
     const say = el("div", { class: "say", role: "status" });
     const act = async (method, path, body) => {
@@ -572,47 +621,28 @@ async function tokensPanel() {
         const hidden = show.textContent === "顯示";
         code.textContent = hidden ? token : "•".repeat(16); show.textContent = hidden ? "隱藏" : "顯示";
       });
-      return [code, show];
+      return el("div", { class: "tk-secret" }, code, show);
     };
-    // sync tokens: up to three, all always viewable; the first stands for the person
-    const sync = el("section", { class: "tk" });
-    if (d.sync) {
-      sync.append(el("div", { class: "tk-head" }, el("h3", { text: "同步權杖" }), el("span", { class: "count", text: `${d.sync.length} / ${d.max_sync}` })),
-        el("p", { class: "tkhint", text: "填在同步程式裡，用來上傳你的角色。一台電腦用一個，只給自己用，不要分享給別人。" }));
-      if (d.characters.length) sync.append(el("div", { class: "owned" }, el("span", { text: "名下角色" }), chipsOf(d.characters, "")));
-      for (const t of d.sync) {
-        const [code, show] = secret(t.token, t.token === fresh);
-        const regen = button2("重新產生", ask({ title: `重新產生「${t.label || (t.first ? "主要" : "未命名")}」？`,
-          text: "會換成一個新的權杖，舊的立刻失效，用它的同步程式要改填新的。你的角色和其他權杖不受影響。", ok: "重新產生" },
-          "POST", "sync-tokens/regenerate", { id: t.id }));
-        const del = t.first ? null : button2("刪除", ask({ title: `刪除「${t.label || "未命名"}」？`,
-          text: "用這個權杖的同步程式會立刻無法上傳。這個動作不能復原。", ok: "刪除", danger: true }, "POST", "sync-tokens/delete", { id: t.id }), "bad");
-        sync.append(el("div", { class: "tk-item" + (t.token === fresh ? " fresh" : "") },
-          el("div", { class: "tk-title" }, el("b", { text: t.label || (t.first ? "主要" : "未命名") }), t.first ? el("span", { class: "badge", text: "主要" }) : null),
-          el("div", { class: "tk-secret" }, code, show, copyButton(t.token, "複製", true)),
-          el("div", { class: "tk-meta", text: `建立於 ${full(t.created_at)}　·　最後上傳 ${when(t.last_used_at)}` }),
-          el("div", { class: "tk-acts" }, el("span", { class: "grow" }), regen, del)));
-      }
-      if (d.sync.length < d.max_sync) {
-        const name = el("input", { type: "text", maxlength: "40", placeholder: "哪台電腦用的，例如：筆電", autocomplete: "off" });
-        const form = el("form", { class: "tk-new" }, name, el("button", { text: "＋ 新增同步權杖" }));
-        form.addEventListener("submit", e => { e.preventDefault(); act("POST", "sync-tokens", { label: name.value.trim() }); });
-        sync.append(form);
-      }
-    } else {
-      sync.append(el("div", { class: "tk-head" }, el("h3", { text: "同步權杖" })),
-        el("p", { class: "tkhint", text: "這個帳號綁定的是伺服器本身的權杖，同步用的權杖不會在網頁上顯示。" }));
-    }
-    // read-only tokens to share
-    const share = el("section", { class: "tk" },
-      el("div", { class: "tk-head" }, el("h3", { text: "分享用權杖（只能看）" }), el("span", { class: "count", text: `${d.view.length} / ${d.max_view}` })),
-      el("p", { class: "tkhint", text: "把連結給別人看你的冒險紀錄：只能看、不能上傳，聊天內容一律看不到。每個權杖可以各自選擇看得到哪些角色、哪些區塊。" }));
-    if (!d.view.length) share.append(el("div", { class: "tk-empty", text: "還沒有分享用權杖。在下面輸入名稱建立一個。" }));
-    const partName = Object.fromEntries(d.parts.map(p => [p.key, p.name]));
+    // one token: name and dates on top, then labelled rows, then what can be done with it
+    const field = (label, ...body) => el("div", { class: "tk-field" }, el("span", { class: "tk-label", text: label }), el("div", { class: "tk-value" }, ...body));
+    const card = (t, title, badge, dates, rows, main, more) => el("article", { class: "tk-card" + (t.token === fresh ? " fresh" : "") },
+      el("header", null, el("div", { class: "tk-name" }, el("b", { text: title }), badge ? el("span", { class: "badge", text: badge }) : null,
+        t.token === fresh ? el("span", { class: "badge new", text: "剛建立" }) : null), el("div", { class: "tk-meta", text: dates })),
+      el("div", { class: "tk-rows" }, ...rows),
+      el("footer", null, el("div", { class: "tk-main" }, ...main), el("div", { class: "tk-more" }, ...more.filter(Boolean))));
+    const adder = (title, placeholder, button, path) => {
+      const name = el("input", { type: "text", maxlength: "40", placeholder, autocomplete: "off", "aria-label": title });
+      const form = el("form", { class: "tk-add" }, el("b", { text: title }), el("div", { class: "tk-add-row" }, name, el("button", { text: button })));
+      form.addEventListener("submit", e => { e.preventDefault(); act("POST", path, { label: name.value.trim() }); });
+      return form;
+    };
+    const intro = (lines, extra) => el("div", { class: "tk-intro" }, ...lines.map(t => el("p", { text: t })), extra || null);
+    const empty = text => el("div", { class: "tk-empty", text });
+    const dates = (t, used) => `建立於 ${full(t.created_at)}　·　${used} ${when(t.last_used_at)}`;
     const owned = d.owned || [];
     const charText = c => shownName(c) + (c.level ? ` Lv${c.level}` : "");
     // which characters a read-only token shows: all of them (later ones too), or the ones ticked
-    const charsRow = v => {
+    const charsField = v => {
       const every = el("input", { type: "checkbox" });
       every.checked = v.characters === null;
       const picks = owned.map(c => { const b = el("input", { type: "checkbox", value: c.id });
@@ -630,9 +660,35 @@ async function tokensPanel() {
           }, "go")));
       who.hidden = true;
       const whoShown = v.characters === null ? ["全部角色"] : owned.filter(c => v.characters.includes(c.id)).map(charText);
-      return [el("div", { class: "owned" }, el("span", { text: "角色" }), chipsOf(whoShown, "沒有角色"),
-        button2("編輯", () => { who.hidden = !who.hidden; }, "mini")), who];
+      return field("角色", el("div", { class: "tk-line" }, chipsOf(whoShown, "沒有角色"), button2("編輯", () => { who.hidden = !who.hidden; }, "mini")), who);
     };
+
+    // ---- sync tokens: up to three, all always viewable; the first stands for the person
+    const sync = el("section", { class: "tk tk-pane", role: "tabpanel" });
+    if (d.sync) {
+      sync.append(intro(["填在同步程式裡，用來上傳你的角色。", "一台電腦用一個，只給自己用，不要分享給別人。"],
+        d.characters.length ? field("名下角色", chipsOf(d.characters, "")) : null));
+      for (const t of d.sync) {
+        const title = t.label || (t.first ? "主要" : "未命名");
+        sync.append(card(t, title, t.first ? "主要" : null, dates(t, "最後上傳"),
+          [field("權杖", secret(t.token, t.token === fresh))],
+          [copyButton(t.token, "複製權杖", true)],
+          [button2("重新產生", ask({ title: `重新產生「${title}」？`,
+            text: "會換成一個新的權杖，舊的立刻失效，用它的同步程式要改填新的。你的角色和其他權杖不受影響。", ok: "重新產生" },
+            "POST", "sync-tokens/regenerate", { id: t.id })),
+           t.first ? null : button2("刪除", ask({ title: `刪除「${title}」？`,
+             text: "用這個權杖的同步程式會立刻無法上傳。這個動作不能復原。", ok: "刪除", danger: true }, "POST", "sync-tokens/delete", { id: t.id }), "bad")]));
+      }
+      if (d.sync.length < d.max_sync) sync.append(adder("新增同步權杖（給另一台電腦）", "哪台電腦用的，例如：筆電", "＋ 新增", "sync-tokens"));
+    } else {
+      sync.append(intro(["這個帳號綁定的是伺服器本身的權杖，同步用的權杖不會在網頁上顯示。"]));
+    }
+
+    // ---- read-only tokens to share
+    const share = el("section", { class: "tk tk-pane", role: "tabpanel" },
+      intro(["把連結給別人看你的冒險紀錄：只能看、不能上傳，聊天內容一律看不到。", "每個權杖可以各自選擇看得到哪些角色、哪些區塊。"]));
+    if (!d.view.length) share.append(empty("還沒有分享用權杖。"));
+    const partName = Object.fromEntries(d.parts.map(p => [p.key, p.name]));
     for (const v of d.view) {
       const link = location.origin + "/#token=" + encodeURIComponent(v.token);
       const name = v.label || "（沒有名稱）";
@@ -643,53 +699,62 @@ async function tokensPanel() {
           button2("儲存", () => act("POST", "tokens/sections", { id: v.id, sections: boxes.filter(([, c]) => c.checked).map(([p]) => p.key) }), "go")));
       editor.hidden = true;
       const shown = v.sections.length === d.parts.length ? ["全部區塊"] : v.sections.map(k => partName[k]);
-      share.append(el("div", { class: "tk-item" + (v.token === fresh ? " fresh" : "") },
-        el("div", { class: "tk-title" }, el("b", { text: name }),
-          el("span", { class: "tk-meta inline", text: `建立於 ${full(v.created_at)}　·　最後使用 ${when(v.last_used_at)}` })),
-        ...charsRow(v),
-        el("div", { class: "owned" }, el("span", { text: "可看" }), chipsOf(shown, "只有名字、職業、等級與經驗"),
-          button2("編輯", () => { editor.hidden = !editor.hidden; }, "mini")),
-        editor,
-        el("div", { class: "tk-acts" }, copyButton(link, "複製分享連結", true), copyButton(v.token, "複製權杖"), el("span", { class: "grow" }),
-          button2("重新產生", ask({ title: `重新產生「${name}」的連結？`, text: "舊的分享連結會立刻失效，要把新連結再給對方一次。名稱、角色和可看區塊不變。", ok: "重新產生" },
-            "POST", "tokens/regenerate", { id: v.id })),
-          button2("刪除", ask({ title: `刪除「${name}」？`, text: "用這個連結的人會立刻看不到你的冒險紀錄。這個動作不能復原。", ok: "刪除", danger: true },
-            "POST", "tokens/delete", { id: v.id }), "bad"))));
+      share.append(card(v, name, null, dates(v, "最後使用"),
+        [charsField(v),
+         field("可看", el("div", { class: "tk-line" }, chipsOf(shown, "只有名字、職業、等級與經驗"), button2("編輯", () => { editor.hidden = !editor.hidden; }, "mini")), editor)],
+        [copyButton(link, "複製分享連結", true), copyButton(v.token, "複製權杖")],
+        [button2("重新產生", ask({ title: `重新產生「${name}」的連結？`, text: "舊的分享連結會立刻失效，要把新連結再給對方一次。名稱、角色和可看區塊不變。", ok: "重新產生" },
+           "POST", "tokens/regenerate", { id: v.id })),
+         button2("刪除", ask({ title: `刪除「${name}」？`, text: "用這個連結的人會立刻看不到你的冒險紀錄。這個動作不能復原。", ok: "刪除", danger: true },
+           "POST", "tokens/delete", { id: v.id }), "bad")]));
     }
-    if (d.view.length < d.max_view) {
-      const label = el("input", { type: "text", maxlength: "40", placeholder: "給誰的，例如：公會朋友", autocomplete: "off" });
-      const form = el("form", { class: "tk-new" }, label, el("button", { text: "＋ 建立分享權杖" }));
-      form.addEventListener("submit", e => { e.preventDefault(); act("POST", "tokens", { label: label.value.trim() }); });
-      share.append(form);
-    }
-    // tokens for a voice assistant: the /voice page and the API, for the characters ticked
-    const voice = el("section", { class: "tk" },
-      el("div", { class: "tk-head" }, el("h3", { text: "語音 API 權杖" }), el("span", { class: "count", text: `${(d.voice || []).length} / ${d.max_voice || 0}` })),
-      el("p", { class: "tkhint", text: "給 AI 語音助理用：一個權杖就能查勾選的所有角色，網址加 &c=角色名 切換角色，也可以當 API 的權杖。只能看、不能上傳，聊天內容一律看不到。" }));
-    if (!(d.voice || []).length) voice.append(el("div", { class: "tk-empty", text: "還沒有語音 API 權杖。在下面輸入名稱建立一個。" }));
-    for (const v of d.voice || []) {
+    if (d.view.length < d.max_view) share.append(adder("建立分享權杖", "給誰的，例如：公會朋友", "＋ 建立", "tokens"));
+
+    // ---- tokens for a voice assistant: the /voice page and the API, for the characters ticked
+    const voiceList = d.voice || [];
+    const voice = el("section", { class: "tk tk-pane", role: "tabpanel" },
+      intro(["給 AI 語音助理用：一個權杖就能查勾選的所有角色，也可以當 API 的權杖。", "只能看、不能上傳，聊天內容一律看不到。"]));
+    if (!voiceList.length) voice.append(empty("還沒有語音 API 權杖。"));
+    for (const v of voiceList) {
       const name = v.label || "（沒有名稱）";
       const url = `${location.origin}/voice?t=${encodeURIComponent(v.token)}`;
-      const [code, show] = secret(v.token, v.token === fresh);
-      voice.append(el("div", { class: "tk-item" + (v.token === fresh ? " fresh" : "") },
-        el("div", { class: "tk-title" }, el("b", { text: name }),
-          el("span", { class: "tk-meta inline", text: `建立於 ${full(v.created_at)}　·　最後使用 ${when(v.last_used_at)}` })),
-        el("div", { class: "tk-secret" }, code, show),
-        ...charsRow(v),
-        el("div", { class: "tk-meta", text: `查詢網址：${location.origin}/voice?t=（權杖）&c=角色名　·　列出角色：&show=characters` }),
-        el("div", { class: "tk-acts" }, copyButton(url, "複製語音網址", true), copyButton(v.token, "複製權杖"), el("span", { class: "grow" }),
-          button2("重新產生", ask({ title: `重新產生「${name}」？`, text: "舊的權杖和網址會立刻失效，語音助理要改填新的。名稱和角色不變。", ok: "重新產生" },
-            "POST", "tokens/regenerate", { id: v.id })),
-          button2("刪除", ask({ title: `刪除「${name}」？`, text: "用這個權杖的語音助理會立刻查不到資料。這個動作不能復原。", ok: "刪除", danger: true },
-            "POST", "tokens/delete", { id: v.id }), "bad"))));
+      voice.append(card(v, name, null, dates(v, "最後使用"),
+        [field("權杖", secret(v.token, v.token === fresh)),
+         charsField(v),
+         field("用法", el("ul", { class: "tk-how" },
+           el("li", null, "切換角色：網址加 ", el("code", { text: "&c=角色名" })),
+           el("li", null, "列出可查的角色：網址加 ", el("code", { text: "&show=characters" })),
+           el("li", null, "當 API 權杖：", el("code", { text: "Authorization: Bearer 權杖" }))))],
+        [copyButton(url, "複製語音網址", true), copyButton(v.token, "複製權杖")],
+        [button2("重新產生", ask({ title: `重新產生「${name}」？`, text: "舊的權杖和網址會立刻失效，語音助理要改填新的。名稱和角色不變。", ok: "重新產生" },
+           "POST", "tokens/regenerate", { id: v.id })),
+         button2("刪除", ask({ title: `刪除「${name}」？`, text: "用這個權杖的語音助理會立刻查不到資料。這個動作不能復原。", ok: "刪除", danger: true },
+           "POST", "tokens/delete", { id: v.id }), "bad")]));
     }
-    if ((d.voice || []).length < (d.max_voice || 0)) {
-      const label = el("input", { type: "text", maxlength: "40", placeholder: "哪個助理用的，例如：手機語音", autocomplete: "off" });
-      const form = el("form", { class: "tk-new" }, label, el("button", { text: "＋ 建立語音 API 權杖" }));
-      form.addEventListener("submit", e => { e.preventDefault(); act("POST", "voice-tokens", { label: label.value.trim() }); });
-      voice.append(form);
+    if (voiceList.length < (d.max_voice || 0)) voice.append(adder("建立語音 API 權杖", "哪個助理用的，例如：手機語音", "＋ 建立", "voice-tokens"));
+
+    // ---- one kind at a time; the one just made (or changed) stays open
+    const panes = [["sync", "同步", d.sync ? `${d.sync.length}/${d.max_sync}` : "", sync],
+                   ["share", "分享", `${d.view.length}/${d.max_view}`, share],
+                   ["voice", "語音 API", `${voiceList.length}/${d.max_voice || 0}`, voice]];
+    if (fresh) pane = d.sync && d.sync.some(t => t.token === fresh) ? "sync" : voiceList.some(t => t.token === fresh) ? "voice" : "share";
+    if (!panes.some(([k]) => k === pane)) pane = d.sync ? "sync" : "share";
+    const bar = el("div", { class: "tk-tabs", role: "tablist", "aria-label": "權杖種類" });
+    const open = key => {
+      pane = key;
+      for (const b of bar.children) b.setAttribute("aria-selected", String(b.dataset.key === key));
+      for (const [k, , , node] of panes) node.hidden = k !== key;
+      say.textContent = "";
+    };
+    for (const [key, label, count] of panes) {
+      const b = el("button", { type: "button", role: "tab", "data-key": key }, label, count ? el("small", { text: count }) : null);
+      b.addEventListener("click", () => open(key));
+      bar.append(b);
     }
-    s.box.replaceChildren(s.head, sync, share, voice, say);
+    open(pane);
+    s.box.replaceChildren(s.head, bar, ...panes.map(p => p[3]), say);
+    const made = s.box.querySelector(".tk-card.fresh");
+    if (made) made.scrollIntoView({ block: "nearest" });
   };
   s.box.replaceChildren(s.head, el("div", { class: "loading", role: "status" }, el("i"), "讀取中…"));
   try { draw(await call("GET", "tokens")); }
