@@ -265,6 +265,7 @@ button.link { background: none; color: var(--muted); padding: 0; font-size: 13px
 /* token and friend panels: one bordered card per item, actions along its foot */
 /* the token panel: one kind of token per tab, each token a card of labelled rows */
 .sheet.tokens { max-width: 680px; }
+.sheet-tools { display: flex; align-items: center; gap: 12px; }
 .tk-tabs { display: flex; gap: 4px; padding: 4px; margin: 14px 0 4px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; }
 .tk-tabs button { flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 6px; border: 0; border-radius: 7px;
   background: none; color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; white-space: nowrap; }
@@ -289,6 +290,8 @@ button.link { background: none; color: var(--muted); padding: 0; font-size: 13px
 .tk-card code, .tk-intro code { font-size: 13px; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 3px 7px; overflow-wrap: anywhere; }
 .tk-card .tk-secret { display: flex; align-items: center; gap: 8px; }
 .tk-card .tk-secret code { flex: 1 1 auto; min-width: 0; }
+.tk-card code.tk-url { display: block; user-select: all; -webkit-user-select: all; word-break: break-all; line-height: 1.5; cursor: text; }
+.tk-card .tk-secret code.tk-url { display: block; }
 .tk-rows { padding: 0 16px; }
 .tk-field { display: grid; grid-template-columns: 4.5em minmax(0, 1fr); gap: 4px 12px; align-items: start; padding: 12px 0; border-top: 1px solid var(--line); }
 .tk-label { font-size: 12px; color: var(--muted); padding-top: 5px; }
@@ -615,14 +618,17 @@ async function tokensPanel() {
       try { const next = await call(method, path, body); draw(next, next.made); } catch (e) { say.textContent = e.message; }
     };
     const ask = (opts, method, path, body) => async () => { if (await confirmBox(opts)) act(method, path, body); };
-    const secret = (token, open) => {
-      const code = el("code", { text: open ? token : "•".repeat(16) });
+    // a token (or an address holding it) hidden until asked for; `as` writes it out
+    const secret = (token, open, as = t => t) => {
+      const code = el("code", { class: "tk-url", text: as(open ? token : "•".repeat(16)) });
       const show = button2(open ? "隱藏" : "顯示", () => {
         const hidden = show.textContent === "顯示";
-        code.textContent = hidden ? token : "•".repeat(16); show.textContent = hidden ? "隱藏" : "顯示";
+        code.textContent = as(hidden ? token : "•".repeat(16)); show.textContent = hidden ? "隱藏" : "顯示";
       });
       return el("div", { class: "tk-secret" }, code, show);
     };
+    // an address written out in full: one click selects all of it, to see exactly what is copied
+    const address = url => el("code", { class: "tk-url", text: url, title: "點一下選取整個網址" });
     // one token: name and dates on top, then labelled rows, then what can be done with it
     const field = (label, ...body) => el("div", { class: "tk-field" }, el("span", { class: "tk-label", text: label }), el("div", { class: "tk-value" }, ...body));
     const card = (t, title, badge, dates, rows, main, more) => el("article", { class: "tk-card" + (t.token === fresh ? " fresh" : "") },
@@ -700,7 +706,8 @@ async function tokensPanel() {
       editor.hidden = true;
       const shown = v.sections.length === d.parts.length ? ["全部區塊"] : v.sections.map(k => partName[k]);
       share.append(card(v, name, null, dates(v, "最後使用"),
-        [charsField(v),
+        [field("連結", address(link)),
+         charsField(v),
          field("可看", el("div", { class: "tk-line" }, chipsOf(shown, "只有名字、職業、等級與經驗"), button2("編輯", () => { editor.hidden = !editor.hidden; }, "mini")), editor)],
         [copyButton(link, "複製分享連結", true), copyButton(v.token, "複製權杖")],
         [button2("重新產生", ask({ title: `重新產生「${name}」的連結？`, text: "舊的分享連結會立刻失效，要把新連結再給對方一次。名稱、角色和可看區塊不變。", ok: "重新產生" },
@@ -719,7 +726,7 @@ async function tokensPanel() {
       const name = v.label || "（沒有名稱）";
       const url = `${location.origin}/voice?t=${encodeURIComponent(v.token)}`;
       voice.append(card(v, name, null, dates(v, "最後使用"),
-        [field("權杖", secret(v.token, v.token === fresh)),
+        [field("網址", secret(v.token, v.token === fresh, t => `${location.origin}/voice?t=${t}`)),
          charsField(v),
          field("用法", el("ul", { class: "tk-how" },
            el("li", null, "切換角色：網址加 ", el("code", { text: "&c=角色名" })),
@@ -756,6 +763,17 @@ async function tokensPanel() {
     const made = s.box.querySelector(".tk-card.fresh");
     if (made) made.scrollIntoView({ block: "nearest" });
   };
+  // read again in place (to see when a token was last used) without closing the panel; the tab stays
+  const refresh = button2("重新整理", async () => {
+    refresh.disabled = true; refresh.textContent = "更新中…";
+    try {
+      draw(await call("GET", "tokens"));
+      refresh.textContent = "已更新 " + new Date().toLocaleTimeString("zh-TW", { hour12: false });
+    } catch (e) { refresh.textContent = "更新失敗，再試一次"; }
+    refresh.disabled = false;
+    setTimeout(() => { if (!refresh.disabled) refresh.textContent = "重新整理"; }, 2500);
+  }, "mini");
+  s.head.append(el("div", { class: "sheet-tools" }, refresh, s.head.lastChild));
   s.box.replaceChildren(s.head, el("div", { class: "loading", role: "status" }, el("i"), "讀取中…"));
   try { draw(await call("GET", "tokens")); }
   catch (e) { s.box.replaceChildren(s.head, el("p", { class: "detail", text: e.message })); }
