@@ -222,8 +222,8 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
             names = []
             if link["kind"] == "personal":
                 with db() as conn:
-                    names = [r["name"] or r["character_id"] for r in conn.execute(
-                        "SELECT o.character_id, c.name FROM token_characters o LEFT JOIN characters c ON c.id=o.character_id "
+                    names = [r["full_name"] or r["name"] or r["character_id"] for r in conn.execute(
+                        "SELECT o.character_id, c.name, c.full_name FROM token_characters o LEFT JOIN characters c ON c.id=o.character_id "
                         "WHERE o.token=? ORDER BY o.claimed_at", (link["token"],))]
             link = {"kind": link["kind"], "characters": names}
         return {"google": enabled(s), "account": {k: acct[k] for k in ("email", "name", "picture")} if acct else None,
@@ -287,8 +287,8 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
                 sync += [{"id": fingerprint(r["token"]), "token": r["token"], "label": r["label"], "first": False,
                           "created_at": r["created_at"], "last_used_at": r["last_used_at"]} for r in conn.execute(
                     "SELECT token, label, created_at, last_used_at FROM sync_aliases WHERE owner=? ORDER BY created_at", (me,))]
-                names = [r["name"] or r["character_id"] for r in conn.execute(
-                    "SELECT o.character_id, c.name FROM token_characters o LEFT JOIN characters c ON c.id=o.character_id "
+                names = [r["full_name"] or r["name"] or r["character_id"] for r in conn.execute(
+                    "SELECT o.character_id, c.name, c.full_name FROM token_characters o LEFT JOIN characters c ON c.id=o.character_id "
                     "WHERE o.token=? ORDER BY o.claimed_at", (me,))]
             owned = owned_by(conn, link)
             view = []
@@ -307,11 +307,11 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
         """The characters a sharing token of this account can show: the person's, or every one
         for an account bound to the server's own token. Newest played first."""
         if link["kind"] == "personal":
-            rows = conn.execute("SELECT o.character_id id, c.name, c.class, c.level FROM token_characters o "
+            rows = conn.execute("SELECT o.character_id id, c.name, c.full_name, c.class, c.level FROM token_characters o "
                                 "LEFT JOIN characters c ON c.id=o.character_id WHERE o.token=? "
                                 "ORDER BY c.updated_at DESC", (link["token"],))
         else:
-            rows = conn.execute("SELECT id, name, class, level FROM characters ORDER BY updated_at DESC")
+            rows = conn.execute("SELECT id, name, full_name, class, level FROM characters ORDER BY updated_at DESC")
         return [dict(r) for r in rows]
 
     def picked(conn, link: Dict[str, Any], ids: Optional[List[str]]) -> Optional[str]:

@@ -50,7 +50,7 @@ def test_group_list_and_share_page(client):
     assert client.get("/api/v1/groups?character_id=c1", headers=READ).json()["items"][0]["token"] == tok   # stable
 
     d = client.get(f"/api/v1/shared/party/{tok}").json()          # no login needed with the link
-    assert d["owner"] == {"name": "小德", "class": "DRUID", "level": 22}
+    assert d["owner"] == {"name": "小德", "full_name": None, "class": "DRUID", "level": 22} and d["full_names"] == {}
     assert d["stats"]["kills"] == 2 and d["stats"]["xp"] == 300 and d["stats"]["loot_value"] == 39
     assert d["kills_by"] == [{"name": "小德", "kills": 1, "monsters": [{"name": "迪菲亞盜賊", "count": 1}]},
                              {"name": "波波", "kills": 1, "monsters": [{"name": "迪菲亞盜賊", "count": 1}]}]
@@ -429,3 +429,30 @@ def test_fighting_alone_is_cut_into_sessions_with_the_same_pages_as_a_group(clie
     # someone else's token does not get in
     assert client.get("/api/v1/characters/c1/solo").status_code == 401
     assert "/api/v1/characters/{character_id}/solo" in client.get("/openapi.json").json()["paths"]
+
+
+def test_full_names_come_from_the_combat_log_and_are_only_shown(client):
+    """The log writes "小德-德魯-PvP-KR": shown as "小德 德魯"; everything stays keyed by "小德"."""
+    seed(client)
+    t = int((T0 + timedelta(minutes=5)).timestamp() * 1000)
+    rows = [[i, t + i, "aura", who, 0, unit, None, None, 1, "增益", 1, "APPLIED", None, None, None, None, None, None,
+             0, 0, 0, "BUFF", None, None, None, None, None, None]
+            for i, (who, unit) in enumerate([("", "小德-德魯-PvP-KR"), ("波波", "波波-火法-PvP-KR"), ("艾莉", "艾莉-甲-PvP-KR"),
+                                             ("艾莉", "艾莉-乙-PvP-KR"), ("", "x"), ("", "迪菲亞盜賊")])]
+    assert client.post("/api/v1/combat/hits", headers=AUTH, json={"character_id": "c1", "source": "l", "rows": rows}).status_code == 200
+    me = client.get("/api/v1/characters/c1", headers=READ).json()
+    assert (me["name"], me["full_name"]) == ("小德", "小德 德魯")
+    g = client.get("/api/v1/groups?character_id=c1", headers=READ).json()["items"][0]
+    assert g["full_names"] == {"波波": "波波 火法"}                      # two 艾莉 seen: left short, never the wrong one
+    assert [m["name"] for m in g["members"]] == ["艾莉", "波波"]
+    d = client.get(f"/api/v1/shared/party/{g['token']}").json()
+    assert d["full_names"] == {"小德": "小德 德魯", "波波": "波波 火法"} and d["owner"]["name"] == "小德"
+    assert client.get("/api/v1/characters/c1/snapshot", headers=READ).json()["full_name"] == "小德 德魯"
+    # the addon's own word wins, and a snapshot without it keeps what is known
+    snap = lambda m, data: client.put("/api/v1/characters/c1/snapshot", headers=AUTH, json={      # noqa: E731
+        "captured_at": (T0 + timedelta(minutes=m)).isoformat(), "device_id": "mac", "data": data})
+    snap(60, {"name": "小德", "full_name": "小德 真名", "level": 22})
+    assert client.get("/api/v1/characters/c1", headers=READ).json()["full_name"] == "小德 真名"
+    snap(61, {"name": "小德", "level": 22})
+    assert client.get("/api/v1/characters/c1", headers=READ).json()["full_name"] == "小德 真名"
+    assert client.get("/api/v1/characters", headers=READ).json()["items"][0]["full_name"] == "小德 真名"

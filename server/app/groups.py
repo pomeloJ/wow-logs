@@ -180,7 +180,7 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
             "SELECT event_type, timestamp, payload_json FROM events WHERE character_id=? AND "
             "timestamp>=? AND timestamp<=? ORDER BY timestamp, event_id",
             (cid, s["started_at"], s["ended_at"])).fetchall()
-        who = conn.execute("SELECT name, class, level, race FROM characters WHERE id=?", (cid,)).fetchone()
+        who = conn.execute("SELECT name, full_name, class, level, race FROM characters WHERE id=?", (cid,)).fetchone()
         me = (who["name"] if who else None) or "我"
         kills_by: Counter = Counter()
         kills_of: Dict[str, Counter] = {}             # member -> what they landed the kill on
@@ -369,14 +369,27 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
             "damage_minutes": minutes, "encounters": encounters,
             "maps": maps, "marks": marks[:1500], "timeline": timeline[-400:],
         })
+        out["owner"]["full_name"] = who["full_name"] if who else None
+        seen = {me, *(m["name"] for m in out["members"]), *damage, *healing, *taken, *kills_by, *loot_of, *deaths_of,
+                *(n for m in member_route.values() for n in m)}
+        out["full_names"] = shown_names(conn, cid, seen, out["owner"])
         return out
+
+    def shown_names(conn, cid: str, seen, owner: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+        """{short name: name as the game shows it} for the names on a page. The page keeps every
+        short name as it is (the data is keyed by it) and shows this one instead where it has one."""
+        found = combat.names(conn, cid)
+        if owner and owner.get("full_name") and owner.get("name"):
+            found[owner["name"]] = owner["full_name"]
+        return {k: v for k, v in found.items() if k in seen and v != k}
 
     def brief(conn, s: Dict[str, Any]) -> Dict[str, Any]:
         act = activity(s["character_id"], _dt(s["started_at"]), _dt(s["ended_at"]))
         out = {**{k: s[k] for k in ("group_id", "started_at", "ended_at", "ongoing", "duration", "raid",
                                     "zone_name", "members")},
                "kills": act["kills"], "xp": act["xp"], "items_looted": act["items_looted"],
-               "token": token_for(conn, s)}
+               "token": token_for(conn, s),
+               "full_names": shown_names(conn, s["character_id"], {m["name"] for m in s["members"]})}
         if s.get("solo"):
             # where it was, and how much was dealt: what tells one stretch alone from another
             a, b = _ms(s["started_at"]), _ms(s["ended_at"]) + 999

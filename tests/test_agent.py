@@ -448,3 +448,25 @@ def test_the_window_shows_the_servers_copy_of_a_character_when_it_is_newer(tmp_p
     later = [{**local[0], "level": 13, "captured_at": epoch_of("2026-11-26T21:00:00Z")}]
     assert {e["id"]: e["view"] for e in merge_cards(later, list(cloud.values()), {})}["A"] == "local"
     assert merge_cards([], [], {}) == []
+
+
+def test_the_window_shows_full_names_and_remembers_syncing(tmp_path):
+    from adventuresync.gui import card_of, merge_cards, remember, remembered
+    assert card_of("A", {"name": "亞克", "full_name": "亞克 斯迪"}, 1)["name"] == "亞克 斯迪"
+    assert card_of("A", {"name": "亞克"}, 1)["name"] == "亞克" and card_of("A", {}, 1)["name"] == "A"
+    # a file from an older addon lacks the full name: the server's copy has it
+    here = card_of("A", {"name": "亞克", "level": 10}, 200)
+    there = {"id": "A", "captured_at": 100, "device_id": "pc", "data": {"name": "亞克", "full_name": "亞克 斯迪", "level": 9}}
+    shown, = merge_cards([here], [there], {})
+    assert shown["view"] == "local" and shown["card"]["name"] == "亞克 斯迪" and shown["card"]["level"] == 10
+    other = {**there, "data": {"name": "別人", "full_name": "別人 名字"}}       # a renamed character keeps its own name
+    assert merge_cards([here], [other], {})[0]["card"]["name"] == "亞克"
+    # whether syncing was on, beside the settings file
+    path = tmp_path / "config.toml"
+    assert remembered(path) == {}
+    remember(path, auto=True)
+    assert remembered(path) == {"auto": True}
+    remember(path, auto=False)
+    assert remembered(path)["auto"] is False
+    (tmp_path / "window.json").write_text("not json", encoding="utf-8")
+    assert remembered(path) == {}

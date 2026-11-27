@@ -137,8 +137,9 @@ def register(app, db, account_of: Callable[[Request], Optional[Dict[str, Any]]])
         if not ids:
             return []
         rows = {r["id"]: r for r in conn.execute(
-            f"SELECT id, name, class, level, realm FROM characters WHERE id IN ({','.join('?' * len(ids))})", ids)}
-        return [{"id": c, "name": rows[c]["name"] if c in rows else c, "class": rows[c]["class"] if c in rows else None,
+            f"SELECT id, name, full_name, class, level, realm FROM characters WHERE id IN ({','.join('?' * len(ids))})", ids)}
+        return [{"id": c, "name": rows[c]["name"] if c in rows else c,
+                 "full_name": rows[c]["full_name"] if c in rows else None, "class": rows[c]["class"] if c in rows else None,
                  "level": rows[c]["level"] if c in rows else None} for c in ids]
 
     def listing(sub: str, made: Optional[str] = None) -> JSONResponse:

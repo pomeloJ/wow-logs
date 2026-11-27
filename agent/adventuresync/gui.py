@@ -4,6 +4,7 @@ One window to type the server's address and the token, install the addon, and se
 syncing works. Everything it does goes through the same functions as the command line; the
 work runs on a thread of its own so the window never freezes.
 """
+import json
 import logging
 import queue as queues
 import shutil
@@ -31,6 +32,23 @@ def settings_path() -> Path:
     return here if here.is_file() else HOME / "config.toml"
 
 
+def remembered(path: Path) -> Dict[str, Any]:
+    """What the window keeps between runs (beside the settings file): whether syncing was on."""
+    try:
+        got = json.loads(path.with_name("window.json").read_text(encoding="utf-8"))
+        return got if isinstance(got, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def remember(path: Path, **values: Any) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.with_name("window.json").write_text(json.dumps({**remembered(path), **values}), encoding="utf-8")
+    except OSError:
+        pass                                          # not remembered: the next run starts stopped, as before
+
+
 def read_settings(path: Path) -> Config:
     try:
         return load_config(path)
@@ -46,7 +64,8 @@ SAME_WITHIN = 60                                     # saves this close together
 def card_of(cid: str, data: Any, at: Any) -> Dict[str, Any]:
     """What a character card shows, from a snapshot's data (the game's file or the server's copy)."""
     data = data if isinstance(data, dict) else {}
-    return {"id": str(cid), "name": data.get("name") or str(cid), "class": data.get("class"), "level": data.get("level"),
+    full = data.get("full_name") if isinstance(data.get("full_name"), str) and data.get("full_name").strip() else None
+    return {"id": str(cid), "name": full or data.get("name") or str(cid), "short": data.get("name"), "class": data.get("class"), "level": data.get("level"),
             "captured_at": at if isinstance(at, (int, float)) else None, **{k: data.get(k) for k in CARD_FIELDS}}
 
 
@@ -60,6 +79,8 @@ def merge_cards(local: List[Dict[str, Any]], cloud: List[Dict[str, Any]], chosen
     out = []
     for cid in dict.fromkeys([*here, *there]):
         mine, theirs = here.get(cid), there.get(cid)
+        if mine and theirs and mine["name"] == mine.get("short") and theirs["name"] != theirs.get("short")                 and theirs.get("short") == mine.get("short"):
+            mine = {**mine, "name": theirs["name"]}            # the server knows the full name the game's file lacks
         if mine and theirs:
             view = chosen.get(cid) or ("cloud" if (theirs["captured_at"] or 0) > (mine["captured_at"] or 0) + SAME_WITHIN else "local")
         else:
@@ -290,10 +311,11 @@ class Worker(threading.Thread):
                         else:
                             lines.append(f"{label}：被拒絕（HTTP {t['status']}）")
                     self._say(message="連線正常。" + "　".join(lines), ok=info["token_ok"], connected=info["token_ok"])
-                elif what in ("start", "stop"):
-                    self.auto = what == "start"
+                elif what in ("start", "stop", "resume"):
+                    self.auto = what != "stop"
                     next_scan = next_sync = 0.0
-                    self._say(message="已開始自動同步。" if self.auto else "已停止自動同步。", ok=True)
+                    self._say(message={"start": "已開始自動同步。", "stop": "已停止自動同步。",
+                                       "resume": "已根據上次設定開啟自動同步。"}[what], ok=True)
                 due = self.auto and time.monotonic() >= next_scan
                 if what == "sync" or due:
                     scan(self._cfg, store, seen if what != "sync" else {}, up)
@@ -508,7 +530,9 @@ def main(config: Optional[str] = None) -> int:
     ttk.Label(titles, text=f"冒險紀錄同步程式　版本 {__version__}", style="HeadSub.TLabel").pack(anchor="w")
 
     def toggle() -> None:
-        send("stop" if worker.auto else "start")
+        want = not worker.auto
+        if send("start" if want else "stop"):
+            remember(path, auto=want)                    # the next run starts the same way
 
     auto_button = ttk.Button(head, text="開始自動同步", style="Accent.TButton", command=toggle)
     auto_button.pack(side="right")
@@ -895,11 +919,12 @@ def main(config: Optional[str] = None) -> int:
             note(f"設定已儲存到 {path}", True)
         return now
 
-    def send(what: str) -> None:
+    def send(what: str) -> bool:
         now = save(quiet=True)
         if now is not None:
             note("處理中…")
             worker.ask(what, now)
+        return now is not None
 
     def addon() -> None:
         try:
@@ -1007,6 +1032,8 @@ def main(config: Optional[str] = None) -> int:
     worker.ask("update", cfg)
     if cfg.url and (cfg.api_token or cfg.tokens):       # settings from last time: show where things stand
         worker.ask("test", cfg)
+        if remembered(path).get("auto"):                # it was syncing when last closed: carry on
+            worker.ask("resume", cfg)
     else:
         tabs.select(tab_setup)                          # nothing set up yet: start where that is done
     root.after(300, poll)

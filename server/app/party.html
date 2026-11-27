@@ -221,12 +221,17 @@ const money = c => c >= 10000 ? (c / 10000).toFixed(1) + " 金" : c >= 100 ? Mat
 const hm = iso => new Date(iso).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", hour12: false });
 const day = iso => new Date(iso).toLocaleDateString("zh-TW", { year: "numeric", month: "long", day: "numeric", weekday: "short" });
 
+// Names as the game shows them ("亞克 斯迪"), where the server knows them. The data stays keyed by
+// the short name; only what is written on the page changes.
+let FULL = {};
+const N = n => (n && FULL[n]) || n;
+
 function describe(e) {
-  if (e.type === "MOB_KILLED") return (e.monster_name || "怪物") + (e.killed_by ? `（${e.killed_by} 擊殺）` : "");
+  if (e.type === "MOB_KILLED") return (e.monster_name || "怪物") + (e.killed_by ? `（${N(e.killed_by)} 擊殺）` : "");
   if (e.type === "ITEM_LOOTED") return (e.item_name || "物品") + (e.count > 1 ? " ×" + e.count : "");
   if (e.type.startsWith("QUEST_")) return e.quest_name || "任務";
-  if (e.type === "GROUP_MEMBER_JOINED" || e.type === "GROUP_MEMBER_LEFT" || e.type === "PARTY_MEMBER_DIED") return e.name || "";
-  if (e.type === "GROUP_MEMBER_LEVEL_UP") return `${e.name || ""} 升到 ${e.level} 級`;
+  if (e.type === "GROUP_MEMBER_JOINED" || e.type === "GROUP_MEMBER_LEFT" || e.type === "PARTY_MEMBER_DIED") return N(e.name) || "";
+  if (e.type === "GROUP_MEMBER_LEVEL_UP") return `${N(e.name) || ""} 升到 ${e.level} 級`;
   if (e.type === "LEVEL_UP") return "升到 " + e.level + " 級";
   if (e.type === "SKILL_UP") return e.text || "";
   if (e.type === "ENCOUNTER_END") return (e.name || "首領") + (e.success ? "　擊敗" : "　失敗");
@@ -239,7 +244,7 @@ function rank(title, rows, unit, empty) {
     rows.length ? el("ul", { class: "rank" }, ...rows.map(r => {
       const fill = el("i"); fill.style.width = (r.n / max * 100).toFixed(1) + "%";
       if (r.color) fill.style.background = r.color;
-      return el("li", null, el("span", { class: "name", title: r.name }, r.name, r.sub ? el("small", { text: r.sub }) : null), el("span", { class: "track" }, fill),
+      return el("li", null, el("span", { class: "name", title: N(r.name) }, N(r.name), r.sub ? el("small", { text: r.sub }) : null), el("span", { class: "track" }, fill),
         el("span", { class: "num", text: r.n.toLocaleString() + unit + (r.extra || "") }));
     })) : el("div", { class: "small", text: empty }));
 }
@@ -370,7 +375,7 @@ function mapCard(d) {
       const end = seen[seen.length - 1];
       c.beginPath(); c.arc(X(end.x), Y(end.y), 5, 0, 7); c.fillStyle = mate.color; c.fill(); c.lineWidth = 1.5; c.strokeStyle = "#000"; c.stroke();
       c.font = "11px sans-serif"; c.textAlign = "left"; c.textBaseline = "middle"; c.lineWidth = 3; c.strokeStyle = "rgba(0,0,0,.8)";
-      c.strokeText(mate.name, X(end.x) + 8, Y(end.y)); c.fillStyle = "#fff"; c.fillText(mate.name, X(end.x) + 8, Y(end.y));
+      c.strokeText(N(mate.name), X(end.x) + 8, Y(end.y)); c.fillStyle = "#fff"; c.fillText(N(mate.name), X(end.x) + 8, Y(end.y));
     }
     c.textAlign = "center"; c.textBaseline = "middle"; c.lineWidth = 3; c.strokeStyle = "rgba(0,0,0,.85)";
     for (const k of marks) {                                        // only what had happened by then
@@ -458,13 +463,13 @@ function palette(d) {
 const dot = c => { const i = el("i", { class: "dot" }); i.style.background = c.color; return i; };
 const swatch = c => { const l = sv("line", { x1: 1, y1: 5, x2: 21, y2: 5, "stroke-width": 3, "stroke-linecap": "round" }); l.style.stroke = c.color;
   if (c.dash) l.setAttribute("stroke-dasharray", "5 4"); return sv("svg", { width: 22, height: 10, "aria-hidden": "true" }, l); };
-const legend = (names, P) => el("div", { class: "legend" }, ...names.map(n => el("span", null, swatch(P(n)), n)));
+const legend = (names, P) => el("div", { class: "legend" }, ...names.map(n => el("span", null, swatch(P(n)), N(n))));
 
 // Titles players would hand out themselves after a run.
 function awardsCard(d, P) {
   const rows = d.meter.members, top = (key, list = rows) => list.filter(r => r[key] > 0).sort((a, b) => b[key] - a[key])[0];
   const sum = key => rows.reduce((a, r) => a + r[key], 0) || 1, out = [];
-  const add = (title, name, why) => out.push(el("div", { class: "award" }, el("div", { class: "t", text: title }), el("div", { class: "who" }, dot(P(name)), name), el("div", { class: "why", text: why })));
+  const add = (title, name, why) => out.push(el("div", { class: "award" }, el("div", { class: "t", text: title }), el("div", { class: "who" }, dot(P(name)), N(name)), el("div", { class: "why", text: why })));
   const dmg = top("damage"), heal = top("healing"), tank = top("taken");
   if (dmg) add("傷害第一", dmg.name, `${short(dmg.damage)} 傷害，佔全隊 ${Math.round(dmg.damage / sum("damage") * 100)}%`);
   const hit = rows.filter(r => r.best).sort((a, b) => b.best.amount - a.best.amount)[0];
@@ -588,7 +593,7 @@ function bossCard(d, P) {
       bar.append(seg);
     }
     const secs = e.duration || 0;
-    const line = (label, list) => list.length ? el("div", null, el("b", { text: label }), ...list.map(r => el("span", null, dot(P(r.name)), `${r.name} ${r.amount.toLocaleString()}`))) : null;
+    const line = (label, list) => list.length ? el("div", null, el("b", { text: label }), ...list.map(r => el("span", null, dot(P(r.name)), `${N(r.name)} ${r.amount.toLocaleString()}`))) : null;
     card.append(el("details", { class: "boss" }, el("summary", { class: "boss-row" },
       el("div", { class: "name" }, e.name || "首領", el("small", { text: `${hm(e.timestamp)}　${e.success ? "擊敗" : "失敗"}　${secs >= 60 ? Math.floor(secs / 60) + " 分 " : ""}${secs % 60} 秒` })),
       bar, el("div", { class: "num", text: total ? `${short(total)}　每秒 ${(total / Math.max(1, secs)).toFixed(0)}` : "—" })),
@@ -609,7 +614,7 @@ function kitCard(d, P) {
   const find = (who, name) => (d.skills || []).find(k => k.who === who && (k.spell === name || (k.pet && name === "寵物近戰" && k.spell === "近戰")));
   return el("section", { class: "card c-full" }, el("h2", { text: "招牌技能" }), el("div", { class: "kit" }, ...rows.map(r => {
     const max = r.spells[0].amount;
-    return el("div", null, el("h3", null, dot(P(r.name)), r.name), el("ul", { class: "rank" }, ...r.spells.slice(0, 5).map(sp => {
+    return el("div", null, el("h3", null, dot(P(r.name)), N(r.name)), el("ul", { class: "rank" }, ...r.spells.slice(0, 5).map(sp => {
       const fill = el("i"); fill.style.width = (sp.amount / max * 100).toFixed(1) + "%"; fill.style.background = P(r.name).color;
       const li = el("li", null, el("span", { class: "name", title: sp.name, text: sp.name }), el("span", { class: "track" }, fill),
         el("span", { class: "num", text: `${short(sp.amount)}　${Math.round(sp.amount / (r.damage || 1) * 100)}%` }));
@@ -660,7 +665,7 @@ function distribution(members, P) {
       const tip = sv("title"); tip.textContent = `${name}命中：最小 ${v[0]}、前四分之一 ${Math.round(q1)}、中位數 ${Math.round(md)}、後四分之一 ${Math.round(q3)}、最大 ${v[v.length - 1]}`; box.append(tip);
       svg.append(whisk, box, mid);
     });
-    return el("div", null, el("h3", null, dot(P(m.who)), m.who, el("small", { text: `${total} 次命中` })), svg);
+    return el("div", null, el("h3", null, dot(P(m.who)), N(m.who), el("small", { text: `${total} 次命中` })), svg);
   }));
 }
 
@@ -697,7 +702,7 @@ function skillCard(d, P) {
     }).catch(() => { if (mine === asked) spread.replaceChildren(); });
     const rows = all.filter(k => key(k) === select.value).sort((a, b) => b.total - a.total);
     if (!rows.some(k => k.who === focus)) focus = rows[0].who;
-    people.replaceChildren(...rows.map(k => { const b = el("button", { type: "button", class: "who-btn", "aria-pressed": String(k.who === focus) }, dot(P(k.who)), k.who);
+    people.replaceChildren(...rows.map(k => { const b = el("button", { type: "button", class: "who-btn", "aria-pressed": String(k.who === focus) }, dot(P(k.who)), N(k.who));
       b.addEventListener("click", () => { focus = k.who; show(); }); return b; }));
     const k = rows.find(x => x.who === focus), tile = (v, name, note) => el("div", { class: "tile" }, el("b", null, v, note ? el("small", { text: note }) : null), el("span", { text: name }));
     const crit = k.can_crit ? pct(k.crit.n, k.hits) : "不適用";
@@ -740,7 +745,7 @@ function skillCard(d, P) {
         ["普通命中平均", r => r.normal.avg, num], ["致命一擊平均", r => r.crit.avg, num], ["中位數", r => r.median, num], ["標準差", r => r.sd, null],
         ["每次出手期望傷害", r => r.attempts ? Math.round(r.total / r.attempts * 10) / 10 : null, num]];
       table = el("div", { class: "scroll-x" }, el("table", { class: "cmp" },
-        el("thead", null, el("tr", null, el("th", { text: label[select.value] + "　多人比較" }), ...rows.map(r => el("th", null, el("span", { class: "who" }, dot(P(r.who)), r.who))))),
+        el("thead", null, el("tr", null, el("th", { text: label[select.value] + "　多人比較" }), ...rows.map(r => el("th", null, el("span", { class: "who" }, dot(P(r.who)), N(r.who)))))),
         el("tbody", null, ...M.map(([name, get, fmt]) => { const vals = rows.map(get), top = fmt ? Math.max(...vals.filter(v => v != null)) : null;
           return el("tr", null, el("th", { text: name }), ...vals.map(v => el("td", { class: fmt && v != null && v === top && vals.filter(x => x === top).length === 1 ? "best" : "", text: v == null ? "—" : (fmt || num)(v) }))); }))));
     }
@@ -802,7 +807,7 @@ function petCard(d, P) {
     const total = r.own + r.melee + r.skill, bar = el("div", { class: "stack", role: "img", "aria-label": PARTS.map(([k, name]) => `${name} ${pct(r[k], total, 0)}`).join("、") });
     for (const [k, name, , color] of PARTS) { if (!r[k]) continue; const seg = el("i", { title: `${name}：${r[k].toLocaleString()}（${pct(r[k], total)}）` });
       seg.style.flex = (r[k] / total).toFixed(4) + " 0 0"; seg.style.background = color; seg.style.color = "#fff"; seg.dataset.label = pct(r[k], total, 0); bar.append(seg); }
-    card.append(el("div", { class: "boss-row" }, el("div", { class: "name" }, el("span", { class: "who", style: "display:inline-flex;align-items:center" }, dot(P(r.name)), r.name)), bar,
+    card.append(el("div", { class: "boss-row" }, el("div", { class: "name" }, el("span", { class: "who", style: "display:inline-flex;align-items:center" }, dot(P(r.name)), N(r.name))), bar,
       el("div", { class: "num", text: `寵物佔 ${pct(r.melee + r.skill, total)}` })));
   }
   const fit = () => { for (const seg of card.querySelectorAll(".stack i")) seg.textContent = seg.clientWidth >= 34 ? seg.dataset.label : ""; };
@@ -828,7 +833,7 @@ function lineChart(box, series, t0, stepMs, clock) {
     const hit = sv("rect", { x: L, y: 0, width: W - L - R, height: H, fill: "transparent" });
     const move = ev => { const r = svg.getBoundingClientRect(), x = (ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left, i = Math.max(0, Math.min(n - 1, Math.round((x - L) / (W - L - R) * (n - 1))));
       cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i)); cross.setAttribute("visibility", "visible");
-      tip.replaceChildren(el("b", { text: clock(t0 + i * stepMs) }), ...series.slice().sort((a, b) => (b.values[i] || 0) - (a.values[i] || 0)).map(s => el("div", null, swatch(s), el("span", { text: s.name }), el("span", { text: Math.round(s.values[i] || 0).toLocaleString() }))));
+      tip.replaceChildren(el("b", { text: clock(t0 + i * stepMs) }), ...series.slice().sort((a, b) => (b.values[i] || 0) - (a.values[i] || 0)).map(s => el("div", null, swatch(s), el("span", { text: N(s.name) }), el("span", { text: Math.round(s.values[i] || 0).toLocaleString() }))));
       tip.hidden = false; const left = X(i) + 14 + tip.offsetWidth > W ? X(i) - 14 - tip.offsetWidth : X(i) + 14; tip.style.left = Math.max(0, left) + "px"; tip.style.top = T + "px"; };
     const leave = () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); };
     hit.addEventListener("mousemove", move); hit.addEventListener("touchstart", move, { passive: true }); hit.addEventListener("touchmove", move, { passive: true });
@@ -860,7 +865,7 @@ function dpsCard(d, P) {
       const series = who.value ? [{ name: who.value + " 合計", ...P(who.value), dash: false, values: smooth(pad(both(who.value))) }, { name: "本人", color: "#3f86c9", dash: false, values: smooth(pad(of(who.value, "own"))) },
         ...(of(who.value, "pet").some(v => v) ? [{ name: "寵物", color: "#b57d14", dash: true, values: smooth(pad(of(who.value, "pet"))) }] : [])]
         : names.map(n => ({ name: n, ...P(n), values: smooth(pad(both(n))) }));
-      keys.replaceChildren(el("div", { class: "legend" }, ...series.map(s => el("span", null, swatch(s), s.name))));
+      keys.replaceChildren(el("div", { class: "legend" }, ...series.map(s => el("span", null, swatch(s), N(s.name)))));
       const clock = t => boss ? ((t - r.start) / 1000).toFixed(0) + " 秒" : hm(new Date(t).toISOString());
       redraw = lineChart(box, series, r.start, r.step * 1000, clock);
       note.textContent = boss ? "每秒傷害，取前後共五秒的平均。" : `每 ${r.step} 秒一個點的平均每秒傷害；選一場首領戰可以看到逐秒變化和每一下攻擊。`;
@@ -872,11 +877,11 @@ function dpsCard(d, P) {
       const AURA = { APPLIED: "獲得", REFRESH: "補上", REMOVED: "消失" };
       const draw = () => {
         const rows = r.items.filter(e => e.way !== "heal" && (auras.checked || e.way !== "aura"));
-        const line = e => e.way === "death" ? el("tr", { class: "in" }, el("td", { class: "t", text: ((e.ts - start) / 1000).toFixed(1) }), el("td", { text: e.who + (e.pet ? `的寵物 ${e.unit || ""}` : "") }), el("td"), el("td"), el("td", { class: "crit", text: "死亡" }))
-          : e.way === "aura" ? el("tr", { class: "in" }, el("td", { class: "t", text: ((e.ts - start) / 1000).toFixed(1) }), el("td", { text: e.enemy ? e.who + (e.pet ? "的寵物" : "") : (e.unit || "").split("-")[0] }), el("td", { text: e.spell || "" }),
-            el("td", { text: e.enemy || e.who }), el("td", { text: (e.miss === "DEBUFF" ? "減益" : "增益") + (AURA[e.kind] || "") }))
+        const line = e => e.way === "death" ? el("tr", { class: "in" }, el("td", { class: "t", text: ((e.ts - start) / 1000).toFixed(1) }), el("td", { text: N(e.who) + (e.pet ? `的寵物 ${e.unit || ""}` : "") }), el("td"), el("td"), el("td", { class: "crit", text: "死亡" }))
+          : e.way === "aura" ? el("tr", { class: "in" }, el("td", { class: "t", text: ((e.ts - start) / 1000).toFixed(1) }), el("td", { text: e.enemy ? N(e.who) + (e.pet ? "的寵物" : "") : N((e.unit || "").split("-")[0]) }), el("td", { text: e.spell || "" }),
+            el("td", { text: e.enemy || N(e.who) }), el("td", { text: (e.miss === "DEBUFF" ? "減益" : "增益") + (AURA[e.kind] || "") }))
           : el("tr", { class: e.way }, el("td", { class: "t", text: ((e.ts - start) / 1000).toFixed(1) }),
-            el("td", { text: e.way === "in" ? e.enemy || "敵人" : e.who + (e.pet ? "的寵物" : "") }), el("td", { text: e.spell || "" }), el("td", { text: e.way === "in" ? e.who + (e.pet ? "的寵物" : "") : e.enemy || "" }),
+            el("td", { text: e.way === "in" ? e.enemy || "敵人" : N(e.who) + (e.pet ? "的寵物" : "") }), el("td", { text: e.spell || "" }), el("td", { text: e.way === "in" ? N(e.who) + (e.pet ? "的寵物" : "") : e.enemy || "" }),
             el("td", { class: e.crit ? "crit" : "", text: e.miss ? e.miss : e.amount.toLocaleString() + (e.crit ? " 致命" : "") }));
         table.replaceChildren(el("thead", null, el("tr", null, ...["時間", "誰", "招式", "對象", "結果"].map(h => el("th", { text: h })))), el("tbody", null, ...rows.map(line)));
         count.textContent = `這場的 ${rows.length} 筆事件，由早到晚；灰色的是敵人打隊員、增益減益與死亡。`;
@@ -902,7 +907,7 @@ function rateCell(x, cls = "") {
   return td;
 }
 const table = (heads, rows) => el("div", { class: "scroll-x" }, el("table", { class: "cmp" }, el("thead", null, el("tr", null, ...heads.map(h => typeof h === "string" ? el("th", { text: h }) : h))), el("tbody", null, ...rows)));
-const whoCell = (P, name, tag = "th") => el(tag, null, el("span", { class: "who", style: "display:inline-flex;align-items:center" }, dot(P(name)), name));
+const whoCell = (P, name, tag = "th") => el(tag, null, el("span", { class: "who", style: "display:inline-flex;align-items:center" }, dot(P(name)), N(name)));
 const STAR = "＊ 代表出手不到 30 次，數字只能參考。滑鼠停在百分比上可以看次數與 95% 信賴區間。";
 let openEnemy = null;
 
@@ -960,7 +965,7 @@ function npcCard(R) {
 function acrossCard(d, P) {
   const all = (d.skills || []).filter(k => k.normal.n >= 10);
   if (!all.length) return null;
-  const pick = el("select", { "aria-label": "隊員與技能" }, ...all.map((k, i) => el("option", { value: i, text: `${k.who}　${skillName(k)}　${short(k.total)}` })));
+  const pick = el("select", { "aria-label": "隊員與技能" }, ...all.map((k, i) => el("option", { value: i, text: `${N(k.who)}　${skillName(k)}　${short(k.total)}` })));
   const body = el("div"); let asked = 0;
   const show = () => { const k = all[pick.value], mine = ++asked; body.replaceChildren(el("div", { class: "small", text: "讀取中…" }));
     fetch(`${API}/across?who=${encodeURIComponent(k.who)}&spell=${encodeURIComponent(k.spell)}&pet=${k.pet}`).then(r => r.json()).then(r => { if (mine !== asked) return;
@@ -1144,17 +1149,18 @@ function xpCard(d) {
   window.addEventListener("resize", draw);
   requestAnimationFrame(draw);
   const p = d.pace;
-  return el("section", { class: "card c-half" }, el("h2", { text: `${d.owner.name} 的經驗累積` }), canvas,
+  return el("section", { class: "card c-half" }, el("h2", { text: `${N(d.owner.name)} 的經驗累積` }), canvas,
     el("div", { class: "small", text: `每小時約 ${p.xp_per_hour.toLocaleString()} 經驗、${p.kills_per_hour} 隻怪`
       + (p.avg_fight_seconds ? `；平均一場戰鬥 ${Math.round(p.avg_fight_seconds)} 秒，戰鬥佔 ${Math.round(p.combat_share * 100)}% 的時間` : "") + "。平的地方是在趕路或休息。" }));
 }
 
 function render(d) {
-  const names = [d.owner.name, ...d.members.map(m => m.name)];
-  document.title = d.solo ? `${d.owner.name} 的練功紀錄` : `${names.join("、")} 的組隊紀錄`;
+  FULL = d.full_names || {};
+  const names = [d.owner.name, ...d.members.map(m => m.name)].map(N);
+  document.title = d.solo ? `${N(d.owner.name)} 的練功紀錄` : `${names.join("、")} 的組隊紀錄`;
   const where = [...d.instances, ...d.zones.filter(z => !d.instances.includes(z))].slice(0, 3).join("、") || "冒險";
   const member = (m, me) => el("span", { class: "chip" + (m.left ? " left" : "") }, (() => { const i = el("i"); if (COLOR[m.class]) i.style.background = COLOR[m.class]; return i; })(),
-    m.name, el("small", { text: [m.level ? m.level + " 級" : null, CLASS[m.class] || m.class, me ? "紀錄者" : null].filter(Boolean).join(" ") }));
+    N(m.name), el("small", { text: [m.level ? m.level + " 級" : null, CLASS[m.class] || m.class, me ? "紀錄者" : null].filter(Boolean).join(" ") }));
   const hero = el("section", { class: "card hero" },
     el("h1", null, where + "　" + (d.solo ? "單人練功" : d.raid ? "團隊" : `${names.length} 人小隊`), d.ongoing ? el("span", { class: "live", text: "進行中" }) : null),
     el("div", { class: "sub", text: `${day(d.started_at)}　${hm(d.started_at)} – ${d.ongoing ? "現在" : hm(d.ended_at)}　共 ${dur(d.duration)}` }),
@@ -1162,12 +1168,12 @@ function render(d) {
   const s = d.stats, tile = (n, label) => el("div", { class: "tile" }, el("b", { text: n }), el("span", { text: label }));
   const hours = d.duration / 3600;
   const tiles = el("section", { class: "card c-full" }, el("h2", { text: "這次的成果" }), el("div", { class: "tiles" },
-    tile(dur(d.duration), d.solo ? "練功時間" : "組隊時間"), tile(s.kills.toLocaleString(), "擊殺"), tile(s.xp.toLocaleString(), `${d.owner.name} 獲得經驗`),
+    tile(dur(d.duration), d.solo ? "練功時間" : "組隊時間"), tile(s.kills.toLocaleString(), "擊殺"), tile(s.xp.toLocaleString(), `${N(d.owner.name)} 獲得經驗`),
     tile(s.items_looted.toLocaleString(), "拾取物品"), s.loot_value ? tile(money(s.loot_value), "拾取物賣店價值") : null,
     tile((d.deaths_by.reduce((n, x) => n + x.deaths, 0) || d.deaths).toLocaleString(), d.solo ? "死亡次數" : "全隊死亡次數"), d.quests_completed ? tile(d.quests_completed, "完成任務") : null,
     d.level_ups ? tile(d.level_ups, "升級") : null,
     hours >= 0.1 && s.xp ? tile(Math.round(s.xp / hours).toLocaleString(), "每小時經驗") : null,
-    s.money_in ? tile(money(s.money_in), `${d.owner.name} 金錢收入`) : null));
+    s.money_in ? tile(money(s.money_in), `${N(d.owner.name)} 金錢收入`) : null));
   const P = palette(d), colorOf = new Proxy({}, { get: (_, name) => P(name).color });
   d.meter = d.meter || { fight_seconds: 0, members: [] }; d.encounters = d.encounters || []; d.damage_minutes = d.damage_minutes || [];
   const total = d.kills_by.reduce((a, k) => a + k.kills, 0) || 1;
@@ -1178,9 +1184,9 @@ function render(d) {
   const lootRow = i => el("li", null, el("span", { class: "grow", text: i.name || "#" + i.id }), el("span", { class: "num", text: "×" + i.count + (i.value ? "　" + money(i.value) : "") }));
   const mine = d.top_items.slice().sort((a, b) => (b.value || 0) - (a.value || 0) || b.count - a.count);
   const lootCard = el("section", { class: "card c-half" }, el("h2", { text: "戰利品" }),
-    el("div", { class: "subhead", text: `${d.owner.name}（${s.items_looted} 件` + (s.loot_value ? `，賣店約 ${money(s.loot_value)}` : "") + "）" }),
+    el("div", { class: "subhead", text: `${N(d.owner.name)}（${s.items_looted} 件` + (s.loot_value ? `，賣店約 ${money(s.loot_value)}` : "") + "）" }),
     mine.length ? el("ul", { class: "lines" }, ...mine.slice(0, 12).map(lootRow)) : el("div", { class: "small", text: "沒有拾取紀錄。" }));
-  for (const m of d.member_loot) lootCard.append(el("div", { class: "subhead", text: `${m.name}（${m.count} 件` + (m.value ? `，賣店約 ${money(m.value)}` : "") + "）" }),
+  for (const m of d.member_loot) lootCard.append(el("div", { class: "subhead", text: `${N(m.name)}（${m.count} 件` + (m.value ? `，賣店約 ${money(m.value)}` : "") + "）" }),
     el("ul", { class: "lines" }, ...m.items.map(lootRow)));
   if (!d.member_loot.length && !d.solo) lootCard.append(el("div", { class: "small", text: "隊友的拾取要用新版插件記錄，之後的組隊才會出現。" }));
   // Damage and healing, when the client let the addon read the combat log.
@@ -1191,8 +1197,8 @@ function render(d) {
   const dmgCard = !logged && d.damage.length ? meter("傷害", d.damage, "") : null;
   const healCard = !logged && d.healing.length ? meter("治療", d.healing, "") : null;
   // Highlights: the moments worth finding without reading the whole timeline.
-  const HL = { LEVEL_UP: h => `${d.owner.name} 升到 ${h.level} 級`, GROUP_MEMBER_LEVEL_UP: h => `${h.name} 升到 ${h.level} 級`, ACHIEVEMENT_EARNED: h => `成就：${h.name || ""}`,
-    PLAYER_DIED: h => `${d.owner.name} 死亡` + (h.zone_name ? `（${h.zone_name}）` : ""), PARTY_MEMBER_DIED: h => `${h.name} 死亡` + (h.zone_name ? `（${h.zone_name}）` : ""),
+  const HL = { LEVEL_UP: h => `${N(d.owner.name)} 升到 ${h.level} 級`, GROUP_MEMBER_LEVEL_UP: h => `${N(h.name)} 升到 ${h.level} 級`, ACHIEVEMENT_EARNED: h => `成就：${h.name || ""}`,
+    PLAYER_DIED: h => `${N(d.owner.name)} 死亡` + (h.zone_name ? `（${h.zone_name}）` : ""), PARTY_MEMBER_DIED: h => `${N(h.name)} 死亡` + (h.zone_name ? `（${h.zone_name}）` : ""),
     INSTANCE_ENTERED: h => `進入副本 ${h.name || ""}`, ENCOUNTER_END: h => `首領戰 ${h.name || ""}　${h.success ? "擊敗" : "失敗"}`,
     RARE_KILL: h => `擊殺${h.rank}怪 ${h.name}` + (h.count > 1 ? ` ×${h.count}` : "") };
   const hl = d.highlights.filter(h => HL[h.type]);
@@ -1200,7 +1206,7 @@ function render(d) {
     hl.length ? el("ul", { class: "lines" }, ...hl.map(h => el("li", null, el("time", { text: h.timestamp ? hm(h.timestamp) : "" }), el("span", { class: "grow", text: HL[h.type](h) }))))
       : el("div", { class: "small", text: "這次很平順：沒有人升級、死亡，也沒遇到稀有怪。" }));
   if (d.deaths_by.length) hlCard.append(el("div", { class: "small", text: "死亡次數：" + d.deaths_by.map(x => `${x.name} ${x.deaths}`).join("、") }));
-  const questCard = d.quests.length || d.skill_ups.length ? el("section", { class: "card c-half" }, el("h2", { text: `${d.owner.name} 完成的任務與技能` }),
+  const questCard = d.quests.length || d.skill_ups.length ? el("section", { class: "card c-half" }, el("h2", { text: `${N(d.owner.name)} 完成的任務與技能` }),
     d.quests.length ? el("ul", { class: "lines" }, ...d.quests.map(q => el("li", null, el("span", { class: "grow", text: q.name }),
       el("span", { class: "num", text: [q.xp ? q.xp.toLocaleString() + " 經驗" : null, q.money ? money(q.money) : null].filter(Boolean).join("　") })))) : null,
     d.skill_ups.length ? el("div", { class: "small", text: d.skill_ups.join(" ") }) : null) : null;
@@ -1248,7 +1254,7 @@ function render(d) {
   for (const [v, name, hint] of VIEWS) { const b = el("button", { type: "button", role: "tab" }, name, el("small", { text: hint })); b.dataset.view = v; b.addEventListener("click", () => { go(v); window.scrollTo(0, 0); }); tabs.append(b); }
   const jump = openSkill; if (jump) openSkill = (who, k) => { if (view !== "a") go("a"); jump(who, k); };
   app.replaceChildren(hero, tabs, nav, grid,
-    el("div", { class: "small c-full", text: `這是 ${d.owner.name} 的插件記錄的內容：擊殺是補最後一擊的次數；經驗、金錢與任務只有 ${d.owner.name} 自己的；傷害、治療與首領戰來自 ${d.owner.name} 電腦上的戰鬥紀錄檔，隊友要在 ${d.owner.name} 附近才記得到。不包含任何聊天內容。`
+    el("div", { class: "small c-full", text: `這是 ${N(d.owner.name)} 的插件記錄的內容：擊殺是補最後一擊的次數；經驗、金錢與任務只有 ${N(d.owner.name)} 自己的；傷害、治療與首領戰來自 ${N(d.owner.name)} 電腦上的戰鬥紀錄檔，隊友要在 ${N(d.owner.name)} 附近才記得到。不包含任何聊天內容。`
       + (d.ongoing ? (d.solo ? "這段練功還在進行" : "組隊還在進行") + "，資料會在遊戲存檔後更新。" : "") }));
   if (["a", "r"].includes(location.hash.slice(1)) && parts.some(p => p[2] === location.hash.slice(1))) view = location.hash.slice(1);
   place();

@@ -248,7 +248,7 @@ def test_a_bound_account_manages_its_sharing_tokens(tmp_path):
     assert seen(web, **reader) == ["char-mine"]
     assert web.get("/api/v1/characters/char-other/snapshot", headers=reader).status_code in (403, 404)
     # a new one shows everything but group sessions and screenshots until its maker chooses otherwise
-    assert web.get("/api/v1/token", headers=reader).json() == {"kind": "read", "characters": [{"id": "char-mine", "name": "char-mine"}],
+    assert web.get("/api/v1/token", headers=reader).json() == {"kind": "read", "characters": [{"id": "char-mine", "name": "char-mine", "full_name": None}],
                                                               "can_upload": False, "sections": ["location", "activity", "items", "quests", "character"]}
     assert web.put("/api/v1/characters/char-mine/snapshot", headers=reader, json={
         "captured_at": "2026-11-26T10:00:00+08:00", "device_id": "x", "data": {"name": "n"}}).status_code == 403

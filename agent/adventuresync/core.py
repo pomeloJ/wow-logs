@@ -493,7 +493,8 @@ class Uploader:
                         continue
                     snap = r.json()
                     out[cid] = {"id": cid, "captured_at": epoch_of(snap.get("captured_at")),
-                                "device_id": snap.get("device_id"), "data": snap.get("data") or {}}
+                                "device_id": snap.get("device_id"),
+                                "data": {**(snap.get("data") or {}), **({"full_name": snap["full_name"]} if snap.get("full_name") else {})}}
             except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
                 continue
         return list(out.values())

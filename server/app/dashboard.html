@@ -543,6 +543,8 @@ function copyButton(text, label, primary) {
 }
 
 const button2 = (label, run, cls) => { const b = el("button", { type: "button", class: "btn2" + (cls ? " " + cls : ""), text: label }); b.addEventListener("click", run); return b; };
+// the name as the game shows it ("亞克 斯迪") when the server knows it, else the short one
+const shownName = c => c.full_name || c.name || c.id;
 const chipsOf = (names, empty) => el("div", { class: "pchips" }, ...(names.length ? names.map(n => el("span", { class: "pchip", text: n })) : [el("span", { class: "pchip none", text: empty })]));
 
 // ---- the signed-in person's tokens: the one their sync program uses, and read-only ones to share
@@ -608,7 +610,7 @@ async function tokensPanel() {
     if (!d.view.length) share.append(el("div", { class: "tk-empty", text: "還沒有分享用權杖。在下面輸入名稱建立一個。" }));
     const partName = Object.fromEntries(d.parts.map(p => [p.key, p.name]));
     const owned = d.owned || [];
-    const charText = c => (c.name || c.id) + (c.level ? ` Lv${c.level}` : "");
+    const charText = c => shownName(c) + (c.level ? ` Lv${c.level}` : "");
     for (const v of d.view) {
       const link = location.origin + "/#token=" + encodeURIComponent(v.token);
       const name = v.label || "（沒有名稱）";
@@ -723,7 +725,7 @@ async function askAboutInvite() {
 
 async function friendsPanel() {
   const s = sheet("好友");
-  const charText = c => (c.name || c.id) + (c.level ? ` Lv${c.level}` : "");
+  const charText = c => shownName(c) + (c.level ? ` Lv${c.level}` : "");
   const draw = (d, fresh) => {
     const say = el("div", { class: "say", role: "status" });
     const act = async (method, path, body) => {
@@ -1681,7 +1683,7 @@ async function load(quiet) {
       el("div", { class: "ring", role: "img", "aria-label": `${d.level ?? "?"} 級，經驗 ${Math.round(frac(d.xp || 0) * 100)}%` }, svg,
         el("div", { class: "lv" }, el("b", { text: d.level ?? "?" }), el("span", { text: d.xp_max > 0 ? Math.round(frac(d.xp || 0) * 100) + "%" : "等級" }))),
       el("div", { class: "who" },
-        el("div", { class: "name", text: d.name || state.charId }),
+        el("div", { class: "name", text: shownName(chars.find(c => c.id === state.charId) || {}) || d.name || state.charId }),
         el("div", { class: "sub", text: [RACE[d.race] || d.race, CLASS[d.class] || d.class, FACTION[d.faction] || d.faction].filter(Boolean).join(" · ") }),
         el("div", { class: "chips" },
           chip("位置", [d.zone_name, d.sub_zone].filter(Boolean).join(" · ")),
@@ -1940,7 +1942,7 @@ async function load(quiet) {
         try { await navigator.clipboard.writeText(url); copy.textContent = "已複製"; } catch (e) { window.prompt("複製這個網址", url); }
         setTimeout(() => { copy.textContent = "複製連結"; }, 1500);
       });
-      const names = g.members.map(m => m.name).join("、") || "隊友名稱未知";
+      const names = g.members.map(m => (g.full_names || {})[m.name] || m.name).join("、") || "隊友名稱未知";
       return el("li", null, el("span", { class: "grow" },
         el("a", { href: url, target: "_blank", rel: "noopener", class: "wname", style: "color:inherit", text: `和 ${names}` + (g.ongoing ? "（進行中）" : "") }),
         el("span", { class: "obj", text: `${new Date(g.started_at).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })}`
@@ -2059,7 +2061,7 @@ async function load(quiet) {
       picker = el("nav", { class: "chars", "aria-label": "切換角色" });
       for (const c of chars) {
         const b = el("button", { type: "button", "aria-pressed": c.id === state.charId,
-          title: [c.realm, CLASS[c.class] || c.class].filter(Boolean).join(" · ") }, el("i"), c.name || c.id,
+          title: [c.realm, CLASS[c.class] || c.class].filter(Boolean).join(" · ") }, el("i"), shownName(c),
           c.level ? el("small", { text: "Lv " + c.level }) : null);
         if (CLASS_COLOR[c.class]) b.style.setProperty("--cls", CLASS_COLOR[c.class]);
         b.addEventListener("click", () => {

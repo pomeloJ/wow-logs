@@ -22,7 +22,40 @@ CREATE TABLE IF NOT EXISTS combat_hits (
     t_hp REAL, t_maxhp REAL, t_armor REAL, t_level REAL, s_ap REAL, guid TEXT,
     PRIMARY KEY (character_id, source, pos));
 CREATE INDEX IF NOT EXISTS ix_hits_time ON combat_hits(character_id, ts);
+-- Full names of the players seen in a character's combat log ("亞克-斯迪-PvP-KR" -> "亞克 斯迪"),
+-- under the short name everything else is keyed by. Only for showing: nothing is matched on it.
+CREATE TABLE IF NOT EXISTS player_names (
+    character_id TEXT NOT NULL, full TEXT NOT NULL, short TEXT NOT NULL,
+    PRIMARY KEY (character_id, full));
 """
+UNIT = COLUMNS.index("unit") + 2                  # where the unit sits in a stored row (source, pos, character_id, ...)
+
+
+def full_of(unit: Any) -> Optional[str]:
+    """The name shown in the game from a combat log name: "亞克-斯迪-PvP-KR" -> "亞克 斯迪".
+    None when it carries no second name (or is not a player's)."""
+    parts = unit.split("-") if isinstance(unit, str) else []
+    return f"{parts[0]} {parts[1]}" if len(parts) >= 4 and parts[0] and parts[1] else None
+
+
+def note_names(conn, character_id: str, units) -> None:
+    rows = {(character_id, f, f.split(" ")[0]) for f in map(full_of, units) if f}
+    conn.executemany("INSERT OR IGNORE INTO player_names VALUES (?,?,?)", rows)
+
+
+def names(conn, character_id: str) -> Dict[str, str]:
+    """{short name: full name} for the players a character's log has seen. A short name two
+    players share is left out: it is better shown short than as the wrong person."""
+    found: Dict[str, Optional[str]] = {}
+    for r in conn.execute("SELECT short, full FROM player_names WHERE character_id=?", (character_id,)):
+        found[r["short"]] = r["full"] if r["short"] not in found else None
+    return {k: v for k, v in found.items() if v}
+
+
+def fill_full_names(conn) -> None:
+    """A character's own full name, from its own log, for those whose addon did not send one."""
+    conn.execute("UPDATE characters SET full_name=(SELECT MIN(p.full) FROM player_names p WHERE p.character_id=characters.id "
+                 "AND p.short=characters.name GROUP BY p.short HAVING COUNT(*)=1) WHERE full_name IS NULL")
 MISS_NAMES = {"MISS": "未擊中", "DODGE": "閃躲", "PARRY": "招架", "BLOCK": "格擋", "RESIST": "抵抗", "IMMUNE": "免疫",
               "ABSORB": "吸收", "EVADE": "閃避", "DEFLECT": "偏轉", "REFLECT": "反射"}
 
@@ -578,6 +611,10 @@ def register(app, db, can_write, claim=lambda writer, character_id: None) -> Non
         conn.executescript(SCHEMA)
         if "guid" not in [r["name"] for r in conn.execute("PRAGMA table_info(combat_hits)")]:
             conn.execute("ALTER TABLE combat_hits ADD COLUMN guid TEXT")      # tables made before it existed
+        if not conn.execute("SELECT 1 FROM player_names LIMIT 1").fetchone():
+            for r in conn.execute("SELECT DISTINCT character_id, unit FROM combat_hits WHERE unit LIKE '%-%-%-%'").fetchall():
+                note_names(conn, r["character_id"], [r["unit"]])      # the rows from before the table
+        fill_full_names(conn)
 
     @app.post("/api/v1/combat/hits")
     def post_hits(batch: HitsIn, writer: Optional[str] = Depends(can_write)):
@@ -595,4 +632,7 @@ def register(app, db, can_write, claim=lambda writer, character_id: None) -> Non
             before = conn.total_changes
             conn.executemany("INSERT OR REPLACE INTO combat_hits (source, pos, character_id, %s) VALUES (%s)"
                              % (", ".join(COLUMNS[1:]), ",".join("?" * (len(COLUMNS) + 2))), clean)
-            return {"success": True, "accepted": len(clean), "changes": conn.total_changes - before}
+            changes = conn.total_changes - before
+            note_names(conn, batch.character_id, {row[UNIT] for row in clean})
+            fill_full_names(conn)
+            return {"success": True, "accepted": len(clean), "changes": changes}

@@ -234,6 +234,9 @@ def create_app(
     with db() as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(SCHEMA)
+        if "full_name" not in [r["name"] for r in conn.execute("PRAGMA table_info(characters)")]:
+            # the name as the game shows it ("亞克 斯迪"); `name` stays the short one everything is keyed by
+            conn.execute("ALTER TABLE characters ADD COLUMN full_name TEXT")
         # tokens used to belong to one character each: carry those over to the new table
         conn.execute("INSERT OR IGNORE INTO token_characters SELECT character_id, token, COALESCE(bound_at, created_at) "
                      "FROM upload_tokens WHERE character_id IS NOT NULL")
@@ -453,26 +456,28 @@ def create_app(
         with db() as conn:
             owner = person_of(conn, t)
             if owner:
-                mine = [{"id": r["character_id"], "name": r["name"]} for r in conn.execute(
-                    "SELECT o.character_id, c.name FROM token_characters o LEFT JOIN characters c ON c.id=o.character_id "
+                mine = [{"id": r["character_id"], "name": r["name"], "full_name": r["full_name"]} for r in conn.execute(
+                    "SELECT o.character_id, c.name, c.full_name FROM token_characters o LEFT JOIN characters c ON c.id=o.character_id "
                     "WHERE o.token=? ORDER BY o.claimed_at", (owner,))]
                 taken = conn.execute("SELECT token FROM token_characters WHERE character_id=?", (character_id,)).fetchone() \
                     if character_id else None
                 return {"kind": "personal", "characters": mine, "can_upload": taken is None or taken["token"] == owner}
-            row = conn.execute("SELECT v.character_id, c.name FROM voice_tokens v LEFT JOIN characters c "
+            row = conn.execute("SELECT v.character_id, c.name, c.full_name FROM voice_tokens v LEFT JOIN characters c "
                                "ON c.id=v.character_id WHERE v.token=?", (t,)).fetchone()
             if row is None:
                 shown, parts = shared_by(conn, t)
                 if shown:
-                    names = {r["id"]: r["name"] for r in conn.execute(
-                        f"SELECT id, name FROM characters WHERE id IN ({','.join('?' * len(shown))})", shown)}
-                    out = {"kind": "read", "characters": [{"id": c, "name": names.get(c)} for c in shown], "can_upload": False}
+                    names = {r["id"]: r for r in conn.execute(
+                        f"SELECT id, name, full_name FROM characters WHERE id IN ({','.join('?' * len(shown))})", shown)}
+                    out = {"kind": "read", "characters": [{"id": c, "name": names[c]["name"] if c in names else None,
+                                                         "full_name": names[c]["full_name"] if c in names else None} for c in shown], "can_upload": False}
                     if parts is not None:       # only for a token limited to some parts: what it shows
                         out["sections"] = [k for k, _ in sections_mod.PARTS if k in parts]
                     return out
         if row is None:
             raise HTTPException(403, "invalid token")
-        return {"kind": "read", "characters": [{"id": row["character_id"], "name": row["name"]}], "can_upload": False}
+        return {"kind": "read", "characters": [{"id": row["character_id"], "name": row["name"], "full_name": row["full_name"]}],
+                "can_upload": False}
 
     def allow(scope: Optional[str], character_id: Optional[str]) -> None:
         if scope is not None and character_id != scope:
@@ -573,15 +578,19 @@ def create_app(
                  json.dumps(d, ensure_ascii=False), received),
             )
             lvl = d.get("level")
+            full = d.get("full_name") if isinstance(d.get("full_name"), str) and d.get("full_name").strip() else None
             conn.execute(
-                "INSERT INTO characters VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+                "INSERT INTO characters (id, name, realm, guid, race, class, faction, level, created_at, updated_at, "
+                "full_name) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
                 "name=excluded.name, realm=excluded.realm, guid=excluded.guid, race=excluded.race, "
                 "class=excluded.class, faction=excluded.faction, level=excluded.level, "
-                "updated_at=excluded.updated_at",
+                "updated_at=excluded.updated_at, full_name=COALESCE(excluded.full_name, "
+                "CASE WHEN characters.name=excluded.name THEN characters.full_name END)",
                 (character_id, d.get("name"), d.get("realm"), d.get("guid"), d.get("race"),
                  d.get("class"), d.get("faction"), lvl if isinstance(lvl, int) else None,
-                 received, received),
+                 received, received, full.strip() if full else None),
             )
+            combat.fill_full_names(conn)
         return {"success": True, "applied": True, "captured_at": captured}
 
     def not_synced(character_id: str) -> HTTPException:
@@ -604,6 +613,9 @@ def create_app(
     def list_characters(request: Request, authorization: Optional[str] = Header(None),
                         scope: Optional[Scope] = Depends(can_read)):
         """The characters this token may see: id, name, class, race, level, when last updated (`updated_at`).
+
+        `full_name` is the name as the game shows it ("亞克 斯迪"), null until it is known; `name` is the
+        short form ("亞克") that other answers (party members, damage tables) use. Show `full_name` when present.
 
         Start here: the `id` of a character is what every other endpoint asks for as `character_id`.
         `default_character_id` is the one to use when the user names none (see `/characters/default`;
@@ -679,10 +691,12 @@ def create_app(
             row = conn.execute(
                 "SELECT * FROM character_snapshots WHERE character_id=?", (character_id,)
             ).fetchone()
+            full = conn.execute("SELECT full_name FROM characters WHERE id=?", (character_id,)).fetchone()
         if not row:
             raise not_synced(character_id)
         return {
             "character_id": row["character_id"], "captured_at": row["captured_at"],
+            "full_name": full["full_name"] if full else None,
             "received_at": row["received_at"], "device_id": row["device_id"],
             "data": sections_mod.trim_snapshot(json.loads(row["payload_json"]), getattr(scope, "sections", None)),
         }

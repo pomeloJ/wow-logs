@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.3.2"
+local VERSION = "0.3.3"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -234,6 +234,16 @@ local function realmName()
     if type(realm) ~= "string" or realm == "" then realm = plain(safe(GetNormalizedRealmName)) end
     if type(realm) ~= "string" or realm == "" then return nil end
     return realm
+end
+
+-- The name as the game shows it. On this client UnitName gives the name in two parts ("亞克",
+-- "斯迪": seen in the game with /adventure names), which GetUnitName joins with a space.
+local function fullName(unit)
+    local first, second = safe(UnitName, unit)
+    first, second = plain(first), plain(second)
+    if type(first) ~= "string" or first == "" then return nil end
+    if type(second) == "string" and second ~= "" then return first .. " " .. second end
+    return first
 end
 
 local function resolveCharacterId()
@@ -469,6 +479,7 @@ local function takeSnapshot(levelOverride)
         captured_at = now(),
         data = {
             name = plain(safe(UnitName, "player")),
+            full_name = fullName("player"),
             realm = realmName(),
             guid = plain(safe(UnitGUID, "player")),
             race = plain(raceFile),
