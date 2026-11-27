@@ -144,3 +144,12 @@ def test_trades_are_listed_with_both_sides(client):
     assert client.get("/api/v1/characters/c2/trades", headers={"Authorization": f"Bearer {tok}"}).status_code == 403
     from app.voice import describe
     assert describe("TRADE_COMPLETED", r[0]).startswith("和 艾莉 交易：給出 沒有東西，收到 銅礦石 x5、5銀")
+
+
+def test_an_enchanting_trade_is_said_as_such():
+    from app.voice import describe
+    p = {"with": "白河", "gave": {"money": 0, "items": [], "not_traded": {"name": "臂環", "enchantment": "附魔護腕 - 初級耐力"}},
+         "got": {"money": 0, "items": []}}
+    assert describe("TRADE_COMPLETED", p) == "和 白河 交易：請對方附魔我的 臂環（附魔護腕 - 初級耐力）"
+    p["got"]["money"] = 50
+    assert describe("TRADE_COMPLETED", p) == "和 白河 交易：給出 沒有東西，收到 50銅；請對方附魔我的 臂環（附魔護腕 - 初級耐力）"

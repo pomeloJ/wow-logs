@@ -1251,7 +1251,11 @@ function describe(e) {
   if (e.event_type === "COMBAT") return "持續 " + duration(p.duration || 0) + at;
   if (e.event_type === "TRADE_COMPLETED") {
     const side = s => s ? [...(s.items || []).map(i => (i.name || "物品 " + i.item_id) + (i.count > 1 ? " x" + i.count : "")), s.money ? money(s.money) : null].filter(Boolean).join("、") || "沒有" : "沒有";
-    return "和 " + (p.with || "對方") + "：給出 " + side(p.gave) + "；收到 " + side(p.got) + at;
+    // an item handed over only to be enchanted comes back: said as the enchanting, not as given
+    const ench = [[p.gave, "請對方附魔我的"], [p.got, "幫對方附魔"]].filter(([x]) => x && x.not_traded)
+      .map(([x, verb]) => `${verb} ${x.not_traded.name}` + (x.not_traded.enchantment ? `（${x.not_traded.enchantment}）` : ""));
+    const traded = side(p.gave) !== "沒有" || side(p.got) !== "沒有";
+    return "和 " + (p.with || "對方") + "：" + [ench.join("、"), traded || !ench.length ? "給出 " + side(p.gave) + "；收到 " + side(p.got) : ""].filter(Boolean).join("　") + at;
   }
   if (e.event_type === "THREAT") return (p.mob_name || "目標") + "　" + (p.samples ? p.samples.split(";").length : 0) + " 筆仇恨讀數";
   if (e.event_type === "INSTANCE_ENTERED" || e.event_type === "INSTANCE_LEFT") return (p.name || "副本 " + p.instance_id) + (p.difficulty ? "（" + p.difficulty + "）" : "");

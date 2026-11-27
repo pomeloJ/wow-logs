@@ -124,7 +124,17 @@ def describe(kind: str, p: Dict[str, Any]) -> str:
             if x.get("money"):
                 parts.append(money(x["money"]))
             return "、".join(parts) or "沒有東西"
-        return f"和 {p.get('with') or '對方'} 交易：給出 {side(p.get('gave'))}，收到 {side(p.get('got'))}{where}"
+        gave, got = p.get("gave") if isinstance(p.get("gave"), dict) else {}, p.get("got") if isinstance(p.get("got"), dict) else {}
+        enchant = []
+        for x, verb in ((gave.get("not_traded"), "請對方附魔我的"), (got.get("not_traded"), "幫對方附魔")):
+            if isinstance(x, dict):
+                enchant.append(f"{verb} {x.get('name') or x.get('item_id')}" + (f"（{x['enchantment']}）" if x.get("enchantment") else ""))
+        text = f"和 {p.get('with') or '對方'} 交易：給出 {side(gave)}，收到 {side(got)}"
+        if enchant and not (gave.get("items") or got.get("items") or gave.get("money") or got.get("money")):
+            text = f"和 {p.get('with') or '對方'} 交易：" + "、".join(enchant)
+        elif enchant:
+            text += "；" + "、".join(enchant)
+        return text + where
     if kind == "ACHIEVEMENT_EARNED":
         return f"獲得成就 {p.get('name') or p.get('achievement_id')}"
     names = {"SESSION_START": "登入遊戲", "FLIGHT_STARTED": "開始飛行", "FLIGHT_ENDED": "飛行結束",
