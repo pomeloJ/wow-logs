@@ -78,6 +78,7 @@ def register(app, db, account_of: Callable[[Request], Optional[Dict[str, Any]]])
     friend shows the signed-in account, or None when they are not friends."""
     with db() as conn:
         conn.executescript(SCHEMA)
+        parts.split_trades(conn, "friend_shares")    # trades became a part of their own
 
     def link_of_sub(conn, sub: str) -> Optional[Dict[str, Any]]:
         """What an account is bound to, as auth.link_of has it; None when unbound."""

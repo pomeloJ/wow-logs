@@ -1802,7 +1802,7 @@ async function load(quiet) {
       world.then(w => w.available && has("quests") ? optional(get(`/world/quest-pins?character_id=${cid}`).then(r => r.items), []) : []),
       world.then(w => w.available && has("quests") ? optional(get(`/world/quest-zones?character_id=${cid}`), null) : null),
       fromSnapshot,
-      want("items", () => optional(get(`/characters/${encodeURIComponent(cid)}/trades?limit=100`).then(r => r.trades), []), []),
+      want("trades", () => optional(get(`/characters/${encodeURIComponent(cid)}/trades?limit=100`).then(r => r.trades), []), []),
     ]);
     if (mine !== loads) return;                    // another character was picked meanwhile
     state.locs = locs;
@@ -2203,7 +2203,7 @@ async function load(quiet) {
     const only = (part, ...nodes) => has(part) ? nodes : [];
     const layout = { home: [...only("activity", summaryCard, evCard), ...only("location", nearCard), ...only("activity", monsterCard), ...(has("items") ? only("activity", itemCard) : []),
       ...only("groups", groupCard, soloCard)], map: only("location", mapCard, fpCard), quests: only("quests", questCard, zonesCard, zoneCard),
-      items: only("items", equipCard, bagCard, bankCard, tradeCard), char: [charCard, ...only("character", attrCard, profCard, repCard)],
+      items: [...only("items", equipCard, bagCard, bankCard), ...only("trades", tradeCard)], char: [charCard, ...only("character", attrCard, profCard, repCard)],
       album: only("screenshots", albumCard), data: [W.ok ? searchCard() : null, ...only("activity", statCard), foot] };
     const cards = [];
     for (const [name, nodes] of Object.entries(layout)) for (const n of nodes) if (n) { n.dataset.tab = name; cards.push(n); }

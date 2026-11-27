@@ -47,7 +47,7 @@ def test_an_invite_makes_two_accounts_friends_who_see_each_others_characters(tmp
     assert r.status_code == 200
     f, = r.json()["friends"]
     assert f["name"] == "小明" and [c["id"] for c in f["shown"]["characters"]] == ["m1", "m2"]
-    assert f["shown"]["sections"] == ["location", "activity", "items", "quests", "character", "groups"]   # all but screenshots
+    assert f["shown"]["sections"] == ["location", "activity", "items", "trades", "quests", "character", "groups"]   # all but screenshots
     # 小華 reads 小明's characters through the friend header, with the sign-in cookie only
     fid = f["id"]
     assert seen(hua, **{"X-Friend": fid}) == ["m1", "m2"]

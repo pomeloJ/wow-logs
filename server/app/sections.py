@@ -18,14 +18,16 @@ PARTS = [
     ("location", "位置與移動路線"),
     ("activity", "最近動態與統計"),
     ("items", "裝備、背包、銀行與金錢"),
+    ("trades", "交易紀錄"),
     ("quests", "任務"),
     ("character", "屬性、專業與聲望"),
     ("groups", "組隊與戰鬥紀錄"),
     ("screenshots", "遊戲截圖"),
 ]
 KEYS = frozenset(k for k, _ in PARTS)
-# what a new sharing token shows until its maker changes it: not group sessions or screenshots
-SHARE_DEFAULT = [k for k, _ in PARTS if k not in ("groups", "screenshots")]
+# what a new sharing token shows until its maker changes it: not trades (they name other
+# players), group sessions or screenshots
+SHARE_DEFAULT = [k for k, _ in PARTS if k not in ("trades", "groups", "screenshots")]
 
 P = "/api/v1"
 ALWAYS = {
@@ -39,7 +41,7 @@ ROUTES = {
     f"{P}/locations": "location", f"{P}/world/route": "location", f"{P}/world/route/image": "location",
     f"{P}/events": "activity", f"{P}/stats/activity": "activity", f"{P}/stats/summary": "activity",
     f"{P}/characters/{{character_id}}/items": "items", f"{P}/characters/{{character_id}}/bank": "items",
-    f"{P}/characters/{{character_id}}/trades": "items",
+    f"{P}/characters/{{character_id}}/trades": "trades",
     f"{P}/characters/{{character_id}}/quests": "quests", f"{P}/world/quest-pins": "quests",
     f"{P}/world/quest-zones": "quests", f"{P}/world/zone-quests": "quests",
     f"{P}/groups": "groups", f"{P}/characters/{{character_id}}/groups": "groups", f"{P}/characters/{{character_id}}/solo": "groups",
@@ -64,7 +66,8 @@ FIELDS = {
 # the kinds of event that belong to a part other than "activity"
 EVENTS = {
     "location": {"LOCATION_SAMPLE", "ZONE_CHANGED", "FLIGHT_STARTED", "FLIGHT_ENDED", "PARTY_POSITIONS"},
-    "items": {"ITEM_LOOTED", "MONEY_CHANGED", "PARTY_LOOT", "TRADE_COMPLETED"},
+    "items": {"ITEM_LOOTED", "MONEY_CHANGED", "PARTY_LOOT"},
+    "trades": {"TRADE_COMPLETED"},
     "quests": {"QUEST_ACCEPTED", "QUEST_COMPLETED", "QUEST_REMOVED"},
     "groups": {"GROUP_JOINED", "GROUP_LEFT", "GROUP_MEMBER_JOINED", "GROUP_MEMBER_LEFT", "PARTY_MEMBER_DIED",
                "GROUP_MEMBER_LEVEL_UP", "GROUP_METER", "GROUP_ENCOUNTER", "ENCOUNTER_END", "PARTY_LOOT", "PARTY_POSITIONS",
@@ -72,6 +75,20 @@ EVENTS = {
     "screenshots": {"MAP_SCREENSHOT"},
 }
 PLACE = ("map_id", "x", "y", "zone_name", "sub_zone")      # taken out of event payloads when location is hidden
+
+
+def split_trades(conn, table: str) -> None:
+    """Trades used to come with "items"; now they are a part of their own. A choice stored before
+    keeps showing them wherever it showed items, done once per table (a marker remembers it),
+    so taking trades off afterwards stays off."""
+    conn.execute("CREATE TABLE IF NOT EXISTS section_upgrades (name TEXT PRIMARY KEY)")
+    name = "trades:" + table
+    if conn.execute("SELECT 1 FROM section_upgrades WHERE name=?", (name,)).fetchone():
+        return
+    conn.execute(f"UPDATE {table} SET sections = sections || ',trades' "
+                 "WHERE sections IS NOT NULL AND (',' || sections || ',') LIKE '%,items,%' "
+                 "AND (',' || sections || ',') NOT LIKE '%,trades,%'")
+    conn.execute("INSERT INTO section_upgrades (name) VALUES (?)", (name,))
 
 
 def parse(text: Optional[str]) -> Optional[FrozenSet[str]]:

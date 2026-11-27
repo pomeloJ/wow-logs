@@ -399,7 +399,7 @@ def test_a_sharing_token_shows_only_the_parts_chosen(tmp_path):
     full_record(web, mine)
     web.post("/api/v1/me/link", json={"token": mine})
     made = web.post("/api/v1/me/tokens", json={"label": "只看動態", "sections": ["activity"]}).json()
-    assert [p["key"] for p in made["parts"]] == ["location", "activity", "items", "quests", "character", "groups", "screenshots"]
+    assert [p["key"] for p in made["parts"]] == ["location", "activity", "items", "trades", "quests", "character", "groups", "screenshots"]
     assert made["view"][0]["sections"] == ["activity"]
     h = {"Authorization": f"Bearer {made['made']}"}
     get = lambda path: web.get(path, headers=h)     # noqa: E731
@@ -438,7 +438,7 @@ def test_a_sharing_token_with_every_part_or_none_chosen_shows_everything(tmp_pat
     mine = web.post("/api/v1/admin/tokens", json={"label": "小明"}).json()["token"]
     full_record(web, mine)
     web.post("/api/v1/me/link", json={"token": mine})
-    made = web.post("/api/v1/me/tokens", json={"label": "全部", "sections": ["location", "activity", "items", "quests", "character",
+    made = web.post("/api/v1/me/tokens", json={"label": "全部", "sections": ["location", "activity", "items", "trades", "quests", "character",
                                                                          "groups", "screenshots"]}).json()
     every = [p["key"] for p in made["parts"]]
     assert made["view"][0]["sections"] == every
@@ -449,6 +449,44 @@ def test_a_sharing_token_with_every_part_or_none_chosen_shows_everything(tmp_pat
     # choosing every part stores no limit at all, the same as a token made before parts existed
     web.post("/api/v1/me/tokens/sections", json={"id": made["view"][0]["id"], "sections": every})
     assert sqlite3.connect(tmp_path / "b.db").execute("SELECT sections FROM view_tokens").fetchone()[0] is None
+
+
+def test_trades_are_a_part_of_their_own(tmp_path):
+    import sqlite3
+    web = signed_in(tmp_path)
+    mine = web.post("/api/v1/admin/tokens", json={"label": "小明"}).json()["token"]
+    full_record(web, mine)
+    trade = {"event_id": "char-mine:t1", "character_id": "char-mine", "event_type": "TRADE_COMPLETED",
+             "timestamp": "2026-11-26T10:09:00+08:00", "payload": {"with": "艾莉", "gave": {"money": 500}, "got": {}}}
+    assert web.post("/api/v1/events/batch", headers={"Authorization": f"Bearer {mine}"},
+                    json={"schema_version": 1, "device_id": "pc", "events": [trade]}).status_code == 200
+    web.post("/api/v1/me/link", json={"token": mine})
+    # a new sharing token leaves trades out until its maker ticks them, like group sessions
+    made = web.post("/api/v1/me/tokens", json={"label": "朋友"}).json()
+    assert "trades" not in made["view"][0]["sections"] and "items" in made["view"][0]["sections"]
+    h = {"Authorization": f"Bearer {made['made']}"}
+    assert web.get("/api/v1/characters/char-mine/items", headers=h).status_code == 200
+    r = web.get("/api/v1/characters/char-mine/trades", headers=h)
+    assert r.status_code == 403 and r.json()["detail"]["hidden"] == "trades"
+    types = [e["event_type"] for e in web.get("/api/v1/events?character_id=char-mine", headers=h).json()["items"]]
+    assert "TRADE_COMPLETED" not in types and "ITEM_LOOTED" in types
+    tid = made["view"][0]["id"]
+    web.post("/api/v1/me/tokens/sections", json={"id": tid, "sections": ["activity", "trades"]})
+    assert web.get("/api/v1/characters/char-mine/trades", headers=h).json()["trades"][0]["with"] == "艾莉"
+    assert web.get("/api/v1/characters/char-mine/items", headers=h).status_code == 403
+
+    # a choice stored before trades were apart keeps showing them where it showed items, once:
+    # taking them off afterwards stays off when the server starts again
+    db = sqlite3.connect(tmp_path / "b.db")
+    db.execute("UPDATE view_tokens SET sections='activity,items'")
+    db.execute("DELETE FROM section_upgrades")
+    db.commit()
+    signed_in(tmp_path)
+    assert db.execute("SELECT sections FROM view_tokens").fetchone()[0] == "activity,items,trades"
+    db.execute("UPDATE view_tokens SET sections='activity,items'")
+    db.commit()
+    signed_in(tmp_path)
+    assert db.execute("SELECT sections FROM view_tokens").fetchone()[0] == "activity,items"
 
 
 def test_every_read_route_belongs_to_a_part_or_is_always_open(tmp_path):
