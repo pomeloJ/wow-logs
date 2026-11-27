@@ -131,14 +131,18 @@ def test_character_token_opens_a_one_character_dashboard(client):
     assert get("/characters/char-1/snapshot").json()["data"]["name"] == "小德"
     assert get("/characters/char-2/snapshot").status_code == 403
     assert get("/characters/char-2").status_code == 403
-    # events are forced to this character and never include chat, whatever is asked for
-    for url in ("/events?limit=1000", "/events?character_id=char-2", "/events?event_type=CHAT_MESSAGE"):
+    # events are this character's only and never include chat, whatever is asked for
+    for url in ("/events?limit=1000", "/events?character_id=char-1", "/events?event_type=CHAT_MESSAGE"):
         items = get(url).json()["items"]
         assert all(e["character_id"] == "char-1" and e["event_type"] != "CHAT_MESSAGE" for e in items)
     assert len(get("/events?limit=1000").json()["items"]) == 5
     assert get("/events?event_type=CHAT_MESSAGE").json()["items"] == []
-    assert all(e["character_id"] == "char-1" for e in get("/locations?character_id=char-2").json()["items"])
-    act = get("/stats/activity?character_id=char-2").json()
+    # asking about someone else's character is refused, never answered about this one
+    for url in ("/events?character_id=char-2", "/locations?character_id=char-2", "/stats/activity?character_id=char-2"):
+        r = get(url)
+        assert r.status_code == 403 and r.json()["detail"] == {
+            "error": "character_not_authorized", "character_id": "char-2", "message": r.json()["detail"]["message"]}, url
+    act = get("/stats/activity").json()
     assert act["kills"] == 1 and act["top_monsters"][0]["name"] == "巨型血牙野豬"
     summary = get("/stats/summary").json()
     assert summary["characters"] == 1 and summary["events"] == 5 and "CHAT_MESSAGE" not in summary["by_type"]

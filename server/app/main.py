@@ -1,5 +1,6 @@
 """Adventure Hub server (Phase 1): FastAPI + SQLite."""
 import base64
+import hashlib
 import math
 from collections import Counter
 import hmac
@@ -34,6 +35,11 @@ CREATE TABLE IF NOT EXISTS upload_tokens (
 );
 CREATE TABLE IF NOT EXISTS token_characters (
     character_id TEXT PRIMARY KEY, token TEXT NOT NULL, claimed_at TEXT NOT NULL
+);
+-- The character a reader is about when it names none (GET/PUT /api/v1/characters/default),
+-- one per token: kept under the token's hash, never the token itself.
+CREATE TABLE IF NOT EXISTS default_characters (
+    reader TEXT PRIMARY KEY, character_id TEXT NOT NULL, set_at TEXT NOT NULL
 );
 -- A person's further sync tokens (up to two more). Each uploads and reads as the person's own
 -- token (owner, the upload_tokens row that stands for the person), so the characters, the
@@ -112,6 +118,10 @@ class SnapshotIn(BaseModel):
     _tz = field_validator("captured_at")(_aware)
 
 
+class DefaultIn(BaseModel):
+    character_id: str = Field(min_length=1, max_length=100)
+
+
 API_INTRO = """
 A personal adventure log for World of Warcraft: Forever. Everything here is about characters
 whose data their owner's sync program uploaded to this server.
@@ -141,6 +151,22 @@ limited token ever shows chat messages. `GET /api/v1/token` says what a token is
   north), target and mouse-over with their NPC/item/spell ids, tracked quest progress and recent events;
   read the position off it and pass it to `/world/route` as `from_map`, `from_x`, `from_y`
 
+**Several characters.** A token may see more than one character (`GET /api/v1/characters`).
+
+* default: `GET /api/v1/characters/default` is the one to use when the user names none, kept on
+  the server for the token (`PUT` with `{"character_id": ...}` chooses it, `DELETE` forgets it).
+  `GET /api/v1/characters` also says which one it is (`default_character_id`, `is_default`).
+  When none is chosen and there are several, `character_id` is null: ask the user rather than guess
+* switching for a while, or asking about another character once: pass its `character_id` to each
+  call. That changes nothing on the server, so conversations never affect each other
+* name the character on every call (`character_id`, in the path or the query). Without one, a
+  limited token answers about its default character, else its first; a full-access token about
+  all of them
+* a character that cannot be answered about is refused, never swapped for another. The body is
+  `{"detail": {"error": ..., "message": ..., "character_id": ...}}` with `error` one of
+  `character_not_authorized` (403: this token may not read it), `character_not_found` (404: no
+  such character) or `character_not_synced` (404: known, but no data uploaded yet)
+
 Times are UTC in ISO 8601. Positions are `map_id` with `x`, `y` in percent of that map.
 Damage figures exist only where the game's combat log was switched on while playing.
 """
@@ -159,6 +185,8 @@ SECTIONS = [
 def section_of(path: str, method: str) -> str:
     """Which part of the description an endpoint belongs in."""
     names = {name.split()[1]: name for name, _ in SECTIONS}
+    if path.endswith("/characters/default"):              # choosing a default is reading, not uploading
+        return names["Characters"]
     if method.lower() != "get":
         return names["Uploads"]
     for piece, name in (("/solo", "Groups"), ("/groups", "Groups"), ("/shared/party", "Groups"), ("/combat", "Combat"), ("/world", "World"),
@@ -300,6 +328,43 @@ def create_app(
                 "SELECT character_id FROM token_characters WHERE token=? ORDER BY claimed_at, character_id", (v["owner"],))]
         return mine, sections_mod.parse(v["sections"])
 
+    def no_character(status: int, code: str, message: str, character_id: Optional[str]) -> HTTPException:
+        """The one shape every refusal about a character has, so a tool can tell them apart."""
+        return HTTPException(status, {"error": code, "message": message, "character_id": character_id})
+
+    def reader_of(request: Request, authorization: Optional[str]) -> Optional[str]:
+        """What a reader's own settings (its default character) are kept under: the hash of its
+        token, or of the token its signed-in Google account is bound to. None for a friend's view."""
+        if request.headers.get("x-friend"):
+            return None
+        if authorization is not None:
+            t = _token(authorization)
+        else:
+            link = signed_in["link"](request)
+            t = link.get("token") if link else None
+        return hashlib.sha256(("reader:" + t).encode()).hexdigest() if t else None
+
+    def default_of(conn, reader: Optional[str]) -> Optional[str]:
+        row = conn.execute("SELECT character_id FROM default_characters WHERE reader=?", (reader,)).fetchone() \
+            if reader else None
+        return row["character_id"] if row else None
+
+    def known(character_id: str) -> bool:
+        """Whether the server has heard of a character at all: a snapshot, uploads claimed for it,
+        events, screenshots or combat log rows (each can arrive first)."""
+        with db() as conn:
+            if conn.execute("SELECT 1 FROM characters WHERE id=? UNION ALL SELECT 1 FROM token_characters "
+                            "WHERE character_id=? UNION ALL SELECT 1 FROM events WHERE character_id=? LIMIT 1",
+                            (character_id, character_id, character_id)).fetchone():
+                return True
+            for table in ("screenshots", "combat_hits"):    # made by shots.py and combat.py
+                try:
+                    if conn.execute(f"SELECT 1 FROM {table} WHERE character_id=? LIMIT 1", (character_id,)).fetchone():
+                        return True
+                except sqlite3.OperationalError:
+                    pass
+        return False
+
     def can_read(request: Request, authorization: Optional[str] = Header(None)) -> Optional[Scope]:
         """Returns None for full read access, or what a limited token may see.
 
@@ -308,9 +373,22 @@ def create_app(
         (so the checks written for a single character keep working) and `.all` holds them all.
         Neither ever shows chat messages.
 
+        A character asked about (`character_id` in the path or the query) that the reader may
+        not see is refused (403 character_not_authorized), never answered about another one;
+        one the server has never heard of is 404 character_not_found. Asked about none, a
+        limited token is about its default character (characters/default), else its first.
+
         Without a token, a browser signed in with a Google account sees what the token that
         account is bound to sees (see auth.py). A token sent along always wins.
         """
+        asked = request.path_params.get("character_id") or request.query_params.get("character_id")
+
+        def full() -> None:
+            if asked and not known(asked):
+                raise no_character(404, "character_not_found", "no character with this id; GET /api/v1/characters "
+                                   "lists the ones this token may read", asked)
+            return None
+
         friend = request.headers.get("x-friend")
         if friend:
             # a friend's characters, seen by the account signed in (friends.py): only what that
@@ -326,12 +404,12 @@ def create_app(
                 if link is None:
                     raise HTTPException(401, "missing bearer token")
                 if link["kind"] == "all":
-                    return None
+                    return full()
                 t = link["token"]
             else:
                 t = _token(authorization)
             if _eq(t, write_token) or _eq(t, read_token):
-                return None
+                return full()
             with db() as conn:
                 row = conn.execute("SELECT character_id FROM voice_tokens WHERE token=?", (t,)).fetchone()
                 mine = [row["character_id"]] if row else [r["character_id"] for r in conn.execute(
@@ -347,10 +425,16 @@ def create_app(
             part = sections_mod.route_part(getattr(request.scope.get("route"), "path", ""))
             if part != "always" and part not in parts:
                 raise HTTPException(403, {"hidden": part or "other", "message": "this sharing token does not show this part"})
-        # Asked about a character that is not theirs, the answer is about one that is (or a
-        # refusal, where the endpoint checks): never about someone else's.
-        asked = request.path_params.get("character_id") or request.query_params.get("character_id")
-        scope = Scope(asked if asked in mine else mine[0])
+        # Asked about a character that is not theirs: refused, never answered about another one.
+        if asked and asked not in mine:
+            raise no_character(403, "character_not_authorized", "this token may not read that character; "
+                               "GET /api/v1/characters lists the ones it may", asked)
+        if asked:
+            scope = Scope(asked)
+        else:
+            with db() as conn:
+                chosen = default_of(conn, reader_of(request, authorization))
+            scope = Scope(chosen if chosen in mine else mine[0])
         scope.all = frozenset(mine)
         scope.sections = parts
         return scope
@@ -497,14 +581,81 @@ def create_app(
             )
         return {"success": True, "applied": True, "captured_at": captured}
 
-    @app.get("/api/v1/characters")
-    def list_characters(scope: Optional[str] = Depends(can_read)):
-        """The characters this token may see: id, name, class, race, level, when last updated.
+    def not_synced(character_id: str) -> HTTPException:
+        return no_character(404, "character_not_synced", "this character has no data on the server yet: it shows up "
+                            "once it is played with the sync program running", character_id)
 
-        Start here: the `id` of a character is what every other endpoint asks for as `character_id`."""
+    def default_answer(conn, scope: Optional[Scope], reader: Optional[str]) -> Dict[str, Any]:
+        """The reader's default character, and why it is that one."""
+        seen = [dict(r) for r in conn.execute("SELECT * FROM characters ORDER BY updated_at DESC")
+                if scope is None or r["id"] in scope.all]
+        stored = default_of(conn, reader)
+        picked = next((c for c in seen if c["id"] == stored), None)
+        if picked:
+            return {"character_id": stored, "set": True, "reason": "set", "character": picked}
+        if len(seen) == 1:
+            return {"character_id": seen[0]["id"], "set": False, "reason": "only_character", "character": seen[0]}
+        return {"character_id": None, "set": False, "reason": "unavailable" if stored else "not_set", "character": None}
+
+    @app.get("/api/v1/characters")
+    def list_characters(request: Request, authorization: Optional[str] = Header(None),
+                        scope: Optional[Scope] = Depends(can_read)):
+        """The characters this token may see: id, name, class, race, level, when last updated (`updated_at`).
+
+        Start here: the `id` of a character is what every other endpoint asks for as `character_id`.
+        `default_character_id` is the one to use when the user names none (see `/characters/default`;
+        null when there is none), and that character has `is_default: true`."""
         with db() as conn:
             rows = conn.execute("SELECT * FROM characters ORDER BY id").fetchall()
-        return {"items": [dict(r) for r in rows if scope is None or r["id"] in scope.all]}
+            chosen = default_answer(conn, scope, reader_of(request, authorization))["character_id"]
+        items = [{**dict(r), "is_default": r["id"] == chosen} for r in rows if scope is None or r["id"] in scope.all]
+        return {"items": items, "default_character_id": chosen}
+
+    @app.get("/api/v1/characters/default")
+    def get_default_character(request: Request, authorization: Optional[str] = Header(None),
+                              scope: Optional[Scope] = Depends(can_read)):
+        """The character to use when the user names none, kept on the server for this token.
+
+        `reason`: `set` (chosen with PUT), `only_character` (none chosen, but the token sees just
+        one), `not_set` (none chosen and several to choose from: ask the user, or list them) or
+        `unavailable` (the one chosen can no longer be read with this token). `character_id` and
+        `character` are null unless there is one. Switching characters for a while (in a
+        conversation) needs nothing here: pass that `character_id` to each call instead."""
+        with db() as conn:
+            return default_answer(conn, scope, reader_of(request, authorization))
+
+    @app.put("/api/v1/characters/default")
+    def set_default_character(body: DefaultIn, request: Request, authorization: Optional[str] = Header(None),
+                              scope: Optional[Scope] = Depends(can_read)):
+        """Choose the default character for this token (body: `{"character_id": "..."}`). Lasts
+        until changed, for every conversation using this token; changes no data. Refused with
+        the usual character errors when this token may not read that character, or the server
+        has no data for it yet."""
+        cid = body.character_id
+        if scope is not None and cid not in scope.all:
+            raise no_character(403, "character_not_authorized", "this token may not read that character; "
+                               "GET /api/v1/characters lists the ones it may", cid)
+        reader = reader_of(request, authorization)
+        if reader is None:
+            raise HTTPException(400, {"error": "no_reader", "message": "a default character belongs to a token", "character_id": cid})
+        with db() as conn:
+            if not conn.execute("SELECT 1 FROM characters WHERE id=?", (cid,)).fetchone():
+                if known(cid):
+                    raise not_synced(cid)
+                raise no_character(404, "character_not_found", "no character with this id", cid)
+            conn.execute("INSERT INTO default_characters VALUES (?,?,?) ON CONFLICT(reader) DO UPDATE SET "
+                         "character_id=excluded.character_id, set_at=excluded.set_at", (reader, cid, now_iso()))
+            return default_answer(conn, scope, reader)
+
+    @app.delete("/api/v1/characters/default")
+    def clear_default_character(request: Request, authorization: Optional[str] = Header(None),
+                                scope: Optional[Scope] = Depends(can_read)):
+        """Forget this token's default character. The answer is what `GET` says afterwards."""
+        reader = reader_of(request, authorization)
+        with db() as conn:
+            if reader:
+                conn.execute("DELETE FROM default_characters WHERE reader=?", (reader,))
+            return default_answer(conn, scope, reader)
 
     @app.get("/api/v1/characters/{character_id}")
     def get_character(character_id: str, scope: Optional[str] = Depends(can_read)):
@@ -513,7 +664,7 @@ def create_app(
         with db() as conn:
             row = conn.execute("SELECT * FROM characters WHERE id=?", (character_id,)).fetchone()
         if not row:
-            raise HTTPException(404, "character not found")
+            raise not_synced(character_id)
         return dict(row)
 
     @app.get("/api/v1/characters/{character_id}/snapshot")
@@ -526,7 +677,7 @@ def create_app(
                 "SELECT * FROM character_snapshots WHERE character_id=?", (character_id,)
             ).fetchone()
         if not row:
-            raise HTTPException(404, "snapshot not found")
+            raise not_synced(character_id)
         return {
             "character_id": row["character_id"], "captured_at": row["captured_at"],
             "received_at": row["received_at"], "device_id": row["device_id"],

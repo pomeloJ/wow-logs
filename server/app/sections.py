@@ -29,7 +29,7 @@ SHARE_DEFAULT = [k for k, _ in PARTS if k not in ("groups", "screenshots")]
 
 P = "/api/v1"
 ALWAYS = {
-    f"{P}/characters", f"{P}/characters/{{character_id}}", f"{P}/characters/{{character_id}}/snapshot",
+    f"{P}/characters", f"{P}/characters/default", f"{P}/characters/{{character_id}}", f"{P}/characters/{{character_id}}/snapshot",
     f"{P}/maps", f"{P}/maps/{{map_id}}/image",
     f"{P}/world/sources", f"{P}/world/maps", f"{P}/world/quests", f"{P}/world/quests/{{quest_id}}", f"{P}/world/npcs",
     f"{P}/world/npcs/{{npc_id}}", f"{P}/world/names", f"{P}/world/items", f"{P}/world/items/{{item_id}}",

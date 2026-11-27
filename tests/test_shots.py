@@ -69,7 +69,9 @@ def test_character_share_token_sees_only_its_own_screenshots(client):
     put(client, "theirs", "c2")
     tok = client.post("/api/v1/characters/c1/voice-token", headers=AUTH).json()["token"]
     S = {"Authorization": f"Bearer {tok}"}
-    assert [s["id"] for s in client.get("/api/v1/screenshots?character_id=c2", headers=S).json()["items"]] == ["mine"]
+    assert [s["id"] for s in client.get("/api/v1/screenshots", headers=S).json()["items"]] == ["mine"]
+    asked = client.get("/api/v1/screenshots?character_id=c2", headers=S)       # refused, never answered with its own
+    assert asked.status_code == 403 and asked.json()["detail"]["error"] == "character_not_authorized"
     assert client.get("/api/v1/screenshots/mine/thumb", headers=S).status_code == 200
     assert client.get("/api/v1/screenshots/theirs/thumb", headers=S).status_code == 404
 
@@ -114,8 +116,8 @@ def test_latest_screenshot_is_what_the_player_sees_now(make_client, tmp_path):
         db.execute("INSERT INTO upload_tokens VALUES ('person2', 'p2', NULL, '2026-11-26T00:00:00Z', NULL, NULL)")
         db.execute("INSERT INTO token_characters VALUES ('c2', 'person2', '2026-11-26T00:00:00Z')")
     theirs = {"Authorization": "Bearer person2"}
-    assert client.get("/api/v1/characters/c1/screenshots/latest", headers=theirs).status_code == 404
-    assert client.get("/api/v1/characters/c1/screenshots/latest/image", headers=theirs).status_code == 404
+    assert client.get("/api/v1/characters/c1/screenshots/latest", headers=theirs).status_code == 403
+    assert client.get("/api/v1/characters/c1/screenshots/latest/image", headers=theirs).status_code == 403
     assert client.get("/api/v1/characters/c2/screenshots/latest", headers=theirs).status_code == 404     # theirs has none
     assert client.get("/api/v1/characters/c1/screenshots/latest").status_code == 401
 

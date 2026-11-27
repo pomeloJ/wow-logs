@@ -381,7 +381,7 @@ def register(app, world: World, db, can_read) -> None:
             snap = conn.execute("SELECT captured_at, payload_json FROM character_snapshots "
                                 "WHERE character_id=?", (character_id,)).fetchone()
         if not snap:
-            raise HTTPException(404, "snapshot not found")
+            raise HTTPException(404, {"error": "character_not_synced", "message": "this character has no data on the server yet: it shows up once it is played with the sync program running", "character_id": character_id})
         d = json.loads(snap["payload_json"])
         items = []
         for q in d.get("quests") or []:
