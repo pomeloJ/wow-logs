@@ -130,6 +130,14 @@ canvas { width: 100%; aspect-ratio: 3 / 2; display: block; border: 1px solid var
 .rows li:first-child { border-top: 0; }
 .rows .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .rows .num { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 13px; }
+.trade { display: block !important; padding: 8px 0; }
+.trade-head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 4px; }
+.trade-head .who { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.trade-head .who i { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; }
+.trade-head .who small, .trade-head time, .trade-line .muted { color: var(--muted); font-weight: 400; font-size: 12px; }
+.trade-line { font-size: 13px; line-height: 1.6; padding-left: 15px; }
+.trade-line b { color: var(--muted); font-weight: 500; margin-right: 8px; }
+.trade-line .coin { color: #c9a227; }
 .q0 { color: var(--muted); } .q2 { color: #2f9e44; } .q3 { color: #3b82c4; } .q4 { color: #9b5de5; } .q5 { color: #e8890c; }
 .done { color: var(--ok); } .obj { display: block; font-size: 12px; color: var(--muted); }
 .cardhead { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
@@ -1764,7 +1772,7 @@ async function load(quiet) {
           ? optional(get(`/world/nearby?map_id=${d.map_id}&x=${d.x}&y=${d.y}&radius=10&quest_only=true&limit=12`).then(r => r.items), []) : [],
       ]);
     });
-    const [snap, locs, events, act, ws, shots, groups, solos, pins, zones, [nm, near]] = await Promise.all([
+    const [snap, locs, events, act, ws, shots, groups, solos, pins, zones, [nm, near], trades] = await Promise.all([
       snapshot, positions,
       want("activity", () => get(`/events?character_id=${cid}&limit=100` + (state.filter === "activity" ? "&exclude_type=LOCATION_SAMPLE,PARTY_POSITIONS,GROUP_METER,GROUP_ENCOUNTER,THREAT"
         : state.filter === "all" ? "" : "&event_type=" + encodeURIComponent(state.filter))), { items: [], next_cursor: null }),
@@ -1777,6 +1785,7 @@ async function load(quiet) {
       world.then(w => w.available && has("quests") ? optional(get(`/world/quest-pins?character_id=${cid}`).then(r => r.items), []) : []),
       world.then(w => w.available && has("quests") ? optional(get(`/world/quest-zones?character_id=${cid}`), null) : null),
       fromSnapshot,
+      want("items", () => optional(get(`/characters/${encodeURIComponent(cid)}/trades?limit=100`).then(r => r.trades), []), []),
     ]);
     if (mine !== loads) return;                    // another character was picked meanwhile
     state.locs = locs;
@@ -1900,6 +1909,34 @@ async function load(quiet) {
       bank ? "銀行是空的。" : "還沒有銀行資料。遊戲只在銀行視窗開著的時候才看得到裡面：到銀行開一次，再按「存檔」。");
     if (bank) bankCard.append(el("div", { class: "small", text: (bankSeen ? `這是 ${ago(bankSeen)}打開銀行時看到的內容` : "這是上次打開銀行時看到的內容")
       + "，之後沒開銀行的變動不會出現。" + (bankItems.some(i => i.sell_price) ? `全部賣給商店約值 ${money(bankItems.reduce((s, i) => s + worth(i), 0))}。` : "") }));
+    // Trades with other players that went through, newest first: who, what went each way.
+    const tradeNet = trades.reduce((s, t) => s + ((t.got && t.got.money) || 0) - ((t.gave && t.gave.money) || 0), 0);
+    const partners = {};
+    for (const t of trades) if (t.with) partners[t.with] = (partners[t.with] || 0) + 1;
+    const goods = side => {
+      const out = list(side && side.items).map(i => el("span", { class: "wname q" + (i.quality ?? 1), text: (i.name || itemNames[i.item_id] || "物品 #" + i.item_id) + (i.count > 1 ? " ×" + i.count : "") }));
+      if (side && side.money) out.push(el("span", { class: "coin", title: money(side.money), text: shortMoney(side.money) }));
+      return out.length ? out.flatMap((n, k) => k ? ["、", n] : [n]) : [el("span", { class: "muted", text: "沒有" })];
+    };
+    const tradeRows = trades.map(t => {
+      const who = el("span", { class: "who" }, (() => { const i = el("i", { class: "dot" }); if (CLASS_COLOR[t.with_class]) i.style.background = CLASS_COLOR[t.with_class]; return i; })(),
+        t.with || "對方", el("small", { text: [t.with_level ? t.with_level + " 級" : null, CLASS[t.with_class] || null].filter(Boolean).join(" ") }));
+      const lines = [];
+      const enchant = [[t.gave, "請對方附魔"], [t.got, "幫對方附魔"]].filter(([x]) => x && x.not_traded);
+      for (const [x, verb] of enchant) lines.push(el("div", { class: "trade-line" }, el("b", { text: verb }),
+        el("span", { class: "wname q" + (x.not_traded.quality ?? 1), text: x.not_traded.name }), x.not_traded.enchantment ? el("span", { class: "muted", text: "　" + x.not_traded.enchantment }) : null));
+      const traded = list(t.gave && t.gave.items).length || list(t.got && t.got.items).length || (t.gave && t.gave.money) || (t.got && t.got.money);
+      if (traded || !enchant.length) {
+        lines.push(el("div", { class: "trade-line" }, el("b", { text: "給出" }), ...goods(t.gave)));
+        lines.push(el("div", { class: "trade-line" }, el("b", { text: "收到" }), ...goods(t.got)));
+      }
+      return el("li", { class: "trade" }, el("div", { class: "trade-head" }, who,
+        el("time", { datetime: t.timestamp, title: full(t.timestamp), text: ago(t.timestamp) + (t.zone_name ? "　" + t.zone_name : "") })), ...lines);
+    });
+    const topPartners = Object.entries(partners).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const tradeCard = section("c-full", "交易紀錄", trades.length ? `${trades.length} 筆　金錢淨${tradeNet >= 0 ? "收入 " : "支出 "}${shortMoney(Math.abs(tradeNet))}` : "", tradeRows,
+      "還沒有交易紀錄。和其他玩家交易成功後（取消或失敗的不算），按「存檔」就會出現。");
+    if (topPartners.length) tradeCard.append(el("div", { class: "small", text: "最常交易：" + topPartners.map(([n, c]) => `${n} ${c} 次`).join("、") }));
     const equipCard = section("c-half", "裝備", tip.slice(3), equip.map(i =>
       itemRow(i, [el("span", { class: "num", text: SLOT[i.slot] || i.slot }),
         el("span", { class: "grow wname q" + (i.quality ?? 1), text: i.name || itemNames[i.item_id] || "物品 #" + i.item_id }),
@@ -2149,7 +2186,7 @@ async function load(quiet) {
     const only = (part, ...nodes) => has(part) ? nodes : [];
     const layout = { home: [...only("activity", summaryCard, evCard), ...only("location", nearCard), ...only("activity", monsterCard), ...(has("items") ? only("activity", itemCard) : []),
       ...only("groups", groupCard, soloCard)], map: only("location", mapCard, fpCard), quests: only("quests", questCard, zonesCard, zoneCard),
-      items: only("items", equipCard, bagCard, bankCard), char: [charCard, ...only("character", attrCard, profCard, repCard)],
+      items: only("items", equipCard, bagCard, bankCard, tradeCard), char: [charCard, ...only("character", attrCard, profCard, repCard)],
       album: only("screenshots", albumCard), data: [W.ok ? searchCard() : null, ...only("activity", statCard), foot] };
     const cards = [];
     for (const [name, nodes] of Object.entries(layout)) for (const n of nodes) if (n) { n.dataset.tab = name; cards.push(n); }
