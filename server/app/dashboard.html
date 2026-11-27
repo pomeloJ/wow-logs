@@ -69,6 +69,13 @@ h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 600; l
   white-space: nowrap; flex: none; font-size: 14px; }
 .tabs button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 .grid > [data-tab]:not(.on) { display: none; }
+.chars { display: flex; gap: 6px; overflow-x: auto; padding: 0 0 10px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.chars::-webkit-scrollbar { display: none; }
+.chars button { display: flex; align-items: center; gap: 7px; flex: none; background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px 6px 9px; font-size: 14px; white-space: nowrap; cursor: pointer; }
+.chars button i { width: 9px; height: 9px; border-radius: 50%; background: var(--cls, var(--muted)); flex: none; }
+.chars button small { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.chars button[aria-pressed="true"] { border-color: var(--cls, var(--accent)); box-shadow: inset 0 0 0 1px var(--cls, var(--accent)); font-weight: 600; }
 .search { margin: 0 0 8px; }
 @media (max-width: 820px) {
   main { padding: 12px 12px 40px; }
@@ -287,6 +294,7 @@ const CLASS_COLOR = { WARRIOR: "#C69B6D", PALADIN: "#F48CBA", HUNTER: "#AAD372",
 // To bring it back, add ["album", "相簿"] to this list.
 const TABS = [["home", "總覽"], ["map", "地圖"], ["quests", "任務"], ["items", "物品"], ["char", "角色"], ["data", "資料"]];
 const TAB_KEY = "adventure-hub-tab";
+const CHAR_KEY = "adventure-hub-character";      // the character last looked at, per browser
 
 let token = "";
 // Signed in with a Google account that is bound to a token: requests carry the sign-in cookie
@@ -313,6 +321,7 @@ const app = document.getElementById("app");
 const has = part => !state.parts || state.parts.has(part);
 const state = { parts: null, charId: null, mapId: null, locs: [], maps: {}, filter: "activity", range: "today", tab: "home", pins: [], redraw: null };
 try { const t = localStorage.getItem(TAB_KEY); if (TABS.some(x => x[0] === t)) state.tab = t; } catch (e) { /* default tab */ }
+try { state.charId = localStorage.getItem(CHAR_KEY); } catch (e) { /* the one played last */ }
 
 function el(tag, attrs, ...kids) {
   const n = document.createElement(tag);
@@ -1307,7 +1316,9 @@ function renderMap(card) {
 }
 
 // quiet = background refresh: no indicator, so the page does not flicker every 30 seconds.
+let loads = 0;                                     // only the latest load draws: a slow earlier one is dropped
 async function load(quiet) {
+  const mine = ++loads;
   if (!token && !session) {
     const me = await whoAmI();
     if (!(me && me.link)) return showLogin(false, me);
@@ -1338,6 +1349,8 @@ async function load(quiet) {
       app.replaceChildren(el("div", { class: "card msg", text: "伺服器還沒有收到任何角色資料。" }));
       return;
     }
+    // the one picked before (in this browser), else the one played last
+    chars.sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
     if (!chars.some(c => c.id === state.charId)) state.charId = chars[0].id;
     const cid = encodeURIComponent(state.charId);
     const since = state.range === "today" ? new Date(new Date().setHours(0, 0, 0, 0))
@@ -1383,6 +1396,7 @@ async function load(quiet) {
       world.then(w => w.available && has("quests") ? optional(get(`/world/quest-zones?character_id=${cid}`), null) : null),
       fromSnapshot,
     ]);
+    if (mine !== loads) return;                    // another character was picked meanwhile
     state.locs = locs;
     W.ok = !!ws.available; W.src = ws.items[0] || null;
     const d = snap.data;
@@ -1776,7 +1790,27 @@ async function load(quiet) {
     state.redraw = () => { if (xpCanvas.clientWidth) drawXp(xpCanvas, act.xp_points); if (window.onresize) window.onresize(); };
     const y = window.scrollY;
     const note = state.parts ? el("div", { class: "card sharenote", text: "這是分享的檢視：擁有者只開放了部分內容。" }) : null;
-    app.replaceChildren(...[note, hero, bar, el("div", { class: "grid" }, ...cards)].filter(Boolean));
+    // every character this token holds, one button each: the page shows one at a time
+    let picker = null;
+    if (chars.length > 1) {
+      picker = el("nav", { class: "chars", "aria-label": "切換角色" });
+      for (const c of chars) {
+        const b = el("button", { type: "button", "aria-pressed": c.id === state.charId,
+          title: [c.realm, CLASS[c.class] || c.class].filter(Boolean).join(" · ") }, el("i"), c.name || c.id,
+          c.level ? el("small", { text: "Lv " + c.level }) : null);
+        if (CLASS_COLOR[c.class]) b.style.setProperty("--cls", CLASS_COLOR[c.class]);
+        b.addEventListener("click", () => {
+          if (c.id === state.charId) return;
+          state.charId = c.id;
+          state.mapId = null; state.questZone = null;    // the other character's own map and quests
+          try { localStorage.setItem(CHAR_KEY, c.id); } catch (e) { /* this visit only */ }
+          for (const x of picker.children) x.setAttribute("aria-pressed", x === b);
+          load();
+        });
+        picker.append(b);
+      }
+    }
+    app.replaceChildren(...[note, picker, hero, bar, el("div", { class: "grid" }, ...cards)].filter(Boolean));
     showTab(state.tab);
     window.scrollTo(0, y);                           // a refresh must not move the page
   } catch (err) {
