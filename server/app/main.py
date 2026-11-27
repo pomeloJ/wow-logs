@@ -265,7 +265,7 @@ def create_app(
 
     # Set once the sign-in routes are added (below): what a request's signed-in Google account
     # is bound to, or None.
-    signed_in: Dict[str, Any] = {"link": lambda request: None}
+    signed_in: Dict[str, Any] = {"link": lambda request: None, "friend": lambda request, fid: None}
 
     def judge(t: str) -> Optional[str]:
         """What a token pasted to bind a Google account is."""
@@ -311,25 +311,35 @@ def create_app(
         Without a token, a browser signed in with a Google account sees what the token that
         account is bound to sees (see auth.py). A token sent along always wins.
         """
-        if authorization is None:
-            link = signed_in["link"](request)
-            if link is None:
-                raise HTTPException(401, "missing bearer token")
-            if link["kind"] == "all":
-                return None
-            t = link["token"]
+        friend = request.headers.get("x-friend")
+        if friend:
+            # a friend's characters, seen by the account signed in (friends.py): only what that
+            # friend chose to show it, and never with a token, so nothing else changes
+            seen = signed_in["friend"](request, friend)
+            if seen is None:
+                raise HTTPException(403, "not a friend")
+            mine, parts = seen
+            mine = list(mine)
         else:
-            t = _token(authorization)
-        if _eq(t, write_token) or _eq(t, read_token):
-            return None
-        with db() as conn:
-            row = conn.execute("SELECT character_id FROM voice_tokens WHERE token=?", (t,)).fetchone()
-            mine = [row["character_id"]] if row else [r["character_id"] for r in conn.execute(
-                "SELECT character_id FROM token_characters WHERE token=? ORDER BY claimed_at, character_id",
-                (person_of(conn, t) or t,))]
-            parts = None
-            if not row and not mine:
-                mine, parts = shared_by(conn, t)
+            if authorization is None:
+                link = signed_in["link"](request)
+                if link is None:
+                    raise HTTPException(401, "missing bearer token")
+                if link["kind"] == "all":
+                    return None
+                t = link["token"]
+            else:
+                t = _token(authorization)
+            if _eq(t, write_token) or _eq(t, read_token):
+                return None
+            with db() as conn:
+                row = conn.execute("SELECT character_id FROM voice_tokens WHERE token=?", (t,)).fetchone()
+                mine = [row["character_id"]] if row else [r["character_id"] for r in conn.execute(
+                    "SELECT character_id FROM token_characters WHERE token=? ORDER BY claimed_at, character_id",
+                    (person_of(conn, t) or t,))]
+                parts = None
+                if not row and not mine:
+                    mine, parts = shared_by(conn, t)
         if not mine:
             raise HTTPException(403, "invalid token")
         if parts is not None:
@@ -772,6 +782,8 @@ def create_app(
     from . import auth
     # Who is at the browser, by their Google account, and the token it is bound to.
     app.state.account_of, signed_in["link"] = auth.register(app, db, google, google_exchange, judge, person)
+    from . import friends
+    signed_in["friend"] = friends.register(app, db, app.state.account_of)
     shots = shots_api.register(app, db, can_read, can_write, claim,
                                os.path.join(os.path.dirname(os.path.abspath(db_path)), "shots"))
     groups.register(app, db, can_read, activity, maps_dir, world, shots)

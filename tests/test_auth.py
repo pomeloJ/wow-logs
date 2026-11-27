@@ -247,7 +247,9 @@ def test_a_bound_account_manages_its_sharing_tokens(tmp_path):
     reader = {"Authorization": f"Bearer {share}"}
     assert seen(web, **reader) == ["char-mine"]
     assert web.get("/api/v1/characters/char-other/snapshot", headers=reader).status_code in (403, 404)
-    assert web.get("/api/v1/token", headers=reader).json() == {"kind": "read", "characters": [{"id": "char-mine", "name": "char-mine"}], "can_upload": False}
+    # a new one shows everything but group sessions and screenshots until its maker chooses otherwise
+    assert web.get("/api/v1/token", headers=reader).json() == {"kind": "read", "characters": [{"id": "char-mine", "name": "char-mine"}],
+                                                              "can_upload": False, "sections": ["location", "activity", "items", "quests", "character"]}
     assert web.put("/api/v1/characters/char-mine/snapshot", headers=reader, json={
         "captured_at": "2026-11-26T10:00:00+08:00", "device_id": "x", "data": {"name": "n"}}).status_code == 403
     # a change from a page of another site is refused
@@ -436,7 +438,8 @@ def test_a_sharing_token_with_every_part_or_none_chosen_shows_everything(tmp_pat
     mine = web.post("/api/v1/admin/tokens", json={"label": "小明"}).json()["token"]
     full_record(web, mine)
     web.post("/api/v1/me/link", json={"token": mine})
-    made = web.post("/api/v1/me/tokens", json={"label": "全部"}).json()
+    made = web.post("/api/v1/me/tokens", json={"label": "全部", "sections": ["location", "activity", "items", "quests", "character",
+                                                                         "groups", "screenshots"]}).json()
     every = [p["key"] for p in made["parts"]]
     assert made["view"][0]["sections"] == every
     h = {"Authorization": f"Bearer {made['made']}"}

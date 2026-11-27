@@ -125,7 +125,7 @@ class SectionsIn(BaseModel):
 
 class NewViewIn(BaseModel):
     label: str = Field("", max_length=40)
-    sections: Optional[List[str]] = Field(None, max_length=20)     # left out: every part
+    sections: Optional[List[str]] = Field(None, max_length=20)     # left out: parts.SHARE_DEFAULT
 
 
 MAX_SYNC_TOKENS = 3            # the person's own token and two more, for more computers
@@ -376,7 +376,8 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
                 raise HTTPException(409, f"at most {MAX_VIEW_TOKENS} sharing tokens")
             token = new_view_secret()
             conn.execute("INSERT INTO view_tokens (token, owner, label, sections, created_at) VALUES (?,?,?,?,?)",
-                         (token, owner_key(link), body.label.strip() or None, chosen(body.sections), _now_iso()))
+                         (token, owner_key(link), body.label.strip() or None,
+                          chosen(parts.SHARE_DEFAULT if body.sections is None else body.sections), _now_iso()))
         return answer(link, token)
 
     @app.post("/api/v1/me/tokens/sections", include_in_schema=False)

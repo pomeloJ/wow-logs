@@ -24,6 +24,8 @@ PARTS = [
     ("screenshots", "遊戲截圖"),
 ]
 KEYS = frozenset(k for k, _ in PARTS)
+# what a new sharing token shows until its maker changes it: not group sessions or screenshots
+SHARE_DEFAULT = [k for k, _ in PARTS if k not in ("groups", "screenshots")]
 
 P = "/api/v1"
 ALWAYS = {

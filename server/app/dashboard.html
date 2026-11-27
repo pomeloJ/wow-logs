@@ -251,6 +251,61 @@ button.link { background: none; color: var(--muted); padding: 0; font-size: 13px
 .tk .parts .always { flex-basis: 100%; color: var(--muted); font-size: 12px; }
 .tk .parts button { margin-left: auto; padding: 4px 12px; font-size: 13px; }
 .sharenote { margin-bottom: 12px; font-size: 13px; color: var(--muted); padding: 10px 14px; }
+.friendbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; padding: 10px 14px;
+  border-color: var(--accent); background: var(--accent-soft); font-size: 14px; }
+.friendbar b { color: var(--accent); }
+.friendbar button { margin-left: auto; padding: 4px 12px; font-size: 13px; }
+.tk .who { display: flex; align-items: center; gap: 10px; }
+.tk .who img { width: 32px; height: 32px; border-radius: 50%; flex: none; }
+.tk .parts .group { flex-basis: 100%; font-weight: 600; color: var(--muted); font-size: 12px; margin-top: 4px; }
+.tk .parts label.off { opacity: .45; }
+.invite-from { display: flex; align-items: center; gap: 12px; margin: 14px 0; font-size: 15px; }
+.invite-from img { width: 44px; height: 44px; border-radius: 50%; }
+.sheet .acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+/* token and friend panels: one bordered card per item, actions along its foot */
+.tk-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.tk-head h3 { margin: 0; }
+.tk-head .count { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 0 8px; }
+.tk-item { border: 1px solid var(--line); border-radius: 10px; background: var(--bg); padding: 12px 14px; margin: 10px 0;
+  display: flex; flex-direction: column; gap: 9px; }
+.tk-item.fresh { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.tk-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tk-title b { font-size: 15px; }
+.tk-title .face { width: 34px; height: 34px; border-radius: 50%; flex: none; }
+.badge { font-size: 11px; padding: 1px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.tk-meta { font-size: 12px; color: var(--muted); }
+.tk-meta.inline { margin-left: auto; }
+.tk-acts .tk-meta.inline { margin-left: 0; }
+.tk-secret { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tk .tk-secret code { flex: 1 1 200px; margin: 0; }
+.owned { display: grid; grid-template-columns: 5.5em minmax(0, 1fr) auto; align-items: start; gap: 8px; font-size: 13px; }
+.owned > span:first-child { color: var(--muted); font-size: 12px; padding-top: 3px; }
+.owned > .btn2 { align-self: start; }
+.pchips { display: flex; flex-wrap: wrap; gap: 5px; flex: 1 1 auto; min-width: 0; }
+.pchip { font-size: 12px; padding: 2px 9px; border-radius: 99px; border: 1px solid var(--line); background: var(--panel); white-space: nowrap; }
+.pchip.none { color: var(--muted); border-style: dashed; background: none; }
+.tk-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 10px; }
+.tk-acts .grow { flex: 1 1 0; }
+.btn2 { padding: 5px 12px; font-size: 13px; border-radius: 6px; background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+  cursor: pointer; white-space: nowrap; font-weight: normal; line-height: 1.4; }
+.btn2:hover { border-color: var(--accent); }
+.btn2.go { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.btn2.bad { color: var(--warn); background: none; }
+.btn2.bad:hover { border-color: var(--warn); }
+.btn2.mini { padding: 1px 9px; font-size: 12px; }
+.btn2:disabled { opacity: .45; cursor: default; }
+.tk-new { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.tk-empty { border: 1px dashed var(--line); border-radius: 10px; padding: 14px; text-align: center; color: var(--muted); font-size: 13px; margin: 10px 0; }
+.tk .parts { margin-top: 0; }
+.tk .parts .parts-acts { flex-basis: 100%; display: flex; justify-content: flex-end; gap: 8px; }
+.tk .parts .parts-acts button { margin-left: 0; }
+.shade.ask { z-index: 50; align-items: flex-start; padding-top: 22vh; }
+.ask-box { width: 100%; max-width: 400px; }
+.ask-box h3 { margin: 0 0 8px; font-size: 16px; color: var(--ink); }
+.ask-box p { margin: 0; color: var(--muted); font-size: 14px; }
+.ask-box .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.ask-box .btn2 { padding: 6px 16px; }
+.ask-box .btn2.bad { background: var(--warn); border-color: var(--warn); color: #fff; font-weight: 600; }
 .beta { margin-left: 8px; padding: 1px 6px; border-radius: 4px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 600; letter-spacing: .04em; vertical-align: 1px; }
 </style>
 </head>
@@ -259,6 +314,7 @@ button.link { background: none; color: var(--muted); padding: 0; font-size: 13px
   <header>
     <h1>Adventure Hub</h1>
     <span class="sync" id="sync"></span>
+    <button class="link" id="friends" hidden>好友</button>
     <button class="link" id="tokens" hidden>管理權杖</button>
     <button class="link" id="logout" hidden>登出</button>
   </header>
@@ -309,9 +365,20 @@ function takeToken() {
   history.replaceState(null, "", location.pathname);
   return true;
 }
+// A friend invite arrives the same way, as #friend=CODE: kept in this browser until its owner
+// is signed in with Google (which leaves the page and comes back), then asked about once.
+const INVITE_KEY = "adventure-hub-friend-invite";
+function takeInvite() {
+  const m = location.hash.match(/friend=([A-Za-z0-9_-]{4,64})/);
+  if (!m) return false;
+  localStorage.setItem(INVITE_KEY, m[1]);
+  history.replaceState(null, "", location.pathname);
+  return true;
+}
 // Opening a link in a tab that already shows the page changes only the "#": start over with it.
-window.addEventListener("hashchange", () => { try { if (takeToken()) location.reload(); } catch (e) { /* storage unavailable */ } });
+window.addEventListener("hashchange", () => { try { if (takeInvite() || takeToken()) location.reload(); } catch (e) { /* storage unavailable */ } });
 try {
+  takeInvite();
   takeToken();
   token = localStorage.getItem(KEY) || "";
 } catch (e) { /* storage unavailable: fall through to the token form */ }
@@ -319,7 +386,7 @@ try {
 const app = document.getElementById("app");
 // The parts a sharing token shows (null: everything); the page leaves out the rest.
 const has = part => !state.parts || state.parts.has(part);
-const state = { parts: null, charId: null, mapId: null, locs: [], maps: {}, filter: "activity", range: "today", tab: "home", pins: [], redraw: null };
+const state = { friend: null, mine: null, parts: null, charId: null, mapId: null, locs: [], maps: {}, filter: "activity", range: "today", tab: "home", pins: [], redraw: null };
 try { const t = localStorage.getItem(TAB_KEY); if (TABS.some(x => x[0] === t)) state.tab = t; } catch (e) { /* default tab */ }
 try { state.charId = localStorage.getItem(CHAR_KEY); } catch (e) { /* the one played last */ }
 
@@ -332,7 +399,8 @@ function el(tag, attrs, ...kids) {
   return n;
 }
 
-const auth = () => token ? { Authorization: "Bearer " + token } : {};
+// Looking at a friend's characters: the sign-in cookie and the friend's id, never the token.
+const auth = () => state.friend ? { "X-Friend": state.friend.id } : token ? { Authorization: "Bearer " + token } : {};
 async function whoAmI() {
   try { const r = await fetch(API + "/me"); return r.ok ? await r.json() : null; } catch (e) { return null; }
 }
@@ -370,12 +438,17 @@ function showLogin(failed, me) {
   session = false;
   document.getElementById("logout").hidden = true;
   document.getElementById("tokens").hidden = true;
+  document.getElementById("friends").hidden = true;
+  state.friend = null;
   document.getElementById("sync").textContent = "";
   const binding = !!(me && me.account && !me.link);
   const input = el("input", { type: "password", placeholder: "Token", autocomplete: "off" });
   const note = el("div", { class: "detail", text: binding
     ? `已用 Google 帳號 ${me.account.email} 登入。第一次使用請貼上你的 Token（同步程式裡的那串）綁定這個帳號，之後只要用 Google 登入就好。`
     : failed ? "Token 無效，請重新輸入。" : "請貼上唯讀 Token（只會存在這個瀏覽器）。" });
+  let waiting = null;
+  try { waiting = localStorage.getItem(INVITE_KEY); } catch (e) { /* none */ }
+  if (waiting) note.textContent = "你收到一個好友邀請：請先用 Google 登入" + (binding ? "並綁定權杖" : "") + "，之後會再問你要不要接受。　" + note.textContent;
   const form = el("form", { class: "card login" },
     el("h2", { text: binding ? "綁定 Google 帳號" : "需要存取 Token" }), note,
     input, el("button", { text: binding ? "綁定並進入" : "進入" }));
@@ -425,18 +498,58 @@ async function googleBox(form, me) {
   form.append(box);
 }
 
+// ---- dialogs shared by the token and friend panels
+function sheet(label) {
+  const shade = el("div", { class: "shade" });
+  const box = el("div", { class: "card sheet", role: "dialog", "aria-modal": "true", "aria-label": label });
+  shade.append(box);
+  const close = () => { shade.remove(); document.removeEventListener("keydown", esc); };
+  const esc = e => { if (e.key === "Escape" && !document.querySelector(".shade.ask")) close(); };
+  shade.addEventListener("click", e => { if (e.target === shade) close(); });
+  document.addEventListener("keydown", esc);
+  document.body.append(shade);
+  const shut = el("button", { type: "button", class: "link", text: "關閉" });
+  shut.addEventListener("click", close);
+  return { box, close, head: el("div", { class: "sheet-head" }, el("h2", { text: label }), shut) };
+}
+
+// "Are you sure?" with the usual two buttons: resolves true only for the confirming one.
+function confirmBox({ title, text, ok, danger }) {
+  return new Promise(done => {
+    const shade = el("div", { class: "shade ask" });
+    const no = el("button", { type: "button", class: "btn2", text: "取消" });
+    const yes = el("button", { type: "button", class: "btn2 " + (danger ? "bad" : "go"), text: ok });
+    const box = el("div", { class: "card ask-box", role: "alertdialog", "aria-modal": "true", "aria-label": title },
+      el("h3", { text: title }), el("p", { text }), el("div", { class: "acts" }, no, yes));
+    shade.append(box);
+    const finish = v => { shade.remove(); document.removeEventListener("keydown", key); done(v); };
+    const key = e => { if (e.key === "Escape") { e.stopPropagation(); finish(false); } };
+    no.addEventListener("click", () => finish(false));
+    yes.addEventListener("click", () => finish(true));
+    shade.addEventListener("click", e => { if (e.target === shade) finish(false); });
+    document.addEventListener("keydown", key, true);
+    document.body.append(shade);
+    no.focus();
+  });
+}
+
+function copyButton(text, label, primary) {
+  const b = el("button", { type: "button", class: "btn2" + (primary ? " go" : ""), text: label });
+  b.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(text); b.textContent = "✓ 已複製"; setTimeout(() => { b.textContent = label; }, 1400); }
+    catch (e) { window.prompt("複製這段", text); }
+  });
+  return b;
+}
+
+const button2 = (label, run, cls) => { const b = el("button", { type: "button", class: "btn2" + (cls ? " " + cls : ""), text: label }); b.addEventListener("click", run); return b; };
+const chipsOf = (names, empty) => el("div", { class: "pchips" }, ...(names.length ? names.map(n => el("span", { class: "pchip", text: n })) : [el("span", { class: "pchip none", text: empty })]));
+
 // ---- the signed-in person's tokens: the one their sync program uses, and read-only ones to share
 document.getElementById("tokens").addEventListener("click", () => tokensPanel());
 
 async function tokensPanel() {
-  const shade = el("div", { class: "shade" });
-  const box = el("div", { class: "card sheet", role: "dialog", "aria-modal": "true", "aria-label": "管理權杖" });
-  shade.append(box);
-  const close = () => { shade.remove(); document.removeEventListener("keydown", esc); };
-  const esc = e => { if (e.key === "Escape") close(); };
-  shade.addEventListener("click", e => { if (e.target === shade) close(); });
-  document.addEventListener("keydown", esc);
-  document.body.append(shade);
+  const s = sheet("管理權杖");
   const call = async (method, path, body) => {
     const r = await fetch(API + "/me/" + path, { method, body: body ? JSON.stringify(body) : undefined,
       headers: body ? { "Content-Type": "application/json" } : {} });
@@ -444,102 +557,223 @@ async function tokensPanel() {
       : r.status === 403 ? "這個 Google 帳號還沒綁定權杖。" : r.status === 404 ? "找不到這個權杖，請重新打開這個視窗。" : "伺服器回應 " + r.status);
     return r.json();
   };
-  const copy = (text, label) => {
-    const b = el("button", { type: "button", class: "small", text: label });
-    b.addEventListener("click", async () => {
-      try { await navigator.clipboard.writeText(text); b.textContent = "已複製"; setTimeout(() => { b.textContent = label; }, 1400); }
-      catch (e) { window.prompt("複製這段", text); }
-    });
-    return b;
-  };
-  // asks once more before anything that stops a token
-  const sure = (label, warn, run) => {
-    const b = el("button", { type: "button", class: "small" + (label === "刪除" ? " danger" : ""), text: label });
-    b.addEventListener("click", () => {
-      if (b.textContent !== warn) { b.textContent = warn; setTimeout(() => { b.textContent = label; }, 4000); return; }
-      run();
-    });
-    return b;
-  };
   const when = iso => iso ? full(iso) : "還沒用過";
-  const shut = el("button", { type: "button", class: "link", text: "關閉" });
-  shut.addEventListener("click", close);
   const draw = (d, fresh) => {
     const say = el("div", { class: "say", role: "status" });
     const act = async (method, path, body) => {
       try { const next = await call(method, path, body); draw(next, next.made); } catch (e) { say.textContent = e.message; }
     };
+    const ask = (opts, method, path, body) => async () => { if (await confirmBox(opts)) act(method, path, body); };
     const secret = (token, open) => {
-      const code = el("code", { text: open ? token : "•".repeat(12) });
-      const show = el("button", { type: "button", class: "small", text: open ? "隱藏" : "顯示" });
-      show.addEventListener("click", () => { const hidden = show.textContent === "顯示"; code.textContent = hidden ? token : "•".repeat(12); show.textContent = hidden ? "隱藏" : "顯示"; });
+      const code = el("code", { text: open ? token : "•".repeat(16) });
+      const show = button2(open ? "隱藏" : "顯示", () => {
+        const hidden = show.textContent === "顯示";
+        code.textContent = hidden ? token : "•".repeat(16); show.textContent = hidden ? "隱藏" : "顯示";
+      });
       return [code, show];
     };
     // sync tokens: up to three, all always viewable; the first stands for the person
-    const sync = el("section", { class: "tk" }, el("h3", { text: "同步權杖" }));
+    const sync = el("section", { class: "tk" });
     if (d.sync) {
-      sync.append(el("p", { class: "tkhint", text: "填在同步程式裡，用來上傳你的角色；一台電腦用一個，最多 " + d.max_sync + " 個，都算你的角色。只給自己用，不要分享給別人。"
-        + "「重新產生」會換一個新的，舊的立刻失效，用它的同步程式要改填新的；其他權杖不受影響。" }));
-      if (d.characters.length) sync.append(el("p", { class: "tkhint", text: "名下角色：" + d.characters.join("、") }));
-      for (const s of d.sync) {
-        const [code, show] = secret(s.token, s.token === fresh);
-        const row = el("div", { class: "row" + (s.token === fresh ? " fresh" : "") }, el("div", { class: "what" },
-          el("b", { text: (s.label || (s.first ? "主要" : "未命名")) + (s.first ? "" : "　") }), code,
-          el("small", { text: `建立於 ${full(s.created_at)}　·　最後上傳：${when(s.last_used_at)}` })),
-          show, copy(s.token, "複製"),
-          sure("重新產生", "確定換新？", () => act("POST", "sync-tokens/regenerate", { id: s.id })));
-        if (!s.first) row.append(sure("刪除", "確定刪除？", () => act("POST", "sync-tokens/delete", { id: s.id })));
-        sync.append(row);
+      sync.append(el("div", { class: "tk-head" }, el("h3", { text: "同步權杖" }), el("span", { class: "count", text: `${d.sync.length} / ${d.max_sync}` })),
+        el("p", { class: "tkhint", text: "填在同步程式裡，用來上傳你的角色。一台電腦用一個，只給自己用，不要分享給別人。" }));
+      if (d.characters.length) sync.append(el("div", { class: "owned" }, el("span", { text: "名下角色" }), chipsOf(d.characters, "")));
+      for (const t of d.sync) {
+        const [code, show] = secret(t.token, t.token === fresh);
+        const regen = button2("重新產生", ask({ title: `重新產生「${t.label || (t.first ? "主要" : "未命名")}」？`,
+          text: "會換成一個新的權杖，舊的立刻失效，用它的同步程式要改填新的。你的角色和其他權杖不受影響。", ok: "重新產生" },
+          "POST", "sync-tokens/regenerate", { id: t.id }));
+        const del = t.first ? null : button2("刪除", ask({ title: `刪除「${t.label || "未命名"}」？`,
+          text: "用這個權杖的同步程式會立刻無法上傳。這個動作不能復原。", ok: "刪除", danger: true }, "POST", "sync-tokens/delete", { id: t.id }), "bad");
+        sync.append(el("div", { class: "tk-item" + (t.token === fresh ? " fresh" : "") },
+          el("div", { class: "tk-title" }, el("b", { text: t.label || (t.first ? "主要" : "未命名") }), t.first ? el("span", { class: "badge", text: "主要" }) : null),
+          el("div", { class: "tk-secret" }, code, show, copyButton(t.token, "複製", true)),
+          el("div", { class: "tk-meta", text: `建立於 ${full(t.created_at)}　·　最後上傳 ${when(t.last_used_at)}` }),
+          el("div", { class: "tk-acts" }, el("span", { class: "grow" }), regen, del)));
       }
       if (d.sync.length < d.max_sync) {
         const name = el("input", { type: "text", maxlength: "40", placeholder: "哪台電腦用的，例如：筆電", autocomplete: "off" });
-        const form = el("form", null, name, el("button", { text: "新增同步權杖" }));
+        const form = el("form", { class: "tk-new" }, name, el("button", { text: "＋ 新增同步權杖" }));
         form.addEventListener("submit", e => { e.preventDefault(); act("POST", "sync-tokens", { label: name.value.trim() }); });
         sync.append(form);
       }
     } else {
-      sync.append(el("p", { class: "tkhint", text: "這個帳號綁定的是伺服器本身的權杖，同步用的權杖不會在網頁上顯示。" }));
+      sync.append(el("div", { class: "tk-head" }, el("h3", { text: "同步權杖" })),
+        el("p", { class: "tkhint", text: "這個帳號綁定的是伺服器本身的權杖，同步用的權杖不會在網頁上顯示。" }));
     }
-    // read-only tokens to share: made, copied as a link, given a new address, and deleted here
-    const share = el("section", { class: "tk" }, el("h3", { text: "分享用權杖（只能看）" }),
-      el("p", { class: "tkhint", text: "給別人看你的冒險紀錄：只能看、不能上傳，也看不到聊天內容。按「可看區塊」選擇每個權杖能看到哪些部分；「重新產生」換一個新連結，舊連結立刻失效；不想給看了就刪掉。" }));
-    if (!d.view.length) share.append(el("p", { class: "tkhint", text: "還沒有分享用權杖。" }));
+    // read-only tokens to share
+    const share = el("section", { class: "tk" },
+      el("div", { class: "tk-head" }, el("h3", { text: "分享用權杖（只能看）" }), el("span", { class: "count", text: `${d.view.length} / ${d.max_view}` })),
+      el("p", { class: "tkhint", text: "把連結給別人看你的冒險紀錄：只能看、不能上傳，聊天內容一律看不到。每個權杖可以各自選擇看得到哪些區塊。" }));
+    if (!d.view.length) share.append(el("div", { class: "tk-empty", text: "還沒有分享用權杖。在下面輸入名稱建立一個。" }));
     const partName = Object.fromEntries(d.parts.map(p => [p.key, p.name]));
     for (const v of d.view) {
       const link = location.origin + "/#token=" + encodeURIComponent(v.token);
-      const shows = v.sections.length === d.parts.length ? "可看：全部" : v.sections.length
-        ? "可看：" + v.sections.map(k => partName[k]).join("、") : "可看：只有角色的名字、職業、等級與經驗";
-      // which parts it shows: ticked boxes, saved with one press
+      const name = v.label || "（沒有名稱）";
       const boxes = d.parts.map(p => { const c = el("input", { type: "checkbox", value: p.key }); c.checked = v.sections.includes(p.key); return [p, c]; });
-      const save = el("button", { type: "button", text: "儲存" });
-      save.addEventListener("click", () => act("POST", "tokens/sections", { id: v.id, sections: boxes.filter(([, c]) => c.checked).map(([p]) => p.key) }));
-      const parts = el("div", { class: "parts" }, ...boxes.map(([p, c]) => el("label", null, c, p.name)), save,
-        el("span", { class: "always", text: "角色的名字、職業、等級與經驗一律看得到；聊天內容一律看不到。" }));
-      parts.hidden = true;
-      const choose = el("button", { type: "button", class: "small", text: "可看區塊" });
-      choose.addEventListener("click", () => { parts.hidden = !parts.hidden; });
-      share.append(el("div", { class: "row" + (v.token === fresh ? " fresh" : "") }, el("div", { class: "what" }, el("b", { text: v.label || "（沒有名稱）" }),
-        el("small", { text: `建立於 ${full(v.created_at)}　·　最後使用：${when(v.last_used_at)}` }), el("span", { class: "shows", text: shows })),
-        copy(link, "複製分享連結"), copy(v.token, "複製權杖"), choose,
-        sure("重新產生", "確定換新？", () => act("POST", "tokens/regenerate", { id: v.id })),
-        sure("刪除", "確定刪除？", () => act("POST", "tokens/delete", { id: v.id })), parts));
+      const editor = el("div", { class: "parts" }, ...boxes.map(([p, c]) => el("label", null, c, p.name)),
+        el("span", { class: "always", text: "角色的名字、職業、等級與經驗一律看得到；聊天內容一律看不到。" }),
+        el("div", { class: "parts-acts" }, button2("取消", () => { editor.hidden = true; }),
+          button2("儲存", () => act("POST", "tokens/sections", { id: v.id, sections: boxes.filter(([, c]) => c.checked).map(([p]) => p.key) }), "go")));
+      editor.hidden = true;
+      const shown = v.sections.length === d.parts.length ? ["全部區塊"] : v.sections.map(k => partName[k]);
+      share.append(el("div", { class: "tk-item" + (v.token === fresh ? " fresh" : "") },
+        el("div", { class: "tk-title" }, el("b", { text: name }),
+          el("span", { class: "tk-meta inline", text: `建立於 ${full(v.created_at)}　·　最後使用 ${when(v.last_used_at)}` })),
+        el("div", { class: "owned" }, el("span", { text: "可看" }), chipsOf(shown, "只有名字、職業、等級與經驗"),
+          button2("編輯", () => { editor.hidden = !editor.hidden; }, "mini")),
+        editor,
+        el("div", { class: "tk-acts" }, copyButton(link, "複製分享連結", true), copyButton(v.token, "複製權杖"), el("span", { class: "grow" }),
+          button2("重新產生", ask({ title: `重新產生「${name}」的連結？`, text: "舊的分享連結會立刻失效，要把新連結再給對方一次。名稱和可看區塊不變。", ok: "重新產生" },
+            "POST", "tokens/regenerate", { id: v.id })),
+          button2("刪除", ask({ title: `刪除「${name}」？`, text: "用這個連結的人會立刻看不到你的冒險紀錄。這個動作不能復原。", ok: "刪除", danger: true },
+            "POST", "tokens/delete", { id: v.id }), "bad"))));
     }
     if (d.view.length < d.max_view) {
-      const name = el("input", { type: "text", maxlength: "40", placeholder: "給誰的，例如：公會朋友", autocomplete: "off" });
-      const form = el("form", null, name, el("button", { text: "建立" }));
-      form.addEventListener("submit", e => { e.preventDefault(); act("POST", "tokens", { label: name.value.trim() }); });
+      const label = el("input", { type: "text", maxlength: "40", placeholder: "給誰的，例如：公會朋友", autocomplete: "off" });
+      const form = el("form", { class: "tk-new" }, label, el("button", { text: "＋ 建立分享權杖" }));
+      form.addEventListener("submit", e => { e.preventDefault(); act("POST", "tokens", { label: label.value.trim() }); });
       share.append(form);
     }
-    box.replaceChildren(el("div", { class: "sheet-head" }, el("h2", { text: "管理權杖" }), shut), sync, share, say);
+    s.box.replaceChildren(s.head, sync, share, say);
   };
-  box.replaceChildren(el("div", { class: "loading", role: "status" }, el("i"), "讀取中…"));
+  s.box.replaceChildren(s.head, el("div", { class: "loading", role: "status" }, el("i"), "讀取中…"));
   try { draw(await call("GET", "tokens")); }
-  catch (e) { box.replaceChildren(el("div", { class: "sheet-head" }, el("h2", { text: "管理權杖" }), shut), el("p", { class: "detail", text: e.message })); }
+  catch (e) { s.box.replaceChildren(s.head, el("p", { class: "detail", text: e.message })); }
+}
+
+// ---- friends: other Google accounts that see each other's characters, each choosing what it shows
+document.getElementById("friends").addEventListener("click", () => friendsPanel());
+
+function viewFriend(f) {
+  if (!state.friend) state.mine = state.charId;      // to come back to the same character
+  state.friend = { id: f.id, name: f.name, sections: f.shown.sections };
+  state.charId = null;
+  app.replaceChildren(el("div", { class: "loading", role: "status" }, el("i"), "載入 " + f.name + " 的角色…"));
+  window.scrollTo(0, 0);
+  load();
+}
+
+function leaveFriend() {
+  state.friend = null;
+  state.charId = state.mine;
+  state.parts = null;
+  load();
+}
+
+async function friendCall(method, path, body) {
+  const r = await fetch(API + "/me/friends" + path, { method, body: body ? JSON.stringify(body) : undefined,
+    headers: body ? { "Content-Type": "application/json" } : {} });
+  if (!r.ok) throw new Error(r.status === 409 ? "已達上限，或不能邀請自己。" : r.status === 401 ? "Google 登入已過期，請重新登入。"
+    : r.status === 403 ? "這個 Google 帳號還沒綁定權杖。" : r.status === 404 ? "這個邀請已經用過或過期了，請對方再產生一個。" : "伺服器回應 " + r.status);
+  return r.json();
+}
+
+// asked once after signing in, when this browser was given an invite link
+let asking = false;
+async function askAboutInvite() {
+  let code = null;
+  try { code = localStorage.getItem(INVITE_KEY); } catch (e) { return; }
+  if (!code || asking) return;
+  asking = true;
+  try { localStorage.removeItem(INVITE_KEY); } catch (e) { /* asked once anyway */ }
+  const s = sheet("好友邀請");
+  const body = el("div");
+  s.box.replaceChildren(s.head, body);
+  const done = () => { s.close(); asking = false; };
+  let info;
+  try { info = await friendCall("GET", "/invite/" + encodeURIComponent(code)); }
+  catch (e) { body.replaceChildren(el("p", { class: "detail", text: e.message })); asking = false; return; }
+  const from = el("div", { class: "invite-from" }, info.from.picture ? el("img", { src: info.from.picture, alt: "", referrerpolicy: "no-referrer" }) : null,
+    el("b", { text: info.from.name }));
+  if (info.self || info.already) {
+    body.replaceChildren(from, el("p", { text: info.self ? "這是你自己產生的邀請連結，把它傳給朋友就好。" : "你們已經是好友了。" }));
+    asking = false;
+    return;
+  }
+  const say = el("div", { class: "say", role: "status" });
+  body.replaceChildren(from, el("p", { text: `${info.from.name} 邀請你成為好友。接受後，你們預設可以看到彼此的角色（遊戲截圖除外，聊天內容一律看不到）。之後可以在「好友」裡調整要分享什麼，或隨時移除好友。` }),
+    el("div", { class: "acts" }, button2("不要", done),
+      button2("接受", async () => { try { await friendCall("POST", "/accept", { code }); done(); friendsPanel(); } catch (e) { say.textContent = e.message; } }, "go")),
+    say);
+}
+
+async function friendsPanel() {
+  const s = sheet("好友");
+  const charText = c => (c.name || c.id) + (c.level ? ` Lv${c.level}` : "");
+  const draw = (d, fresh) => {
+    const say = el("div", { class: "say", role: "status" });
+    const act = async (method, path, body) => {
+      try { const next = await friendCall(method, path, body); draw(next, next.made); } catch (e) { say.textContent = e.message; }
+    };
+    const ask = (opts, method, path, body) => async () => { if (await confirmBox(opts)) act(method, path, body); };
+    const partName = Object.fromEntries(d.parts.map(p => [p.key, p.name]));
+    // friends first: what each shows you, and what you show each
+    const list = el("section", { class: "tk" }, el("div", { class: "tk-head" }, el("h3", { text: "好友" }), el("span", { class: "count", text: String(d.friends.length) })));
+    if (!d.friends.length) list.append(el("div", { class: "tk-empty", text: "還沒有好友。用下面的邀請連結邀請朋友。" }));
+    for (const f of d.friends) {
+      const theirs = f.shown.characters;
+      const boxes = d.parts.map(p => { const c = el("input", { type: "checkbox", value: p.key }); c.checked = f.mine.sections.includes(p.key); return [p, c]; });
+      const every = el("input", { type: "checkbox" });
+      every.checked = f.mine.all;
+      const picks = d.my_characters.map(c => { const b = el("input", { type: "checkbox", value: c.id });
+        b.checked = f.mine.all || f.mine.characters.includes(c.id); return [c, b]; });
+      const labels = picks.map(([c, b]) => el("label", null, b, charText(c)));
+      const follow = () => { for (const [i, [, b]] of picks.entries()) { b.disabled = every.checked; labels[i].classList.toggle("off", every.checked); } };
+      every.addEventListener("change", follow);
+      const editor = el("div", { class: "parts" }, el("span", { class: "group", text: "可看區塊" }),
+        ...boxes.map(([p, c]) => el("label", null, c, p.name)),
+        el("span", { class: "group", text: "分享的角色" }),
+        d.kind === "personal" ? el("label", null, every, "全部角色（包含之後新增的）") : null,
+        ...labels,
+        d.kind === "all" ? el("span", { class: "always", text: "你的帳號能看到伺服器上所有人的角色，只會分享你勾選的。" }) : null,
+        el("span", { class: "always", text: "角色的名字、職業、等級與經驗一律看得到；聊天內容一律看不到。" }),
+        el("div", { class: "parts-acts" }, button2("取消", () => { editor.hidden = true; }),
+          button2("儲存", () => act("POST", "/share", { id: f.id, sections: boxes.filter(([, c]) => c.checked).map(([p]) => p.key),
+            characters: d.kind === "personal" && every.checked ? null : picks.filter(([, b]) => b.checked).map(([c]) => c.id) }), "go")));
+      follow();
+      editor.hidden = true;
+      const myChars = f.mine.all ? ["全部角色"] : d.my_characters.filter(c => f.mine.characters.includes(c.id)).map(charText);
+      const myParts = f.mine.sections.length === d.parts.length ? ["全部區塊"] : f.mine.sections.map(k => partName[k]);
+      const look = button2("查看角色", () => { s.close(); viewFriend(f); }, "go");
+      if (!theirs.length) look.disabled = true;
+      list.append(el("div", { class: "tk-item" },
+        el("div", { class: "tk-title" }, f.picture ? el("img", { class: "face", src: f.picture, alt: "", referrerpolicy: "no-referrer" }) : null,
+          el("div", null, el("b", { text: f.name }), el("div", { class: "tk-meta", text: (f.email || "") + (f.since ? `　·　${full(f.since)} 成為好友` : "") }))),
+        el("div", { class: "owned" }, el("span", { text: "分享給你" }), chipsOf(theirs.map(charText), "還沒有分享角色")),
+        el("div", { class: "owned" }, el("span", { text: "你分享" }), chipsOf(myChars, "沒有分享角色"),
+          button2("編輯", () => { editor.hidden = !editor.hidden; }, "mini")),
+        myChars.length ? el("div", { class: "owned" }, el("span", { text: "對方可看" }), chipsOf(myParts, "只有名字、職業、等級與經驗")) : null,
+        editor,
+        el("div", { class: "tk-acts" }, look, el("span", { class: "grow" }),
+          button2("移除好友", ask({ title: `移除好友「${f.name}」？`, text: "你們會立刻看不到彼此的角色。之後想再當好友，要重新邀請。", ok: "移除", danger: true },
+            "POST", "/remove", { id: f.id }), "bad"))));
+    }
+    // invite links
+    const inv = el("section", { class: "tk" },
+      el("div", { class: "tk-head" }, el("h3", { text: "邀請好友" }), el("span", { class: "count", text: `${d.invites.length} / ${d.max_invites}` })),
+      el("p", { class: "tkhint", text: "產生邀請連結傳給朋友（LINE、Discord 都可以）。對方用 Google 登入並綁定權杖後打開連結、按「接受」就成為好友。連結 7 天內有效，只能用一次。" }));
+    for (const v of d.invites) {
+      const link = location.origin + "/#friend=" + v.code;
+      inv.append(el("div", { class: "tk-item" + (v.code === fresh ? " fresh" : "") },
+        el("div", { class: "tk-secret" }, el("code", { text: link })),
+        el("div", { class: "tk-acts" }, copyButton(link, "複製連結", true), el("span", { class: "tk-meta inline", text: `有效到 ${full(v.expires_at)}` }),
+          el("span", { class: "grow" }),
+          button2("取消邀請", ask({ title: "取消這個邀請連結？", text: "還沒用過的人打開它會看到「邀請已失效」。", ok: "取消邀請", danger: true },
+            "POST", "/invite/delete", { code: v.code }), "bad"))));
+    }
+    if (d.invites.length < d.max_invites) inv.append(el("div", { class: "tk-new" }, button2("＋ 產生邀請連結", () => act("POST", "/invite"), "go")));
+    s.box.replaceChildren(s.head, list, inv, say);
+  };
+  s.box.replaceChildren(s.head, el("div", { class: "loading", role: "status" }, el("i"), "讀取中…"));
+  try { draw(await friendCall("GET", "")); }
+  catch (e) { s.box.replaceChildren(s.head, el("p", { class: "detail", text: e.message })); }
 }
 
 document.getElementById("logout").addEventListener("click", async () => {
   try { localStorage.removeItem(KEY); } catch (e) { /* nothing stored */ }
   token = "";
+  state.friend = null;
   // signed in with Google: signing out of the page signs out of that too
   if (session) try { await fetch("/auth/logout", { method: "POST" }); } catch (e) { /* the cookie lapses by itself */ }
   showLogin(false, await whoAmI());
@@ -1325,6 +1559,7 @@ async function load(quiet) {
     session = true;
   }
   document.getElementById("tokens").hidden = !session;   // only a Google account bound to a token manages tokens
+  document.getElementById("friends").hidden = !session;
   const busy = document.getElementById("busy");
   if (!quiet) busy.classList.add("on");
   const slow = setTimeout(() => { const n = document.getElementById("slow"); if (n) n.hidden = false; }, 4000);
@@ -1334,8 +1569,8 @@ async function load(quiet) {
     // row kept the page empty for about five seconds. Only what needs an earlier answer waits:
     // the character list (for the character), and the snapshot (for its items and position).
     const optional = (promise, fallback) => promise.catch(() => fallback);   // missing parts are shown as "none"
-    const who = token ? await optional(get("/token"), null) : null;     // what this token is, and what it shows
-    state.parts = who && Array.isArray(who.sections) ? new Set(who.sections) : null;
+    const who = token && !state.friend ? await optional(get("/token"), null) : null;     // what this token is, and what it shows
+    state.parts = state.friend ? new Set(state.friend.sections) : who && Array.isArray(who.sections) ? new Set(who.sections) : null;
     // a part the token does not show is not asked for: an empty answer of the same shape instead
     const want = (part, ask, empty) => has(part) ? ask() : Promise.resolve(empty);
     const NO_ACTIVITY = { counts: {}, kills: 0, fights: 0, combat_seconds: 0, active_seconds: 0, xp: 0, items_looted: 0, loot_value: 0,
@@ -1789,7 +2024,12 @@ async function load(quiet) {
     fpCard.classList.replace("c-half", "c-events");
     state.redraw = () => { if (xpCanvas.clientWidth) drawXp(xpCanvas, act.xp_points); if (window.onresize) window.onresize(); };
     const y = window.scrollY;
-    const note = state.parts ? el("div", { class: "card sharenote", text: "這是分享的檢視：擁有者只開放了部分內容。" }) : null;
+    let note = state.parts && !state.friend ? el("div", { class: "card sharenote", text: "這是分享的檢視：擁有者只開放了部分內容。" }) : null;
+    if (state.friend) {
+      const back = el("button", { type: "button", text: "回到我的角色" });
+      back.addEventListener("click", leaveFriend);
+      note = el("div", { class: "card friendbar" }, "正在看 ", el("b", { text: state.friend.name }), " 分享給你的角色", back);
+    }
     // every character this token holds, one button each: the page shows one at a time
     let picker = null;
     if (chars.length > 1) {
@@ -1803,7 +2043,7 @@ async function load(quiet) {
           if (c.id === state.charId) return;
           state.charId = c.id;
           state.mapId = null; state.questZone = null;    // the other character's own map and quests
-          try { localStorage.setItem(CHAR_KEY, c.id); } catch (e) { /* this visit only */ }
+          if (!state.friend) try { localStorage.setItem(CHAR_KEY, c.id); } catch (e) { /* this visit only */ }
           for (const x of picker.children) x.setAttribute("aria-pressed", x === b);
           load();
         });
@@ -1813,7 +2053,12 @@ async function load(quiet) {
     app.replaceChildren(...[note, picker, hero, bar, el("div", { class: "grid" }, ...cards)].filter(Boolean));
     showTab(state.tab);
     window.scrollTo(0, y);                           // a refresh must not move the page
+    if (session && !quiet) askAboutInvite();
   } catch (err) {
+    if (err.message === "auth" && state.friend) {      // no longer friends, or nothing shared any more
+      leaveFriend();
+      return;
+    }
     if (err.message === "auth") return showLogin(!session, await whoAmI());   // a session that lapsed is no wrong token
     const again = el("button", { type: "button", text: "重試" });
     again.addEventListener("click", () => { app.replaceChildren(el("div", { class: "loading", role: "status" }, el("i"), "重新載入中…")); load(); });
