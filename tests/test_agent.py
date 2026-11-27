@@ -407,3 +407,44 @@ def test_how_many_screenshots_to_keep_is_set_from_the_sync_program(tmp_path):
     assert up.set_settings(keep_screenshots=20) == [] and up.settings()["keep_screenshots"] == 20
     assert up.settings()["upload_screenshots"] is False                   # the other choice untouched
     assert up.set_settings(keep_screenshots=9999)                         # refused by the server, and said so
+
+
+def test_the_window_shows_the_servers_copy_of_a_character_when_it_is_newer(tmp_path):
+    """A personal token brings every character it holds, played on this computer or another;
+    the server's own token only the ones here. The cards show the newer copy, and either can be picked."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
+    from fastapi.testclient import TestClient
+    from app.main import create_app
+    from adventuresync.core import Config, Queue, Uploader, epoch_of
+    from adventuresync.gui import merge_cards
+    app = create_app(db_path=str(tmp_path / "s.db"), write_token="owner", read_token="r")
+    lan, web = TestClient(app, client=("192.168.1.5", 1)), TestClient(app, client=("203.0.113.9", 1))
+    ming = lan.post("/api/v1/admin/tokens", json={"label": "小明"}).json()["token"]
+    # the mac uploaded A (level 12, later) and B (only played there)
+    mac = Config(url="http://testserver", api_token=ming, device_id="mac", db_path=str(tmp_path / "mac.db"))
+    q = Queue(mac.db_path)
+    q.add_snapshot("A", "2026-11-26T20:00:00Z", {"name": "小明德", "level": 12, "money": 500})
+    q.add_snapshot("B", "2026-11-26T19:00:00Z", {"name": "小明法", "level": 3})
+    assert Uploader(mac, q, web).sync_once()["snapshots"] == 2
+    pc = Config(url="http://testserver", api_token=ming, device_id="windows-pc", db_path=str(tmp_path / "pc.db"))
+    cloud = {c["id"]: c for c in Uploader(pc, Queue(pc.db_path), web).cloud_characters(["A"])}
+    assert set(cloud) == {"A", "B"} and cloud["A"]["device_id"] == "mac" and cloud["A"]["data"]["level"] == 12
+    assert cloud["A"]["captured_at"] == epoch_of("2026-11-26T20:00:00Z")
+    # the server's own token: only what is on this computer, never everyone's
+    owner = Config(**{**pc.__dict__, "api_token": "owner"})
+    assert [c["id"] for c in Uploader(owner, Queue(pc.db_path), web).cloud_characters(["A"])] == ["A"]
+    assert Uploader(Config(**{**pc.__dict__, "api_token": "nope"}), Queue(pc.db_path), web).cloud_characters(["A"]) == []
+
+    # this computer last saved A at level 10, three hours earlier
+    local = [{"id": "A", "name": "小明德", "level": 10, "captured_at": epoch_of("2026-11-26T17:00:00Z")}]
+    shown = {e["id"]: e for e in merge_cards(local, list(cloud.values()), {})}
+    assert shown["A"]["view"] == "cloud" and shown["A"]["card"]["level"] == 12 and shown["A"]["local"]["level"] == 10
+    assert shown["B"]["view"] == "cloud" and shown["B"]["local"] is None
+    picked = {e["id"]: e for e in merge_cards(local, list(cloud.values()), {"A": "local"})}
+    assert picked["A"]["view"] == "local" and picked["A"]["card"]["level"] == 10                  # picked by hand
+    # saved here after the mac: this computer's copy, until it goes up
+    later = [{**local[0], "level": 13, "captured_at": epoch_of("2026-11-26T21:00:00Z")}]
+    assert {e["id"]: e["view"] for e in merge_cards(later, list(cloud.values()), {})}["A"] == "local"
+    assert merge_cards([], [], {}) == []

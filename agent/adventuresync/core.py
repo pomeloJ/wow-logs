@@ -344,6 +344,14 @@ def ingest(parsed: Dict[str, Any], queue: Queue) -> Tuple[int, int, int]:
 USER_AGENT = "AdventureSync/0.1"
 
 
+def epoch_of(text: Any) -> Optional[float]:
+    """'2026-11-26T19:31:07Z' (how the server writes times) -> seconds since 1970, or None."""
+    try:
+        return datetime.strptime(str(text), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return None
+
+
 def _outcome(r) -> Tuple[str, str]:
     """-> ('ok'|'invalid'|'retry', detail) for a response. Only 'invalid' means the data is bad.
 
@@ -455,6 +463,40 @@ class Uploader:
         general = next((c for c in checked if c["character_id"] is None), None)
         return {"health": health, "tokens": checked, "token_ok": bool(checked) and all(c["ok"] for c in checked),
                 "auth_status": general["status"] if general else (checked[0]["status"] if checked else 0)}
+
+    def cloud_characters(self, local_ids: List[str]) -> List[Dict[str, Any]]:
+        """Each character as the server last received it, from whichever computer that was:
+        -> [{"id", "captured_at" (seconds since 1970), "device_id", "data"}].
+
+        A personal token brings every character it holds, played here or elsewhere. The
+        server's own token sees everyone's, so with it only the characters on this computer.
+        Characters the server cannot be asked about are left out."""
+        out: Dict[str, Dict[str, Any]] = {}
+        for token in dict.fromkeys(t for t in [self.cfg.api_token, *self.cfg.tokens.values()] if t):
+            auth = {"Authorization": f"Bearer {token}"}
+            try:
+                who = self.client.get("/api/v1/token", headers=auth)
+                if who.status_code != 200:
+                    continue
+                info = who.json()
+                if info.get("kind") == "personal":
+                    ids = [str(c["id"]) for c in info.get("characters") or [] if c.get("id")]
+                elif info.get("kind") == "owner":
+                    ids = list(local_ids)
+                else:
+                    continue
+                for cid in ids:
+                    if cid in out:
+                        continue
+                    r = self.client.get(f"/api/v1/characters/{quote(cid, safe='')}/snapshot", headers=auth)
+                    if r.status_code != 200:
+                        continue
+                    snap = r.json()
+                    out[cid] = {"id": cid, "captured_at": epoch_of(snap.get("captured_at")),
+                                "device_id": snap.get("device_id"), "data": snap.get("data") or {}}
+            except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
+                continue
+        return list(out.values())
 
     def _send(self, method: str, path: str, body: Dict[str, Any], character_id: Optional[str] = None) -> Tuple[str, str]:
         """-> ('ok'|'invalid'|'retry'|'skip', detail). Only 'invalid' means the data itself is

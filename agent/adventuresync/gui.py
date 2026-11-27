@@ -39,6 +39,33 @@ def read_settings(path: Path) -> Config:
 
 
 CARD_FIELDS = ("realm", "race", "faction", "money", "zone_name", "sub_zone", "xp", "xp_max", "rested_xp", "resting", "guild")
+CLOUD_EVERY = 300                                    # seconds between asking the server for its copy of the characters
+SAME_WITHIN = 60                                     # saves this close together count as the same state
+
+
+def card_of(cid: str, data: Any, at: Any) -> Dict[str, Any]:
+    """What a character card shows, from a snapshot's data (the game's file or the server's copy)."""
+    data = data if isinstance(data, dict) else {}
+    return {"id": str(cid), "name": data.get("name") or str(cid), "class": data.get("class"), "level": data.get("level"),
+            "captured_at": at if isinstance(at, (int, float)) else None, **{k: data.get(k) for k in CARD_FIELDS}}
+
+
+def merge_cards(local: List[Dict[str, Any]], cloud: List[Dict[str, Any]], chosen: Dict[str, str]) -> List[Dict[str, Any]]:
+    """One entry per character, here or on the server: {"id", "local", "cloud", "view", "card"}.
+
+    `view` is "local" or "cloud": the one picked in `chosen`, else the newer of the two (the
+    server's when it holds a later save, from another computer say). `card` is that one."""
+    here = {c["id"]: c for c in local}
+    there = {c["id"]: card_of(c["id"], c.get("data"), c.get("captured_at")) | {"device_id": c.get("device_id")} for c in cloud}
+    out = []
+    for cid in dict.fromkeys([*here, *there]):
+        mine, theirs = here.get(cid), there.get(cid)
+        if mine and theirs:
+            view = chosen.get(cid) or ("cloud" if (theirs["captured_at"] or 0) > (mine["captured_at"] or 0) + SAME_WITHIN else "local")
+        else:
+            view = "local" if mine else "cloud"
+        out.append({"id": cid, "local": mine, "cloud": theirs, "view": view, "card": mine if view == "local" else theirs})
+    return sorted(out, key=lambda e: -(e["card"].get("captured_at") or 0))      # the one played last comes first
 
 
 def characters(wow_path: str) -> List[Dict[str, Any]]:
@@ -53,13 +80,11 @@ def characters(wow_path: str) -> List[Dict[str, Any]]:
             continue
         for cid, snap in saved.items() if isinstance(saved, dict) else []:
             data = (snap or {}).get("data") if isinstance(snap, dict) else None
-            data = data if isinstance(data, dict) else {}
             at = snap.get("captured_at") if isinstance(snap, dict) else None
+            at = at if isinstance(at, (int, float)) else None
             if str(cid) in found and (found[str(cid)].get("captured_at") or 0) >= (at or 0):
                 continue                              # the same character in two game folders: the newer one
-            found[str(cid)] = {"id": str(cid), "name": data.get("name") or str(cid), "class": data.get("class"),
-                               "level": data.get("level"), "captured_at": at if isinstance(at, (int, float)) else None,
-                               **{k: data.get(k) for k in CARD_FIELDS}}
+            found[str(cid)] = card_of(str(cid), data, at)
     return sorted(found.values(), key=lambda c: str(c["name"]))
 
 
@@ -146,7 +171,7 @@ class Worker(threading.Thread):
         store: Optional[Queue] = None
         up: Optional[Uploader] = None
         seen: Dict[Path, Any] = {}
-        next_scan = next_sync = next_check = next_shots = next_settings = 0.0
+        next_scan = next_sync = next_check = next_shots = next_settings = next_cloud = 0.0
         failures = 0
         while True:
             try:
@@ -236,6 +261,14 @@ class Worker(threading.Thread):
                     next_settings = time.monotonic() + up.SETTINGS_EVERY
                     held = up.settings()                        # changed on another computer: shown here too
                     self._say(shots=bool(held.get("upload_screenshots")), shots_info=held)
+                if what == "cloud" or (what == "tick" and time.monotonic() >= next_cloud):
+                    next_cloud = time.monotonic() + CLOUD_EVERY
+                    try:                                        # the server's copy, perhaps saved on another computer
+                        self._say(cloud=up.cloud_characters([c["id"] for c in characters(self._cfg.wow_path)]))
+                    except Exception as e:                      # only the cards miss out: never stops syncing
+                        log.debug("could not ask for the server's characters: %s", e)
+                    if what == "cloud":
+                        continue
                 if self.auto and time.monotonic() >= next_shots:
                     next_shots = time.monotonic() + 1           # a new screenshot goes up within seconds
                     if scan_screenshots(store, up):
@@ -268,6 +301,9 @@ class Worker(threading.Thread):
                     if what == "sync" or time.monotonic() >= next_sync:
                         res = up.sync_once()
                         failures = failures + 1 if res["error"] else 0
+                        if res["snapshots"]:
+                            next_cloud = 0.0                    # the server's copy just changed: show it
+
                         next_sync = time.monotonic() + min(self._cfg.sync_interval * (2 ** min(failures, 5)), 600)
                         if res.get("waiting"):
                             names = {c["id"]: c["name"] for c in characters(self._cfg.wow_path)}
@@ -581,7 +617,11 @@ def main(config: Optional[str] = None) -> int:
     summary.pack(side="left")
 
     def refresh() -> None:
-        worker.ask("chars", current())
+        now = current()
+        worker.ask("chars", now)
+        if now.url and (now.api_token or now.tokens):
+            worker.ask("settings", now)
+            worker.ask("cloud", now)
 
     ttk.Button(top, text="重新整理", command=refresh).pack(side="right")
     scroller = tk.Canvas(tab_chars, bg=BG, highlightthickness=0, bd=0)
@@ -610,7 +650,42 @@ def main(config: Optional[str] = None) -> int:
     scroller.bind("<Enter>", lambda e: scroller.bind_all("<MouseWheel>", wheel))
     scroller.bind("<Leave>", lambda e: scroller.unbind_all("<MouseWheel>"))
 
-    def character_card(parent: Any, c: Dict[str, Any]) -> Any:
+    def where_from(cloud: Dict[str, Any]) -> str:
+        device = cloud.get("device_id")
+        return "這台電腦" if device and device == fields["device"].get().strip() else (device or "另一台電腦")
+
+    def source_row(body: Any, e: Dict[str, Any]) -> None:
+        """Which copy the card shows, how old the other one is, and a link to switch between them."""
+        mine, theirs, view = e["local"], e["cloud"], e["view"]
+        row = ttk.Frame(body, style="Inner.TFrame")
+        row.pack(fill="x", pady=(px(8), 0))
+        shown_at = ago_text(e["card"].get("captured_at"))
+        label = f"☁ 雲端（來自 {where_from(theirs)}）· {shown_at}" if view == "cloud" else f"本機 · {shown_at}"
+        ttk.Label(row, text=label, style="CardMuted.TLabel").pack(side="left")
+        if not (mine and theirs):
+            if theirs:
+                ttk.Label(body, text="這台電腦沒有這個角色的存檔", style="CardMuted.TLabel").pack(anchor="w")
+            return
+        gap = (theirs["captured_at"] or 0) - (mine["captured_at"] or 0)
+        if abs(gap) <= SAME_WITHIN:
+            ttk.Label(row, text="　✓ 和雲端一致", style="CardMuted.TLabel", foreground=OK).pack(side="left")
+            return
+        other = "local" if view == "cloud" else "cloud"
+        link = tk.Label(row, text="看本機" if other == "local" else "看雲端", bg=CARD, fg=ACCENT, cursor="hand2",
+                        font=font(9, "underline"))
+        link.pack(side="right")
+        link.bind("<Button-1>", lambda _: (chosen.__setitem__(e["id"], other), draw_cards()))
+        if gap > 0:
+            hint = f"雲端有較新的資料：本機的是 {ago_text(mine['captured_at'], '')}" if view == "cloud" else \
+                f"這是本機的舊資料，雲端有 {ago_text(theirs['captured_at'], '')}的更新"
+            color = WARN if view == "local" else MUTED
+        else:
+            hint = "本機的比雲端新，還沒上傳" if view == "local" else f"這是雲端的舊資料，本機有 {ago_text(mine['captured_at'], '')}的存檔"
+            color = WARN if view == "cloud" else MUTED
+        ttk.Label(body, text=hint, style="CardMuted.TLabel", foreground=color, wraplength=px(300), justify="left").pack(anchor="w")
+
+    def character_card(parent: Any, e: Dict[str, Any]) -> Any:
+        c = e["card"]
         outer = ttk.Frame(parent, style="Card.TFrame")
         tk.Frame(outer, bg=CLASS_COLORS.get(c.get("class") or "", "#c3c8d2"), width=px(6)).pack(side="left", fill="y")
         body = ttk.Frame(outer, style="Inner.TFrame", padding=(px(14), px(12)))
@@ -641,24 +716,35 @@ def main(config: Optional[str] = None) -> int:
             ttk.Label(body, text=f"經驗 {int(xp):,} / {int(top_xp):,}（{xp * 100 / top_xp:.0f}%）"
                       + (f"　休息加成 +{int(rested):,}" if isinstance(rested, (int, float)) and rested > 0 else ""),
                       style="CardMuted.TLabel").pack(anchor="w")
-        ttk.Label(body, text=ago_text(c.get("captured_at")), style="CardMuted.TLabel").pack(anchor="w", pady=(px(8), 0))
+        source_row(body, e)
         return outer
 
-    def draw_cards(found: List[Dict[str, Any]]) -> None:
+    held: Dict[str, List[Dict[str, Any]]] = {"local": [], "cloud": []}      # the latest of each, to draw again
+    chosen: Dict[str, str] = {}                                           # character id -> the copy picked by hand
+
+    def draw_cards(local: Optional[List[Dict[str, Any]]] = None, cloud: Optional[List[Dict[str, Any]]] = None) -> None:
+        if local is not None:
+            held["local"] = local
+        if cloud is not None:
+            held["cloud"] = cloud
+        entries = merge_cards(held["local"], held["cloud"], chosen)
         for child in grid.winfo_children():
             child.destroy()
-        if not found:
+        if not entries:
             empty = card(grid, "還沒有找到角色")
             ttk.Label(empty, text="1. 到「設定」分頁按「安裝插件到遊戲」\n2. 進遊戲，按畫面上的「存檔」按鈕（或輸入 /reload）\n3. 回來按右上的「重新整理」",
                       style="Card.TLabel", justify="left").pack(anchor="w")
             empty.grid(row=0, column=0, columnspan=2, sticky="ew")
             summary.configure(text="這台電腦還沒有角色資料")
             return
-        newest = max((c.get("captured_at") or 0 for c in found), default=0)
-        summary.configure(text=f"這台電腦有 {len(found)} 個角色" + (f"　·　最近一次存檔：{ago_text(newest, '')}" if newest else ""))
-        found = sorted(found, key=lambda c: -(c.get("captured_at") or 0))      # the one played last comes first
-        for i, c in enumerate(found):
-            character_card(grid, c).grid(row=i // 2, column=i % 2, sticky="nsew", padx=(0 if i % 2 == 0 else px(6), px(6) if i % 2 == 0 else 0),
+        newest = max((e["card"].get("captured_at") or 0 for e in entries), default=0)
+        fresher = sum(1 for e in entries if e["local"] and e["cloud"]
+                      and (e["cloud"]["captured_at"] or 0) > (e["local"]["captured_at"] or 0) + SAME_WITHIN)
+        summary.configure(text=f"{len(entries)} 個角色（這台電腦 {len(held['local'])} 個）"
+                          + (f"　·　最近一次存檔：{ago_text(newest, '')}" if newest else "")
+                          + (f"　·　☁ 雲端有 {fresher} 個較新" if fresher else ""))
+        for i, e in enumerate(entries):
+            character_card(grid, e).grid(row=i // 2, column=i % 2, sticky="nsew", padx=(0 if i % 2 == 0 else px(6), px(6) if i % 2 == 0 else 0),
                                          pady=(0, px(12)))
 
     # ---- 同步: where things stand, and what is sent
@@ -853,7 +939,9 @@ def main(config: Optional[str] = None) -> int:
                     write(r["message"])
                 if "characters" in r:
                     list_people(r["characters"])
-                    draw_cards(r["characters"])
+                    draw_cards(local=r["characters"])
+                if "cloud" in r:
+                    draw_cards(cloud=r["cloud"])
                 if "update" in r:
                     offer(r["update"])
                 if "addon" in r:

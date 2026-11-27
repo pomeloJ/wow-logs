@@ -54,6 +54,7 @@ cd agent && ../.venv/bin/python AdventureSync.pyw      # Windows：..\.venv\Scri
 
 在視窗裡依序：填伺服器網址與權杖 → 儲存設定 → 測試連線 → 安裝插件到遊戲 → 開始自動同步。
 「戰鬥紀錄」打綠勾代表你的戰鬥有記到；沒有的話視窗上方會出現警告條。
+「角色」分頁會從伺服器拿回每個角色最新的狀態：另一台電腦玩過、雲端比較新時，預設顯示雲端的，卡片右下角可以切回「看本機」。
 設定存在使用者資料夾的 `.adventuresync/config.toml`。找不到遊戲時用「選擇…」指定裡面有 `_forever_` 的資料夾。
 
 不開視窗的用法：`python -m adventuresync run`（另有 `sync-once`、`validate`、`test-connection`、`status`）。
