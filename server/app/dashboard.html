@@ -726,7 +726,7 @@ async function tokensPanel() {
       const name = v.label || "（沒有名稱）";
       const url = `${location.origin}/voice?t=${encodeURIComponent(v.token)}`;
       voice.append(card(v, name, null, dates(v, "最後使用"),
-        [field("網址", secret(v.token, v.token === fresh, t => `${location.origin}/voice?t=${t}`)),
+        [field("網址", address(url)),
          charsField(v),
          field("用法", el("ul", { class: "tk-how" },
            el("li", null, "切換角色：網址加 ", el("code", { text: "&c=角色名" })),
