@@ -370,8 +370,12 @@ def combat_text(c: Dict[str, Any]) -> Dict[str, Any]:
         return {"row": f"✓ 有收到（{hm(c['last_seen'])}）", "color": OK, "banner": None}
     if c["state"] == "missing":
         return {"row": "✗ 沒收到", "color": BAD, "bad": True,
-                "banner": f"✗ 戰鬥紀錄沒開：{hm(c['newest_fight'])} 的戰鬥沒記到　遊戲裡輸入 /adventure combatlog auto"}
-    return {"row": "⚠ 還沒收到", "color": WARN, "bad": False, "banner": "⚠ 還沒收到戰鬥紀錄，請確認遊戲裡有開"}
+                "banner": f"✗ 戰鬥紀錄沒開：{hm(c['newest_fight'])} 的戰鬥沒記到　遊戲裡輸入 /adventure combatlog on"}
+    # Neither is a sign of anything wrong: no banner. The game writes its log file minutes late,
+    # and the addon tells of its fights only when it saves; the game itself reminds at login.
+    if c["state"] == "checking":
+        return {"row": "… 等遊戲寫入（會慢幾分鐘）", "color": MUTED, "bad": False, "banner": None}
+    return {"row": "— 還沒有戰鬥可對照", "color": MUTED, "bad": False, "banner": None}
 
 
 def main(config: Optional[str] = None) -> int:

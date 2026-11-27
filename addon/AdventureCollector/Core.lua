@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.3.0"
+local VERSION = "0.3.1"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -15,7 +15,7 @@ local DEFAULTS = {
     showButton = true,     -- on-screen "save now" button
     requestPlayed = true,  -- ask for /played once per login (prints two chat lines)
     combatLogRemind = true, -- say so in chat when the game's combat log is off
-    combatLogAuto = false,  -- switch the game's combat log on at login instead of only saying so
+    combatLogAuto = true,   -- switch the game's combat log on at login instead of only saying so
     aiShotDelay = 0.2,      -- seconds between showing the AI screenshot panel and taking the picture
     aiFontSize = 15,        -- panel text size (unscaled UI units; about 21 px at 1080p)
 }
@@ -135,16 +135,16 @@ end
 
 local function checkCombatLog(again)
     local on = combatLogOn()
-    if on ~= false then return on end
-    if db.settings.combatLogAuto then
-        if switchCombatLogOn() then
-            say("已替你開啟戰鬥紀錄（/combatlog），這次遊玩會有傷害統計。")
-            return true
-        end
+    -- Switched on every time, whatever the game answers: its answer is not always right, and
+    -- switching on a log that is already on changes nothing (only the /combatlog command toggles).
+    if db.settings.combatLogAuto and switchCombatLogOn() then
+        if not reloaded or again then say("戰鬥紀錄已開啟（每次登入自動開），這次遊玩會有傷害統計。") end
+        return true
     end
+    if on ~= false then return on end
     if not db.settings.combatLogRemind or (reloaded and not again) then return false end
     say("|cffffd100請確認戰鬥紀錄是否已開啟|r，沒開就不會有傷害統計。按視窗上的「確認開啟」；"
-        .. "想要每次登入自動開，輸入 |cffffff00/adventure combatlog auto|r")
+        .. "想要每次登入自動開，輸入 |cffffff00/adventure combatlog on|r")
     combatLogPopup()
     return false
 end
@@ -173,6 +173,10 @@ local function initDB()
     for k, v in pairs(DEFAULTS) do
         if type(db.settings[k]) ~= type(v) then db.settings[k] = v end
     end
+    -- Up to 0.3.0 the switch was off by default, and that default was stored like a choice. A
+    -- logout for being idle came back without the log, so now it is on for everyone; only a
+    -- choice made with the command from now on (combatLogAutoChosen) is kept.
+    if not db.settings.combatLogAutoChosen then db.settings.combatLogAuto = true end
     if type(db.settings.chat) ~= "table" then db.settings.chat = {} end -- per-channel, all off
 end
 
@@ -1819,9 +1823,13 @@ SlashCmdList.ADVENTURECOLLECTOR = function(msg)
     elseif msg:match("^combatlog") then
         if not db then return end
         local what = msg:match("^combatlog%s+(%S+)")
-        if what == "auto" then
+        if what == "on" then          -- only ever on, now and at every login: safe to type whatever the state
+            db.settings.combatLogAuto, db.settings.combatLogAutoChosen = true, true
+            checkCombatLog(true)
+        elseif what == "auto" then
             db.settings.combatLogAuto = not db.settings.combatLogAuto
-            say(db.settings.combatLogAuto and "之後每次登入會自動開啟戰鬥紀錄" or "不再自動開啟戰鬥紀錄")
+            db.settings.combatLogAutoChosen = true
+            say(db.settings.combatLogAuto and "之後每次登入會自動開啟戰鬥紀錄" or "不再自動開啟戰鬥紀錄（要恢復：/adventure combatlog on）")
             if db.settings.combatLogAuto then checkCombatLog() end
         elseif what == "quiet" then
             db.settings.combatLogRemind = not db.settings.combatLogRemind
@@ -1842,7 +1850,7 @@ SlashCmdList.ADVENTURECOLLECTOR = function(msg)
         end
     elseif msg == "help" then
         say("/adventure [status] - 狀態;  /adventure save - 立即存檔;  /adventure mapshot - 截目前地圖當底圖;  /adventure aishot [test|reset] - AI 增強截圖 (預設 F12);  /adventure chat - 聊天紀錄設定;  "
-            .. "/adventure combatlog - 確認戰鬥紀錄 (auto: 每次登入自動開, quiet: 不提醒);  "
+            .. "/adventure combatlog - 確認戰鬥紀錄 (on: 開啟並每次登入自動開, auto: 切換自動開 (預設開), quiet: 不提醒);  "
             .. "/adventure button - 顯示/隱藏存檔按鈕;  "
             .. "/adventure on|off - 啟用/暫停")
     else

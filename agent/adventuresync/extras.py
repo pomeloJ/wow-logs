@@ -578,6 +578,12 @@ def recorded_kills(queue) -> Dict[int, List[float]]:
 
 
 SEEN = "combatseen"         # kv: times (5-second steps) the player's own doings were read from the log
+# kv: the newest moment any line read from the log speaks of. The game keeps what it logs in
+# memory and writes it to the file in chunks: seen in the game, a fight playing alone reached
+# the file four minutes later. Until the file has got past a fight, nothing in it says anything
+# about that fight.
+READ = "combatread"
+SETTLE = 900                # a fight this old with nothing in the file: the log really was off
 
 
 def note_seen(queue, rows: List[List[Any]], keep: float = 7 * 86400) -> None:
@@ -590,14 +596,17 @@ def note_seen(queue, rows: List[List[Any]], keep: float = 7 * 86400) -> None:
     kv_set(queue, SEEN, sorted(t for t in seen if t >= newest - keep))
 
 
-def combat_log_check(queue, now: Optional[float] = None, live: float = 900, recent: float = 12 * 3600) -> Dict[str, Any]:
+def combat_log_check(queue, now: Optional[float] = None, live: float = 900, recent: float = 12 * 3600,
+                     settle: float = SETTLE) -> Dict[str, Any]:
     """Is the game's combat log giving us the player's fights?
 
     Checked against the fights the addon itself recorded (it does that with the log on or
-    off): a fight with nothing from the log in its time means the log was off. Between saves
-    the addon has not said anything yet, so something of the player's read from the log in
-    the last minutes counts as proof too. State "ok", "missing", or "waiting" (no fight to
-    judge by in the last hours: maybe nothing was fought yet, maybe the log is off)."""
+    off): a fight with nothing from the log in its time means the log was off -- once the file
+    has got past that fight, or the fight is `settle` seconds old (the game writes the file
+    late, see READ). Between saves the addon has not said anything yet, so something of the
+    player's read from the log in the last minutes counts as proof too. State "ok", "missing",
+    "checking" (the newest fight is not in the file yet, which says nothing either way), or
+    "waiting" (no fight to judge by in the last hours)."""
     now = time.time() if now is None else now
     # Fights from before this program started keeping track have nothing to be checked against.
     since = kv_get(queue, SEEN + "-since")
@@ -623,13 +632,20 @@ def combat_log_check(queue, now: Optional[float] = None, live: float = 900, rece
         k = bisect.bisect_left(seen, end - seconds - 10)
         return k < len(seen) and seen[k] <= end + 10
 
-    missed = [end for end, seconds in fights if not covered(end, seconds)]
+    read = kv_get(queue, READ)
+
+    def settled(end: float) -> bool:
+        return (read is not None and read >= end + 30) or now - end >= settle
+
+    missed = [end for end, seconds in fights if not covered(end, seconds) and settled(end)]
     out = {"last_seen": seen[-1] if seen else None, "fights": len(fights), "missed": len(missed),
            "newest_fight": fights[-1][0] if fights else None}
     if seen and now - seen[-1] <= live:
         return {**out, "state": "ok"}
     if fights:
-        return {**out, "state": "ok" if covered(*fights[-1]) else "missing"}
+        if covered(*fights[-1]):
+            return {**out, "state": "ok"}
+        return {**out, "state": "missing" if settled(fights[-1][0]) else "checking"}
     return {**out, "state": "waiting"}
 
 
@@ -661,13 +677,17 @@ def process_combat_logs(game_dir: Path, db: Any, queue, idle_after: float = 120,
             end = chunk.rfind(b"\n") + 1             # leave a half-written last line for next time
             year = time.localtime(st.st_mtime).tm_year
             at = offset
+            newest = None
             for raw in chunk[:end].split(b"\n"):
                 parsed = parse_line(raw.decode("utf-8", errors="replace"), year)
                 if parsed:
                     meter.pos = at
                     meter.feed(*parsed)
+                    newest = parsed[0]
                 at += len(raw) + 1
             offset += end
+            if newest is not None and newest > (kv_get(queue, READ) or 0):
+                kv_set(queue, READ, newest)
         if time.time() - st.st_mtime >= idle_after:  # nothing new for a while: the minute is over
             meter.close()
         character = meter.me or (fallback if fallback and fallback.startswith("Player-") else None)

@@ -345,6 +345,8 @@ def test_every_hit_miss_and_heal_is_sent_as_a_row(tmp_path):
     assert (taken["way"], taken["who"], taken["enemy"], taken["amount"], taken["blocked"]) == ("in", "小鈴", "雷鱗巫師", 36, 5)
     assert (heal["way"], heal["who"], heal["amount"], heal["raw"], heal["crit"], heal["kind"]) == ("heal", "", 70, 90, 1, "heal")
     assert extras.process_combat_logs(g, DB, q, uploader=up) == 0 and len(up.sent) == 1     # not sent twice
+    # how far the file has got: the newest line of all, someone else's included
+    assert extras.kv_get(q, extras.READ) == time.mktime((2026, 11, 22, 20, 5, 12, 0, 0, -1))
     assert path.exists()
 
 
@@ -364,11 +366,11 @@ def test_the_sync_program_says_whether_the_players_fights_come_through_the_comba
 
     fight(now - 9000, 20, 0)                            # before this version kept track: not held against anyone
     c = extras.combat_log_check(q, now - 5000)
-    assert c["state"] == "waiting" and combat_text(c)["banner"].startswith("⚠")                 # nothing fought yet: still reminded
+    assert c["state"] == "waiting" and combat_text(c)["banner"] is None     # nothing fought yet: nothing to say
     fight(now - 3000, 20, 1)                            # the addon saw a fight; the log had nothing then
     c = extras.combat_log_check(q, now)
     assert (c["state"], c["missed"]) == ("missing", 1) and combat_text(c)["row"] == "✗ 沒收到"
-    assert "/adventure combatlog auto" in combat_text(c)["banner"]
+    assert "/adventure combatlog on" in combat_text(c)["banner"]   # "auto" switches; "on" only ever switches on
     mine(now - 1200)                                    # switched on, and the player hit something
     fight(now - 1190, 15, 2)
     c = extras.combat_log_check(q, now)
@@ -382,6 +384,16 @@ def test_the_sync_program_says_whether_the_players_fights_come_through_the_comba
     assert all(t % 5 == 0 for t in js.loads(q.conn.execute("SELECT value FROM kv WHERE key='combatseen'").fetchone()[0]))
     # fights from long ago say nothing about today's play
     assert extras.combat_log_check(q, now + 2 * 86400)["state"] == "waiting"
+    # Seen in the game: the game writes the file minutes late. A fresh fight with nothing in the
+    # file yet is not held against the log until the file has got past it, or a good while passed.
+    later = now + 5 * 86400
+    fight(later - 120, 10, 4)
+    c = extras.combat_log_check(q, later)
+    assert c["state"] == "checking" and c["missed"] == 0 and combat_text(c)["banner"] is None
+    extras.kv_set(q, extras.READ, later - 60)          # the file has caught up past it: no fight in it
+    assert extras.combat_log_check(q, later)["state"] == "missing"
+    extras.kv_set(q, extras.READ, later - 200)
+    assert extras.combat_log_check(q, later + extras.SETTLE)["state"] == "missing"
 
 
 def test_an_unchanged_folder_costs_one_look(tmp_path, monkeypatch):

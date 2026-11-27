@@ -566,9 +566,13 @@ def test_combat_log_is_not_used_and_pet_kills_count():
     assert [k.killed_by for k in of(g, "MOB_KILLED")] == ["鈴", None]
 
 
+# someone who switched the automatic combat log off with the command
+NO_AUTO = "AdventureCollectorDB = { settings = { combatLogAuto = false, combatLogAutoChosen = true } } "
+
+
 def test_says_when_the_combat_log_is_off_on_coming_into_the_game_and_only_then():
     said = lambda g: [line for line in g.mock.out.values() if "戰鬥紀錄" in line]   # noqa: E731
-    box = "StaticPopupDialogs = {} SHOWN = {} function StaticPopup_Show(which) SHOWN[#SHOWN + 1] = which end "
+    box = NO_AUTO + "StaticPopupDialogs = {} SHOWN = {} function StaticPopup_Show(which) SHOWN[#SHOWN + 1] = which end "
     g = Game()
     g.lua.execute(box)
     g.login()
@@ -590,7 +594,7 @@ def test_says_when_the_combat_log_is_off_on_coming_into_the_game_and_only_then()
     assert not said(g) and g.lua.eval("#SHOWN") == 0
     assert "請確認" in g.slash("combatlog")[-1]                           # asked for: answered all the same
     # on already, told to keep quiet, or a client that will not say: nothing is said
-    for prepare in ("MOCK.logging = true", "AdventureCollectorDB = { settings = { combatLogRemind = false } }", "MOCK.nologging = true"):
+    for prepare in ("MOCK.logging = true", "AdventureCollectorDB.settings.combatLogRemind = false", "MOCK.nologging = true"):
         g = Game()
         g.lua.execute(box + prepare)
         g.login()
@@ -598,7 +602,7 @@ def test_says_when_the_combat_log_is_off_on_coming_into_the_game_and_only_then()
 
 
 def test_the_dialogs_button_switches_the_combat_log_on_and_never_off():
-    box = "StaticPopupDialogs = {} function StaticPopup_Show() end function ChatFrame_OpenChat(t) TYPED = t end "
+    box = NO_AUTO + "StaticPopupDialogs = {} function StaticPopup_Show() end function ChatFrame_OpenChat(t) TYPED = t end "
     last = lambda g: list(g.mock.out.values())[-1]                       # noqa: E731
     g = Game()
     g.lua.execute(box)
@@ -625,15 +629,42 @@ def test_the_dialogs_button_switches_the_combat_log_on_and_never_off():
     assert g.db.settings.combatLogRemind is False
 
 
-def test_the_combat_log_can_be_switched_on_at_every_login():
-    g = Game()
+def test_the_combat_log_is_switched_on_at_every_login():
+    said = lambda g: [line for line in g.mock.out.values() if "戰鬥紀錄" in line]   # noqa: E731
+    g = Game()                                                           # a new installation
     g.login()
+    assert g.mock.logging is True and g.db.settings.combatLogAuto is True and "已開啟" in said(g)[-1]
+    # Seen in the game: logged out for being idle, and back in without the log. 0.3.0 stored its
+    # "off" default like a choice: that becomes on.
+    g = Game()
+    g.lua.execute("AdventureCollectorDB = { settings = { combatLogAuto = false } }")
+    g.login()
+    assert g.mock.logging is True and g.db.settings.combatLogAuto is True
+    # The game may answer "on" while it is not, or "off" while it is: switched on all the same,
+    # which changes nothing when it already was (only /combatlog toggles).
+    g = Game()
+    g.lua.execute("MOCK.logging = true")
+    g.login()
+    assert g.mock.logging is True
+    # saving reloads the interface: switched on again, without a word
+    g = Game()
+    g.load_addon()
+    g.fire("PLAYER_ENTERING_WORLD", False, True)
+    g.fire("PLAYER_LOGIN")
+    assert g.mock.logging is True and not said(g)
+    # switched off with the command: kept off, and "on" brings it back whatever the state was
+    g = Game()
+    g.lua.execute(NO_AUTO)
+    g.login()
+    assert not g.mock.logging                                         # never switched
     g.slash("combatlog auto")
     assert g.mock.logging is True and g.db.settings.combatLogAuto is True
-    g = Game()                                                           # the next time the game is started
-    g.lua.execute("AdventureCollectorDB = { settings = { combatLogAuto = true } }")
-    g.login()
-    assert g.mock.logging is True and "已替你開啟" in list(g.mock.out.values())[-1]
+    g.slash("combatlog auto")
+    assert g.db.settings.combatLogAuto is False and "combatlog on" in said(g)[-1]
+    g.lua.execute("MOCK.logging = true")
+    g.slash("combatlog on")
+    g.slash("combatlog on")                                              # typed twice: still on
+    assert g.mock.logging is True and g.db.settings.combatLogAuto is True
 
 
 def test_blocked_calls_are_recorded_even_before_login():
