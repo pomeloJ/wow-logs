@@ -252,7 +252,12 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
                     for name, amount in _amounts(table):
                         total[name or me] += amount           # "" stands for the recorder
                 if _amounts(p.get("damage")):
-                    minutes.append([r["timestamp"], {name or me: a for name, a in _amounts(p.get("damage"))}])
+                    # a minute can come in two parts (the game wrote the rest of it late): one point
+                    if minutes and minutes[-1][0] == r["timestamp"]:
+                        for name, a in _amounts(p.get("damage")):
+                            minutes[-1][1][name or me] = minutes[-1][1].get(name or me, 0) + a
+                    else:
+                        minutes.append([r["timestamp"], {name or me: a for name, a in _amounts(p.get("damage"))}])
                 for name, table in (p.get("spells") or {}).items() if isinstance(p.get("spells"), dict) else []:
                     for spell, amount in _amounts(table):
                         spells.setdefault(name or me, Counter())[spell] += amount

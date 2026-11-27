@@ -248,6 +248,10 @@ class Meter:
         self.last: Optional[float] = state.get("last")               # when damage was last dealt or taken
         self.enc: Optional[Dict[str, Any]] = state.get("enc")        # the boss fight going on
         self.enc_done: List[List[Any]] = state.get("enc_done") or []
+        # minutes already closed: "character:minute" -> how many parts. The game writes the file
+        # in chunks, so a minute closed for quiet can go on in the next chunk (seen in the game:
+        # 18:15 sent with 53 of its 157 damage, the rest dropped as the same minute again).
+        self.closed: Dict[str, int] = state.get("closed") or {}
         # One row per hit, miss and heal of this pass, for the server's own statistics (not kept
         # between scans). pos is where the line being read starts in the file.
         self.rows: Optional[List[List[Any]]] = None
@@ -263,7 +267,7 @@ class Meter:
                 "bucket": self.bucket, "damage": self.damage, "healing": self.healing,
                 "taken": self.taken, "spells": self.spells, "best": self.best, "fight": self.fight,
                 "hits": self.hits, "over": self.over, "hurt": self.hurt, "cc": self.cc,
-                "last": self.last, "enc": self.enc, "enc_done": self.enc_done}
+                "last": self.last, "enc": self.enc, "enc_done": self.enc_done, "closed": self.closed}
 
     def named(self, who: str) -> str:
         """The name for a pet's owner that was not known yet when the pet acted."""
@@ -294,6 +298,11 @@ class Meter:
             more = {"taken": self._named(self.taken), "spells": spells, "best": best, "fight": round(self.fight),
                     "hits": pairs(self.hits), "over": self._named(self.over), "hurt": self.hurt,
                     "cc": pairs(self.cc), "me": self.me}
+            key = f"{self.me}:{self.bucket}"
+            more["part"] = self.closed[key] = self.closed.get(key, 0) + 1
+            if len(self.closed) > 120:              # an hour or two back is plenty
+                for k in sorted(self.closed, key=lambda k: int(k.rsplit(":", 1)[1]))[:-120]:
+                    del self.closed[k]
             self.done.append((self.bucket, self._named(self.damage), self._named(self.healing), more))
         self.bucket, self.damage, self.healing = None, {}, {}
         self.taken, self.spells, self.best, self.fight = {}, {}, {}, 0
@@ -761,8 +770,9 @@ def process_combat_logs(game_dir: Path, db: Any, queue, idle_after: float = 120,
                     if more.get(part):
                         payload[part] = whole(more[part])
                 owner = more.get("me") or character             # the minute is the character's who played it
+                part = more.get("part") or 1                    # the rest of a minute the game wrote late
                 events.append({
-                    "event_id": f"combatlog:{owner}:{minute}", "character_id": owner,
+                    "event_id": f"combatlog:{owner}:{minute}" + (f":{part}" if part > 1 else ""), "character_id": owner,
                     "event_type": "GROUP_METER", "timestamp": iso(minute * 60 + 59), "payload": payload})
             meter.done = []
             for start, end, name, success, seconds, damage, healing, taken, *rest in meter.enc_done:

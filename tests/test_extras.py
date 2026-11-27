@@ -216,6 +216,22 @@ def test_no_log_folder_or_unknown_owner(tmp_path):
     assert queued(q)[0]["character_id"] == ME and queued(q)[0]["payload"]["damage"] == {"小鈴": 80}
 
 
+def test_the_rest_of_a_minute_written_late_is_counted_too(tmp_path):
+    # Seen in the game: the game writes its file in chunks. A minute closed after two quiet minutes
+    # went on in the next chunk, and the rest of it was dropped as that same minute again.
+    g, q = game(tmp_path), Queue(":memory:")
+    write_log(g, [f"11/22/2026 20:05:10.000  SWING_DAMAGE,{P},{MOB},53,-1,1,0,0,0,nil,nil,nil"], age=300)
+    assert extras.process_combat_logs(g, DB, q) == 1                      # quiet for a while: the minute is over
+    write_log(g, [f"11/22/2026 20:05:40.000  SWING_DAMAGE,{P},{MOB},104,-1,1,0,0,0,nil,nil,nil",
+                  f"11/22/2026 20:06:05.000  SWING_DAMAGE,{P},{MOB},7,-1,1,0,0,0,nil,nil,nil"], age=300, mode="a")
+    assert extras.process_combat_logs(g, DB, q) == 2
+    minutes = sorted((e["event_id"], e["payload"]["damage"][""]) for e in queued(q))
+    first = minutes[0][0]
+    assert [d for _, d in minutes if _.startswith(first)] == [53, 104]     # both parts of 20:05 kept
+    assert sum(d for _, d in minutes) == 53 + 104 + 7 and len({i for i, _ in minutes}) == 3
+    assert any(i == first + ":2" for i, _ in minutes)
+
+
 def test_a_second_character_in_the_same_log_file_gets_its_own_fights(tmp_path):
     # Seen in the game: the log stays on across logging out, the same file goes on, and a second
     # character's play was filed under the first one.
