@@ -525,6 +525,12 @@ def create_app(
         return FileResponse(os.path.join(os.path.dirname(__file__), "dashboard.html"),
                             media_type="text/html", headers={"Cache-Control": "no-cache"})
 
+    @app.get("/share/{link}", include_in_schema=False)
+    def shared_dashboard(link: str):
+        # The same page for a sharing link: it reads the token from the address and keeps it
+        # there, so the address can be passed on as is. Old /#token= links still work too.
+        return dashboard()
+
     @app.get("/api/v1/token")
     def token_info(info: Dict[str, Any] = Depends(whose)):
         """Lets the sync program check a token before it uploads with it."""

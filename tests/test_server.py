@@ -102,6 +102,10 @@ def test_dashboard_page_is_served_without_data(client):
     r = client.get("/")
     assert r.status_code == 200 and "Adventure Hub" in r.text
     assert "text/html" in r.headers["content-type"]
+    # a sharing link written as /share/TOKEN is the same page, which reads the token from the address
+    shared = client.get("/share/abcdEFGH_1234-xyz")
+    assert shared.status_code == 200 and shared.text == r.text
+    assert shared.headers["referrer-policy"] == "no-referrer"   # the token in the address is not passed on
 
 
 def test_map_image_roundtrip(client):

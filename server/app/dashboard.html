@@ -434,8 +434,16 @@ function takeInvite() {
   return true;
 }
 // Opening a link in a tab that already shows the page changes only the "#": start over with it.
-window.addEventListener("hashchange", () => { try { if (takeInvite() || takeToken()) location.reload(); } catch (e) { /* storage unavailable */ } });
-try {
+window.addEventListener("hashchange", () => {
+  if (SHARED) return;
+  try { if (takeInvite() || takeToken()) location.reload(); } catch (e) { /* storage unavailable */ }
+});
+// A sharing link written as /share/TOKEN: the token is used for this page only. It stays in
+// the address (so it can be passed on), is never stored, and leaves this browser's own
+// token and Google sign-in as they were.
+const SHARED = (location.pathname.match(/^\/share\/([A-Za-z0-9_-]{8,})\/?$/) || [])[1] || "";
+if (SHARED) token = SHARED;
+else try {
   takeInvite();
   takeToken();
   token = localStorage.getItem(KEY) || "";
@@ -497,6 +505,14 @@ function showLogin(failed, me) {
   document.getElementById("logout").hidden = true;
   document.getElementById("tokens").hidden = true;
   document.getElementById("friends").hidden = true;
+  if (SHARED) {                                     // a sharing link that no longer works: no form to type into
+    state.friend = null;
+    document.getElementById("sync").textContent = "";
+    app.replaceChildren(el("div", { class: "card login" }, el("h2", { text: "分享連結無法使用" }),
+      el("div", { class: "detail", text: "這個分享連結可能已被刪除或重新產生，請向分享給你的人要新的連結。" }),
+      el("a", { href: "/", text: "到首頁登入自己的帳號" })));
+    return;
+  }
   state.friend = null;
   document.getElementById("sync").textContent = "";
   const binding = !!(me && me.account && !me.link);
@@ -704,7 +720,7 @@ async function tokensPanel() {
     if (!d.view.length) share.append(empty("還沒有分享用權杖。"));
     const partName = Object.fromEntries(d.parts.map(p => [p.key, p.name]));
     for (const v of d.view) {
-      const link = location.origin + "/#token=" + encodeURIComponent(v.token);
+      const link = location.origin + "/share/" + encodeURIComponent(v.token);
       const name = v.label || "（沒有名稱）";
       const boxes = d.parts.map(p => { const c = el("input", { type: "checkbox", value: p.key }); c.checked = v.sections.includes(p.key); return [p, c]; });
       const editor = el("div", { class: "parts" }, ...boxes.map(([p, c]) => el("label", null, c, p.name)),
@@ -917,6 +933,7 @@ async function friendsPanel() {
 }
 
 document.getElementById("logout").addEventListener("click", async () => {
+  if (SHARED) { location.href = "/"; return; }     // leaving a sharing link: back to this browser's own page
   try { localStorage.removeItem(KEY); } catch (e) { /* nothing stored */ }
   token = "";
   state.friend = null;
