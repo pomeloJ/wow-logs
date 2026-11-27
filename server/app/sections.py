@@ -46,7 +46,7 @@ ROUTES = {
     f"{P}/characters/{{character_id}}/groups/{{group_id}}/skills": "groups",
     f"{P}/characters/{{character_id}}/groups/{{group_id}}/analysis": "groups",
     f"{P}/characters/{{character_id}}/combat/skills": "groups", f"{P}/characters/{{character_id}}/combat/analysis": "groups",
-    f"{P}/combat/npcs": "groups",
+    f"{P}/combat/npcs": "groups", f"{P}/characters/{{character_id}}/threat": "groups",
     f"{P}/screenshots": "screenshots", f"{P}/screenshots/{{shot_id}}/image": "screenshots",
     f"{P}/screenshots/{{shot_id}}/thumb": "screenshots", f"{P}/characters/{{character_id}}/screenshots/latest": "screenshots",
     f"{P}/characters/{{character_id}}/screenshots/latest/image": "screenshots",
@@ -65,7 +65,8 @@ EVENTS = {
     "items": {"ITEM_LOOTED", "MONEY_CHANGED", "PARTY_LOOT"},
     "quests": {"QUEST_ACCEPTED", "QUEST_COMPLETED", "QUEST_REMOVED"},
     "groups": {"GROUP_JOINED", "GROUP_LEFT", "GROUP_MEMBER_JOINED", "GROUP_MEMBER_LEFT", "PARTY_MEMBER_DIED",
-               "GROUP_MEMBER_LEVEL_UP", "GROUP_METER", "GROUP_ENCOUNTER", "ENCOUNTER_END", "PARTY_LOOT", "PARTY_POSITIONS"},
+               "GROUP_MEMBER_LEVEL_UP", "GROUP_METER", "GROUP_ENCOUNTER", "ENCOUNTER_END", "PARTY_LOOT", "PARTY_POSITIONS",
+               "THREAT"},
     "screenshots": {"MAP_SCREENSHOT"},
 }
 PLACE = ("map_id", "x", "y", "zone_name", "sub_zone")      # taken out of event payloads when location is hidden

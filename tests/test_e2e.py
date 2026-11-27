@@ -126,3 +126,29 @@ def test_map_screenshot_is_cropped_and_uploaded(tmp_path, client):
     client.put("/api/v1/maps/1436/image", content=b"\xff\xd8\xff" + b"0" * 10, headers=AUTH)
     scan(cfg, queue, {}, up)
     assert len(client.get("/api/v1/maps/1436/image", headers=AUTH).content) == 13
+
+
+def test_threat_readings_reach_the_server_whole(tmp_path, client):
+    from test_addon import THREAT_MOCK
+    wow = tmp_path / "wow"
+    sv = wow / "_forever_" / "WTF" / "Account" / "1#1" / "SavedVariables" / "AdventureCollector.lua"
+    cfg = Config(url="http://testserver", api_token=TOKEN, device_id="mac-main",
+                 wow_path=str(wow), batch_size=50, db_path=str(tmp_path / "queue.db"))
+    game = Game()
+    game.login()
+    game.lua.execute(THREAT_MOCK)
+    game.lua.execute('MOCK.targetGuid = "Creature-0-1-1-1-1234-00000A" MOCK.targetName = "灰霧戰士"')
+    game.fire("PLAYER_REGEN_DISABLED")
+    for i, value in enumerate((50, 200, 420)):
+        game.lua.execute(f"MOCK.clock = {1000 + 2 * i} MOCK.threat.player = {{ true, 3, 100, 100, {value} }}")
+        game.fire("UNIT_THREAT_LIST_UPDATE", "target")
+    game.mock.time += 4
+    game.fire("PLAYER_REGEN_ENABLED")
+    game.logout(sv)
+    queue = Queue(cfg.db_path)
+    scan(cfg, queue, {})
+    assert Uploader(cfg, queue, client).sync_once()["error"] is None
+    [f] = client.get(f"/api/v1/characters/{CHAR}/threat", headers=AUTH).json()["fights"]
+    assert f["mob_name"] == "灰霧戰士" and f["duration"] == 4.0
+    [me] = f["units"]
+    assert me["is_me"] and me["name"] == "測試德魯伊" and me["final_threat"] == 420 and me["peak_tps"] == 92.5

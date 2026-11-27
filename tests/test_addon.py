@@ -751,3 +751,83 @@ def test_the_bank_is_read_while_its_window_is_open_and_kept_afterwards():
     assert g.db.characters[CHAR].data.bank.slots == 4
     g.fire("BANKFRAME_OPENED")                                           # open, yet nothing readable: kept too
     assert g.db.extra[CHAR].bank.slots == 4 and "no slots" in g.db.debug.bank
+
+
+THREAT_MOCK = r"""
+local guid, name, exists = UnitGUID, UnitName, UnitExists
+function UnitGUID(u) if u == "target" then return MOCK.targetGuid end return guid(u) end
+function UnitName(u) if u == "target" then return MOCK.targetName end return name(u) end
+function UnitExists(u)
+    if u == "target" then return MOCK.targetGuid ~= nil end
+    if u == "party1" then return MOCK.grouped end
+    return exists(u)
+end
+function GetTime() return MOCK.clock end
+-- isTanking, status, scaledPercent, rawPercent, threatValue, as the game answers
+function UnitDetailedThreatSituation(u, t)
+    local r = t == "target" and MOCK.threat[u]
+    if not r then return nil end
+    return r[1], r[2], r[3], r[4], r[5]
+end
+MOCK.clock, MOCK.threat = 1000, {}
+"""
+
+
+def threat_events(g):
+    return [dict(e["payload"]) for e in g.events() if e["event_type"] == "THREAT"]
+
+
+def test_threat_is_read_from_the_game_during_a_fight_and_kept_per_enemy():
+    g = Game()
+    g.login()
+    g.lua.execute(THREAT_MOCK)
+    g.mock.party[1] = g.lua.table_from({"name": "波波", "class": "WARRIOR", "level": 24, "guid": "Player-1-0000B0B0"})
+    g.mock.grouped = True
+    g.lua.execute('MOCK.targetGuid = "Creature-0-1-1-1-1234-00000A" MOCK.targetName = "灰霧戰士"')
+    g.fire("PLAYER_TARGET_CHANGED")
+    g.fire("PLAYER_REGEN_DISABLED")
+    g.lua.execute('MOCK.threat.player = { true, 3, 100, 255, 120 } MOCK.threat.party1 = { false, 0, 50, 45, 60 }')
+    g.fire("UNIT_THREAT_LIST_UPDATE", "target")
+    g.lua.execute('MOCK.clock = 1000.2 MOCK.threat.player = { true, 3, 100, 100, 150 }')
+    g.fire("UNIT_THREAT_LIST_UPDATE", "target")        # too soon after the last reading: held back
+    g.fire("UNIT_THREAT_LIST_UPDATE", "nameplate3")    # another enemy's list: not the target
+    g.lua.execute('MOCK.clock = 1003 MOCK.threat.player = { false, 1, 95, 105, 300 } '
+                  'MOCK.threat.party1 = { true, 3, 100, 100, 310 }')
+    g.fire("UNIT_THREAT_LIST_UPDATE", "target")        # 波波 takes it over
+    g.lua.execute('MOCK.clock = 1003.1 MOCK.threat.party1 = { true, 3, 100, 100, 330 }')
+    g.fire("UNIT_THREAT_LIST_UPDATE", "target")        # held back, written at the end
+    g.fire("PLAYER_REGEN_ENABLED")
+    [t] = threat_events(g)
+    assert (t["mob_guid"], t["mob_name"]) == ("Creature-0-1-1-1-1234-00000A", "灰霧戰士")
+    units = [dict(u) for u in t["units"].values()]
+    assert [u["name"] for u in units] == ["", "波波"] and units[1]["guid"] == "Player-1-0000B0B0"
+    assert t["samples"].split(";") == ["0.0,1,120,100,100,3", "0.0,2,60,50,45,0", "3.0,1,300,95,105,1",
+                                       "3.0,2,310,100,100,3", "3.1,2,330,100,100,3"]
+    assert t.get("cut") is None
+    assert g.db.debug.threat["values"] == 8 and g.db.debug.threat.fights == 1 and g.db.debug.threat.api is True
+    # out of combat nothing is read, and a fight without readings leaves no THREAT event
+    g.fire("UNIT_THREAT_LIST_UPDATE", "target")
+    g.lua.execute("MOCK.threat = {}")
+    g.fire("PLAYER_REGEN_DISABLED")
+    g.fire("UNIT_THREAT_LIST_UPDATE", "target")
+    g.fire("PLAYER_REGEN_ENABLED")
+    assert len(threat_events(g)) == 1
+    assert "仇恨讀取" in g.slash("threat")[-2]
+
+
+def test_secret_threat_values_are_left_out_and_counted():
+    g = Game()
+    g.login()
+    g.lua.execute(THREAT_MOCK)
+    g.lua.execute('MOCK.secret = "S" MOCK.targetGuid = "S" MOCK.targetName = "S"')
+    g.fire("PLAYER_TARGET_CHANGED")
+    g.fire("PLAYER_REGEN_DISABLED")
+    g.lua.execute('MOCK.threat.player = { true, 3, 100, 100, 80 }')    # the target hidden, the figures not
+    g.fire("UNIT_THREAT_LIST_UPDATE", "target")
+    g.lua.execute('MOCK.clock = 1002 MOCK.threat.player = { true, 3, 100, 100, "S" }')
+    g.fire("UNIT_THREAT_LIST_UPDATE", "target")
+    g.fire("PLAYER_REGEN_ENABLED")
+    [t] = threat_events(g)
+    assert t.get("mob_guid") is None and t.get("mob_name") is None and t["samples"] == "0.0,1,80,100,100,3"
+    d = g.db.debug.threat
+    assert d.secret == 1 and d.secret_mob == 3 and d["values"] == 1

@@ -431,7 +431,7 @@ def register(app, db, can_write, activity: Callable, world=None, claim=lambda wr
                          + (f"，值 {money(x['value'])}" if x.get("value") else "") for x in rows],
                         "這段時間沒有紀錄。")
             elif s == "events":
-                where, args = ["character_id=?", "event_type NOT IN ('LOCATION_SAMPLE','CHAT_MESSAGE','PARTY_POSITIONS','GROUP_METER','GROUP_ENCOUNTER')"], [cid]
+                where, args = ["character_id=?", "event_type NOT IN ('LOCATION_SAMPLE','CHAT_MESSAGE','PARTY_POSITIONS','GROUP_METER','GROUP_ENCOUNTER','THREAT')"], [cid]
                 if type:
                     where.append("event_type=?")
                     args.append(type.strip().upper())

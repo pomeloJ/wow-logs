@@ -138,6 +138,8 @@ limited token ever shows chat messages. `GET /api/v1/token` says what a token is
 * group play: `/characters/{id}/groups`, then `/groups/{group_id}` (or `latest`) and its `/skills` and `/analysis`
 * fighting alone: `/characters/{id}/solo` lists the stretches; their ids work with the same `/groups/{group_id}...` endpoints
 * combat outside a group: `/characters/{id}/combat/skills` and `/combat/analysis`
+* threat (the game's own figures, per enemy and fight: threat per second, ranking, who held the enemy when):
+  `/characters/{id}/threat` with `start_time` / `end_time`, e.g. a group's or a solo stretch's times
 * the game world (quests, monsters, items): everything under `/world`
 * maps and finding the way: `/world/map` (a map's picture, its size and how percent positions map to its
   pixels and to yards), `/world/route` (a suggested way from the character to a point, an NPC, an object
@@ -193,7 +195,7 @@ def section_of(path: str, method: str) -> str:
         return names["Characters"]
     if method.lower() != "get":
         return names["Uploads"]
-    for piece, name in (("/solo", "Groups"), ("/groups", "Groups"), ("/shared/party", "Groups"), ("/combat", "Combat"), ("/world", "World"),
+    for piece, name in (("/solo", "Groups"), ("/groups", "Groups"), ("/shared/party", "Groups"), ("/combat", "Combat"), ("/threat", "Combat"), ("/world", "World"),
                         ("/screenshots", "Images"), ("/maps", "Images"), ("/characters", "Characters"),
                         ("/events", "Events"), ("/locations", "Events"), ("/stats", "Events")):
         if piece in path:
@@ -969,4 +971,6 @@ def create_app(
     navigate.register(app, db, world, can_read, maps_dir)
     from . import items
     items.register(app, db, can_read, world)
+    from . import threat
+    threat.register(app, db, can_read)
     return app

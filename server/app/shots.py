@@ -70,7 +70,7 @@ class Shots:
         at = _dt(row["taken_at"])
         near = conn.execute(
             "SELECT event_type, timestamp, payload_json FROM events WHERE character_id=? AND timestamp>=? "
-            "AND timestamp<=? AND event_type NOT IN ('CHAT_MESSAGE','PARTY_POSITIONS','GROUP_METER','GROUP_ENCOUNTER')",
+            "AND timestamp<=? AND event_type NOT IN ('CHAT_MESSAGE','PARTY_POSITIONS','GROUP_METER','GROUP_ENCOUNTER','THREAT')",
             (row["character_id"], _fmt(at - timedelta(minutes=10)), _fmt(at + timedelta(minutes=10)))).fetchall()
         place: Optional[Dict[str, Any]] = None
         moment: Optional[str] = None

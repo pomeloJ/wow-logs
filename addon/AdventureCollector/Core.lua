@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.3.3"
+local VERSION = "0.3.4"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -1060,11 +1060,197 @@ function handlers.CHAT_MSG_SKILL(text)
     dirty.professions = true
 end
 
+-- ------------------------------------------------------------ threat
+-- The game's own threat figures (UnitDetailedThreatSituation), never a formula of ours: while
+-- in combat, each time the threat list of the current target changes, the player's, the
+-- pet's and every group member's standing on that target is read. At the end of the fight one
+-- THREAT event per enemy holds the readings, for the server to work out threat per second,
+-- the ranking and who held the enemy when.
+-- Limits of the client, taken as they are: only the current target can be read (not the
+-- target's target), only in combat, and anything the client hands back as a secret value is
+-- left out. db.debug.threat counts what came back, to see in the saved file what this client
+-- allows.
+-- A reading is one row "t,u,threat,pct,raw,status": seconds since the fight began, the unit's
+-- place in `units`, raw threat, percent of what pulls aggro, raw percent of the tank's threat,
+-- and the game's status (0 low, 1 above the tank, 2 tanking but not securely, 3 tanking).
+local THREAT_STEP = 0.5        -- seconds: a unit is read at most this often, unless its status changes
+local THREAT_ROWS = 600        -- per enemy and fight; a longer fight keeps its first rows and says so
+local threatFight, threatSerial = nil, 0
+local threatSeen = { reads = 0, values = 0, secret = 0, none = 0, secret_mob = 0, fights = 0 }
+
+local function clock()
+    local t = plain(safe(GetTime))
+    return type(t) == "number" and t or now()
+end
+
+local function threatUnits()
+    local list = { "player", "pet" }
+    if plain(safe(IsInRaid)) then
+        local n = plain(safe(GetNumGroupMembers))
+        for i = 1, type(n) == "number" and n or 0 do
+            list[#list + 1] = "raid" .. i
+            list[#list + 1] = "raidpet" .. i
+        end
+    elseif plain(safe(IsInGroup)) then
+        for i = 1, 4 do
+            list[#list + 1] = "party" .. i
+            list[#list + 1] = "partypet" .. i
+        end
+    end
+    return list
+end
+
+local function threatRow(mob, idx, t, figures, status)
+    local prev = mob.last[idx]
+    local row = t .. "," .. idx .. "," .. figures
+    if prev and prev.figures == figures then
+        mob.pending[idx] = nil                   -- nothing new since the last row written
+        return
+    end
+    if prev and mob.t - prev.t < THREAT_STEP and prev.status == status then
+        mob.pending[idx] = row                   -- too soon: kept, written if nothing newer comes
+        return
+    end
+    mob.pending[idx] = nil
+    mob.last[idx] = { t = mob.t, figures = figures, status = status }
+    if #mob.rows < THREAT_ROWS then mob.rows[#mob.rows + 1] = row else mob.cut = true end
+end
+
+local function sampleThreat()
+    if not threatFight or type(UnitDetailedThreatSituation) ~= "function" then return end
+    if not plain(safe(UnitExists, "target")) then return end
+    local guid = safe(UnitGUID, "target")
+    local key
+    if isSecret(guid) then
+        threatSeen.secret_mob = threatSeen.secret_mob + 1
+        key, guid = "secret-" .. threatSerial, nil
+    elseif type(guid) == "string" then
+        key = guid
+    else
+        return
+    end
+    local mob = threatFight.mobs[key]
+    if not mob then
+        local name = plain(safe(UnitName, "target"))
+        mob = { guid = guid, name = type(name) == "string" and name or (guid and seenNames[guid]), units = {},
+                index = {}, rows = {}, last = {}, pending = {} }
+        threatFight.mobs[key] = mob
+        threatFight.order[#threatFight.order + 1] = key
+    end
+    mob.t = clock() - threatFight.start
+    local t = string.format("%.1f", mob.t)
+    local me = plain(safe(UnitName, "player"))
+    for _, unit in ipairs(threatUnits()) do
+        if plain(safe(UnitExists, unit)) then
+            threatSeen.reads = threatSeen.reads + 1
+            local tanking, status, pct, raw, value = safe(UnitDetailedThreatSituation, unit, "target")
+            if isSecret(tanking) or isSecret(status) or isSecret(pct) or isSecret(raw) or isSecret(value) then
+                threatSeen.secret = threatSeen.secret + 1
+            elseif type(value) ~= "number" then
+                threatSeen.none = threatSeen.none + 1          -- not on this enemy's threat list
+            else
+                threatSeen.values = threatSeen.values + 1
+                local who = plain(safe(UnitGUID, unit)) or unit
+                local idx = mob.index[who]
+                if not idx then
+                    local name = plain(safe(UnitName, unit))
+                    local pet = unit:find("pet") and true or nil
+                    -- the player is "", as in the meter rows; others by name
+                    if unit == "player" or (not pet and name == me) then name = "" end
+                    mob.units[#mob.units + 1] = { guid = plain(safe(UnitGUID, unit)), name = name, pet = pet }
+                    idx = #mob.units
+                    mob.index[who] = idx
+                end
+                status = type(status) == "number" and status or 0
+                -- seen in this game: whoever holds the enemy reads a raw percent of 255 (it is
+                -- measured against the tank, that is against itself); the holder is 100 of both
+                if tanking == true or status >= 2 then pct, raw = 100, 100 end
+                threatRow(mob, idx, t, string.format("%d,%d,%d,%d", math.floor(value + 0.5),
+                    math.floor((type(pct) == "number" and pct or 0) + 0.5),
+                    math.floor((type(raw) == "number" and raw or 0) + 0.5), status), status)
+            end
+        end
+    end
+end
+
+local function startThreat()
+    threatFight = { start = clock(), at = now(), mobs = {}, order = {} }
+    sampleThreat()
+end
+
+local function finishThreat()
+    local fight = threatFight
+    threatFight = nil
+    if not fight or not charId then return end
+    for _, key in ipairs(fight.order) do
+        local mob = fight.mobs[key]
+        for idx = 1, #mob.units do      -- the last reading of each unit, if it came too soon to be written
+            if mob.pending[idx] and #mob.rows < THREAT_ROWS then mob.rows[#mob.rows + 1] = mob.pending[idx] end
+        end
+        if #mob.rows > 0 then
+            addEvent("THREAT", { mob_guid = mob.guid, mob_name = mob.name, started = fight.at,
+                duration = now() - fight.at, units = mob.units, samples = table.concat(mob.rows, ";"),
+                cut = mob.cut })
+        end
+    end
+    threatSeen.fights = threatSeen.fights + 1
+    if db then
+        if type(db.debug) ~= "table" then db.debug = {} end
+        local d = {}
+        for k, v in pairs(threatSeen) do d[k] = v end
+        d.api = type(UnitDetailedThreatSituation) == "function"
+        d.at = now()
+        db.debug.threat = d
+    end
+end
+
+function handlers.UNIT_THREAT_LIST_UPDATE(unit)
+    if unit == "target" then sampleThreat() end
+end
+
+function handlers.UNIT_THREAT_SITUATION_UPDATE() sampleThreat() end
+
+-- A new target is a new threat list. Its GUID may come back secret, so each target gets its
+-- own number to keep enemies whose GUID was hidden apart.
+local seenTarget = handlers.PLAYER_TARGET_CHANGED
+function handlers.PLAYER_TARGET_CHANGED()
+    seenTarget()
+    threatSerial = threatSerial + 1
+    sampleThreat()
+end
+
+-- What the client answers about the current target right now, for /adventure threat.
+local function threatStatus()
+    if type(UnitDetailedThreatSituation) ~= "function" then
+        say("這個遊戲版本沒有仇恨 API (UnitDetailedThreatSituation)")
+        return
+    end
+    say(string.format("仇恨讀取：讀 %d 次，有數值 %d，不在仇恨表 %d，被遊戲隱藏 %d（目標被隱藏 %d），已記錄 %d 場戰鬥",
+        threatSeen.reads, threatSeen.values, threatSeen.none, threatSeen.secret, threatSeen.secret_mob, threatSeen.fights))
+    if not plain(safe(UnitExists, "target")) then
+        say("選一個在打的怪再輸入一次，可以看到現在讀到的仇恨")
+        return
+    end
+    local tanking, status, pct, raw, value = safe(UnitDetailedThreatSituation, "player", "target")
+    if isSecret(value) or isSecret(pct) then
+        say("目前目標：遊戲把仇恨數值設為隱藏，插件讀不到")
+    elseif type(value) ~= "number" then
+        say("目前目標：你不在它的仇恨表上（要在戰鬥中才讀得到）")
+    else
+        say(string.format("目前目標：仇恨 %d，%d%%（原始 %d%%），狀態 %s%s", value, pct or 0, raw or 0,
+            tostring(plain(status)), tanking and "，正在坦" or ""))
+    end
+end
+
 local combatStart
 
-function handlers.PLAYER_REGEN_DISABLED() combatStart = now() end
+function handlers.PLAYER_REGEN_DISABLED()
+    combatStart = now()
+    startThreat()
+end
 
 function handlers.PLAYER_REGEN_ENABLED()
+    finishThreat()
     if not charId or not combatStart then return end
     addEvent("COMBAT", here({ duration = now() - combatStart }))
     combatStart = nil
@@ -1865,6 +2051,8 @@ SlashCmdList.ADVENTURECOLLECTOR = function(msg)
         ns.chatCommand(msg)
     elseif msg == "names" then
         nameProbe()
+    elseif msg == "threat" then
+        threatStatus()
     elseif msg == "on" or msg == "off" then
         if db then
             db.settings.enabled = (msg == "on")
@@ -1913,7 +2101,7 @@ SlashCmdList.ADVENTURECOLLECTOR = function(msg)
     elseif msg == "help" then
         say("/adventure [status] - 狀態;  /adventure save - 立即存檔;  /adventure mapshot - 截目前地圖當底圖;  /adventure aishot [test|reset] - AI 增強截圖 (預設 F12);  /adventure chat - 聊天紀錄設定;  "
             .. "/adventure combatlog - 確認戰鬥紀錄 (on: 開啟並每次登入自動開, auto: 切換自動開 (預設開), quiet: 不提醒);  "
-            .. "/adventure button - 顯示/隱藏存檔按鈕;  "
+            .. "/adventure threat - 仇恨讀取狀態;  /adventure button - 顯示/隱藏存檔按鈕;  "
             .. "/adventure on|off - 啟用/暫停")
     else
         status()

@@ -3,7 +3,7 @@ max_line_length = 180
 globals = { "AdventureCollectorDB", "SlashCmdList", "StaticPopupDialogs", "SLASH_ADVENTURECOLLECTOR1", "SLASH_ADVENTURECOLLECTOR2",
             "AdventureCollector_AIShot", "BINDING_HEADER_ADVENTURECOLLECTOR", "BINDING_NAME_ADVENTURECOLLECTOR_AISHOT" }
 read_globals = {
-    "UnitFullName", "GetUnitName", "GetPlayerInfoByGUID", "C_Spell", "CreateVector2D", "GameTooltip", "GetBindingAction", "GetBindingKey", "GetComboPoints",
+    "UnitFullName", "GetUnitName", "GetPlayerInfoByGUID", "GetTime", "UnitDetailedThreatSituation", "C_Spell", "CreateVector2D", "GameTooltip", "GetBindingAction", "GetBindingKey", "GetComboPoints",
     "GetCurrentBindingSet", "GetNumQuestWatches", "GetPlayerFacing", "GetQuestIndexForWatch", "GetShapeshiftForm", "GetShapeshiftFormInfo",
     "GetSpellInfo", "STANDARD_TEXT_FONT", "SaveBindings", "SetBinding", "UnitAffectingCombat", "UnitClassification",
     "UnitCreatureType", "UnitExists", "UnitHealth", "UnitPower", "UnitPowerType", "UnitReaction",
