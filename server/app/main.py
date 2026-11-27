@@ -316,7 +316,7 @@ def create_app(
         one for a token made by an account bound to the server's own; and the parts of them it
         shows (sections.py; None for all). Looked up only after every other kind of token, so
         none of those changes in any way."""
-        v = conn.execute("SELECT owner, sections, last_used_at FROM view_tokens WHERE token=?", (t,)).fetchone()
+        v = conn.execute("SELECT owner, sections, characters, last_used_at FROM view_tokens WHERE token=?", (t,)).fetchone()
         if v is None:
             return [], None
         if not v["last_used_at"] or v["last_used_at"] < iso(datetime.now(timezone.utc) - timedelta(minutes=10)):
@@ -326,6 +326,9 @@ def create_app(
         else:
             mine = [r["character_id"] for r in conn.execute(
                 "SELECT character_id FROM token_characters WHERE token=? ORDER BY claimed_at, character_id", (v["owner"],))]
+        if v["characters"]:                 # only some of them (NULL: all, later ones too)
+            some = set(json.loads(v["characters"]))
+            mine = [c for c in mine if c in some]
         return mine, sections_mod.parse(v["sections"])
 
     def no_character(status: int, code: str, message: str, character_id: Optional[str]) -> HTTPException:

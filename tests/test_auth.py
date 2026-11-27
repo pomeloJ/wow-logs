@@ -461,3 +461,37 @@ def test_every_read_route_belongs_to_a_part_or_is_always_open(tmp_path):
     unplaced = [r.path for r in app.routes if "GET" in (getattr(r, "methods", None) or ()) and r.path.startswith("/api/v1")
                 and not r.path.startswith(apart) and sections.route_part(r.path) is None]
     assert unplaced == []
+
+
+def test_a_sharing_token_can_show_only_some_characters(tmp_path):
+    web = signed_in(tmp_path)
+    mine = web.post("/api/v1/admin/tokens", json={"label": "小明"}).json()["token"]
+    for cid in ("char-a", "char-b", "char-c"):
+        upload(web, mine, cid)
+    upload(web, TOKEN, "char-other")                     # someone else's
+    web.post("/api/v1/me/link", json={"token": mine})
+    made = web.post("/api/v1/me/tokens", json={"label": "朋友"}).json()
+    share, = made["view"]
+    assert share["characters"] is None and sorted(c["id"] for c in made["owned"]) == ["char-a", "char-b", "char-c"]
+    S = {"Authorization": f"Bearer {made['made']}"}
+    assert seen(web, **S) == ["char-a", "char-b", "char-c"]          # all of them, as every token so far
+    # only some
+    r = web.post("/api/v1/me/tokens/characters", json={"id": share["id"], "characters": ["char-b", "char-a"]})
+    assert r.status_code == 200 and sorted(r.json()["view"][0]["characters"]) == ["char-a", "char-b"]
+    assert seen(web, **S) == ["char-a", "char-b"]
+    left = web.get("/api/v1/characters/char-c/snapshot", headers=S)
+    assert left.status_code == 403 and left.json()["detail"]["error"] == "character_not_authorized"
+    assert sorted(c["id"] for c in web.get("/api/v1/token", headers=S).json()["characters"]) == ["char-a", "char-b"]
+    # never none, never someone else's
+    for wrong in ([], ["char-other"], ["char-a", "nobody"]):
+        assert web.post("/api/v1/me/tokens/characters", json={"id": share["id"], "characters": wrong}).status_code == 400, wrong
+    assert seen(web, **S) == ["char-a", "char-b"]
+    # back to all, later ones included
+    web.post("/api/v1/me/tokens/characters", json={"id": share["id"], "characters": None})
+    upload(web, mine, "char-d")
+    assert seen(web, **S) == ["char-a", "char-b", "char-c", "char-d"]
+    # chosen when made
+    one = web.post("/api/v1/me/tokens", json={"label": "一隻", "characters": ["char-c"]}).json()["made"]
+    assert seen(web, Authorization=f"Bearer {one}") == ["char-c"]
+    assert web.post("/api/v1/me/tokens/characters", json={"id": share["id"], "characters": ["char-a"]},
+                    headers={"origin": "https://evil.example"}).status_code == 403

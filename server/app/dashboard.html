@@ -553,7 +553,7 @@ async function tokensPanel() {
   const call = async (method, path, body) => {
     const r = await fetch(API + "/me/" + path, { method, body: body ? JSON.stringify(body) : undefined,
       headers: body ? { "Content-Type": "application/json" } : {} });
-    if (!r.ok) throw new Error(r.status === 409 ? "已達上限，或這個權杖不能這樣改。" : r.status === 401 ? "Google 登入已過期，請重新登入。"
+    if (!r.ok) throw new Error(r.status === 409 ? "已達上限，或這個權杖不能這樣改。" : r.status === 400 ? "至少要勾選一個自己的角色。" : r.status === 401 ? "Google 登入已過期，請重新登入。"
       : r.status === 403 ? "這個 Google 帳號還沒綁定權杖。" : r.status === 404 ? "找不到這個權杖，請重新打開這個視窗。" : "伺服器回應 " + r.status);
     return r.json();
   };
@@ -604,12 +604,32 @@ async function tokensPanel() {
     // read-only tokens to share
     const share = el("section", { class: "tk" },
       el("div", { class: "tk-head" }, el("h3", { text: "分享用權杖（只能看）" }), el("span", { class: "count", text: `${d.view.length} / ${d.max_view}` })),
-      el("p", { class: "tkhint", text: "把連結給別人看你的冒險紀錄：只能看、不能上傳，聊天內容一律看不到。每個權杖可以各自選擇看得到哪些區塊。" }));
+      el("p", { class: "tkhint", text: "把連結給別人看你的冒險紀錄：只能看、不能上傳，聊天內容一律看不到。每個權杖可以各自選擇看得到哪些角色、哪些區塊。" }));
     if (!d.view.length) share.append(el("div", { class: "tk-empty", text: "還沒有分享用權杖。在下面輸入名稱建立一個。" }));
     const partName = Object.fromEntries(d.parts.map(p => [p.key, p.name]));
+    const owned = d.owned || [];
+    const charText = c => (c.name || c.id) + (c.level ? ` Lv${c.level}` : "");
     for (const v of d.view) {
       const link = location.origin + "/#token=" + encodeURIComponent(v.token);
       const name = v.label || "（沒有名稱）";
+      // which characters it shows: all of them (later ones too), or the ones ticked
+      const every = el("input", { type: "checkbox" });
+      every.checked = v.characters === null;
+      const picks = owned.map(c => { const b = el("input", { type: "checkbox", value: c.id });
+        b.checked = v.characters === null || v.characters.includes(c.id); return [c, b]; });
+      const labels = picks.map(([c, b]) => el("label", null, b, charText(c)));
+      const follow = () => picks.forEach(([, b], i) => { b.disabled = every.checked; labels[i].classList.toggle("off", every.checked); });
+      every.addEventListener("change", follow);
+      follow();
+      const who = el("div", { class: "parts" }, el("label", null, every, "全部角色（包含之後新增的）"), ...labels,
+        el("div", { class: "parts-acts" }, button2("取消", () => { who.hidden = true; }),
+          button2("儲存", () => {
+            const ids = every.checked ? null : picks.filter(([, b]) => b.checked).map(([c]) => c.id);
+            if (ids && !ids.length) { say.textContent = "至少要勾選一個角色。"; return; }
+            act("POST", "tokens/characters", { id: v.id, characters: ids });
+          }, "go")));
+      who.hidden = true;
+      const whoShown = v.characters === null ? ["全部角色"] : owned.filter(c => v.characters.includes(c.id)).map(charText);
       const boxes = d.parts.map(p => { const c = el("input", { type: "checkbox", value: p.key }); c.checked = v.sections.includes(p.key); return [p, c]; });
       const editor = el("div", { class: "parts" }, ...boxes.map(([p, c]) => el("label", null, c, p.name)),
         el("span", { class: "always", text: "角色的名字、職業、等級與經驗一律看得到；聊天內容一律看不到。" }),
@@ -620,11 +640,14 @@ async function tokensPanel() {
       share.append(el("div", { class: "tk-item" + (v.token === fresh ? " fresh" : "") },
         el("div", { class: "tk-title" }, el("b", { text: name }),
           el("span", { class: "tk-meta inline", text: `建立於 ${full(v.created_at)}　·　最後使用 ${when(v.last_used_at)}` })),
+        el("div", { class: "owned" }, el("span", { text: "角色" }), chipsOf(whoShown, "沒有角色"),
+          button2("編輯", () => { who.hidden = !who.hidden; }, "mini")),
+        who,
         el("div", { class: "owned" }, el("span", { text: "可看" }), chipsOf(shown, "只有名字、職業、等級與經驗"),
           button2("編輯", () => { editor.hidden = !editor.hidden; }, "mini")),
         editor,
         el("div", { class: "tk-acts" }, copyButton(link, "複製分享連結", true), copyButton(v.token, "複製權杖"), el("span", { class: "grow" }),
-          button2("重新產生", ask({ title: `重新產生「${name}」的連結？`, text: "舊的分享連結會立刻失效，要把新連結再給對方一次。名稱和可看區塊不變。", ok: "重新產生" },
+          button2("重新產生", ask({ title: `重新產生「${name}」的連結？`, text: "舊的分享連結會立刻失效，要把新連結再給對方一次。名稱、角色和可看區塊不變。", ok: "重新產生" },
             "POST", "tokens/regenerate", { id: v.id })),
           button2("刪除", ask({ title: `刪除「${name}」？`, text: "用這個連結的人會立刻看不到你的冒險紀錄。這個動作不能復原。", ok: "刪除", danger: true },
             "POST", "tokens/delete", { id: v.id }), "bad"))));

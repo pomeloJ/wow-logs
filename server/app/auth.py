@@ -126,6 +126,12 @@ class SectionsIn(BaseModel):
 class NewViewIn(BaseModel):
     label: str = Field("", max_length=40)
     sections: Optional[List[str]] = Field(None, max_length=20)     # left out: parts.SHARE_DEFAULT
+    characters: Optional[List[str]] = Field(None, max_length=200)  # left out: all of them, later ones too
+
+
+class ShownIn(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    characters: Optional[List[str]] = Field(None, max_length=200)  # null: all of them, later ones too
 
 
 MAX_SYNC_TOKENS = 3            # the person's own token and two more, for more computers
@@ -182,6 +188,10 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
     secure = s.get("public_url", "").startswith("https://")
     with db() as conn:
         conn.executescript(SCHEMA)
+        # which of the maker's characters a sharing token shows: a JSON list, or NULL for all of
+        # them, those added later included (what every token made before this column means)
+        if "characters" not in {r[1] for r in conn.execute("PRAGMA table_info(view_tokens)")}:
+            conn.execute("ALTER TABLE view_tokens ADD COLUMN characters TEXT")
 
     def account_of(request: Request) -> Optional[Dict[str, Any]]:
         sid = request.cookies.get(SESSION_COOKIE)
@@ -280,16 +290,40 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
                 names = [r["name"] or r["character_id"] for r in conn.execute(
                     "SELECT o.character_id, c.name FROM token_characters o LEFT JOIN characters c ON c.id=o.character_id "
                     "WHERE o.token=? ORDER BY o.claimed_at", (me,))]
+            owned = owned_by(conn, link)
             view = []
-            for r in conn.execute("SELECT token, label, sections, created_at, last_used_at FROM view_tokens WHERE owner=? "
-                                  "ORDER BY created_at", (owner_key(link),)):
+            for r in conn.execute("SELECT token, label, sections, characters, created_at, last_used_at FROM view_tokens "
+                                  "WHERE owner=? ORDER BY created_at", (owner_key(link),)):
                 shown = parts.parse(r["sections"])
                 view.append({"id": fingerprint(r["token"]), "token": r["token"], "label": r["label"],
                              "created_at": r["created_at"], "last_used_at": r["last_used_at"],
-                             "sections": [k for k, _ in parts.PARTS if shown is None or k in shown]})
+                             "sections": [k for k, _ in parts.PARTS if shown is None or k in shown],
+                             "characters": json.loads(r["characters"]) if r["characters"] else None})
         return {"kind": link["kind"], "sync": sync if link["kind"] == "personal" else None, "characters": names,
-                "view": view, "max_sync": MAX_SYNC_TOKENS, "max_view": MAX_VIEW_TOKENS,
+                "owned": owned, "view": view, "max_sync": MAX_SYNC_TOKENS, "max_view": MAX_VIEW_TOKENS,
                 "parts": [{"key": k, "name": n} for k, n in parts.PARTS]}
+
+    def owned_by(conn, link: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """The characters a sharing token of this account can show: the person's, or every one
+        for an account bound to the server's own token. Newest played first."""
+        if link["kind"] == "personal":
+            rows = conn.execute("SELECT o.character_id id, c.name, c.class, c.level FROM token_characters o "
+                                "LEFT JOIN characters c ON c.id=o.character_id WHERE o.token=? "
+                                "ORDER BY c.updated_at DESC", (link["token"],))
+        else:
+            rows = conn.execute("SELECT id, name, class, level FROM characters ORDER BY updated_at DESC")
+        return [dict(r) for r in rows]
+
+    def picked(conn, link: Dict[str, Any], ids: Optional[List[str]]) -> Optional[str]:
+        """What is stored for the characters a sharing token shows: NULL for all of them, else a
+        non-empty list of this account's own characters."""
+        if ids is None:
+            return None
+        mine = [c["id"] for c in owned_by(conn, link)]
+        wanted = [c for c in mine if c in set(ids)]              # in the account's order, each once
+        if not wanted or len(set(ids)) != len(wanted):
+            raise HTTPException(400, "choose at least one of your own characters")
+        return json.dumps(wanted)
 
     def answer(link: Dict[str, Any], made: Optional[str] = None) -> JSONResponse:
         out = tokens_of(link)
@@ -375,10 +409,21 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
             if conn.execute("SELECT COUNT(*) FROM view_tokens WHERE owner=?", (owner_key(link),)).fetchone()[0] >= MAX_VIEW_TOKENS:
                 raise HTTPException(409, f"at most {MAX_VIEW_TOKENS} sharing tokens")
             token = new_view_secret()
-            conn.execute("INSERT INTO view_tokens (token, owner, label, sections, created_at) VALUES (?,?,?,?,?)",
+            conn.execute("INSERT INTO view_tokens (token, owner, label, sections, characters, created_at) VALUES (?,?,?,?,?,?)",
                          (token, owner_key(link), body.label.strip() or None,
-                          chosen(parts.SHARE_DEFAULT if body.sections is None else body.sections), _now_iso()))
+                          chosen(parts.SHARE_DEFAULT if body.sections is None else body.sections),
+                          picked(conn, link, body.characters), _now_iso()))
         return answer(link, token)
+
+    @app.post("/api/v1/me/tokens/characters", include_in_schema=False)
+    def set_view_characters(body: ShownIn, request: Request):
+        """Which of the maker's characters a sharing token shows: some of them, or (null) all of
+        them, those added later too. Takes effect at its next request."""
+        link = bound(request)
+        old = pick(tokens_of(link)["view"], body.id)
+        with db() as conn:
+            conn.execute("UPDATE view_tokens SET characters=? WHERE token=?", (picked(conn, link, body.characters), old["token"]))
+        return answer(link)
 
     @app.post("/api/v1/me/tokens/sections", include_in_schema=False)
     def set_view_sections(body: SectionsIn, request: Request):
