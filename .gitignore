@@ -19,3 +19,6 @@ share-link.txt
 dist/
 build/
 handoff/
+# local Questie trace dumps and their viewer: private, never committed
+tools/questie-trace-*.txt
+tools/questie-trace-viewer.html
