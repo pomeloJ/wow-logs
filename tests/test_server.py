@@ -178,7 +178,7 @@ def test_setup_page_and_client_downloads(tmp_path):
     assert not [n for n in names if n.endswith((".toml", ".pyc", ".db")) or "config" in n.lower() or "__pycache__" in n]
     addon = zipfile.ZipFile(io.BytesIO(web.get("/download/addon.zip").content))
     assert sorted(addon.namelist()) == ["AdventureCollector/AdventureCollector.toc", "AdventureCollector/Bindings.xml",
-                                     "AdventureCollector/Core.lua"]
+                                     "AdventureCollector/Core.lua", "AdventureCollector/ThreatPanel.lua"]
     # ready-made programs: only the owner may put them there, anyone may fetch them
     w = {"Authorization": "Bearer w"}
     assert web.put("/api/v1/builds/AdventureSync-windows-x64.exe", content=b"MZ" + b"x" * 5000).status_code == 401
