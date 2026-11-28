@@ -1494,6 +1494,11 @@ function ns.createGear(b)
     label("即時仇恨面板", -8)
     label("顯示方式", -30, true)
     label("面板位置", -126, true)
+    local rule = menu:CreateTexture(nil, "BORDER")                -- a line between the two groups
+    rule:SetPoint("TOPLEFT", menu, "TOPLEFT", 10, -123)
+    rule:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -10, -123)
+    rule:SetHeight(1)
+    rule:SetColorTexture(1, 1, 1, 0.18)
     -- Flat buttons in plain colours: the chosen one bright, the rest dim, so the choice is
     -- seen at a glance (the game's red buttons all look alike).
     local function flat(w, h, text)
@@ -1529,7 +1534,8 @@ function ns.createGear(b)
         end
         if lock then
             lock.text:SetText(locked and "已鎖定（點此解除）" or "可拖曳（點此鎖定）")
-            if locked then lock:Paint(0.45, 0.32, 0.08, 1, 0.9, 0.6) else lock:Paint(0.16, 0.16, 0.18, 0.85, 0.85, 0.85) end
+            -- the position buttons are blue, apart from the grey and green display choices
+            if locked then lock:Paint(0.45, 0.32, 0.08, 1, 0.9, 0.6) else lock:Paint(0.11, 0.2, 0.33, 0.7, 0.85, 1) end
         end
     end
     for i, c in ipairs(choices) do
@@ -1548,7 +1554,7 @@ function ns.createGear(b)
     end)
     local reset = flat(190, 24, "重設位置（回到畫面右側）")
     reset:SetPoint("TOPLEFT", lock, "BOTTOMLEFT", 0, -4)
-    reset:Paint(0.16, 0.16, 0.18, 0.85, 0.85, 0.85)
+    reset:Paint(0.11, 0.2, 0.33, 0.7, 0.85, 1)
     reset:SetScript("OnClick", function() ns.threatPanelSet("reset") end)
     -- OK keeps what was chosen; Cancel (and Esc) puts back what it was when the menu opened.
     local before
