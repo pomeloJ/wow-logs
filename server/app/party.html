@@ -295,6 +295,21 @@ function albumCard(d) {
     })));
 }
 
+// The 3D replay: a script of its own, fetched only when asked for.
+function replayButton(d) {
+  if (!d.maps.length && !(d.kill_times || []).length && !(d.encounters || []).length) return null;
+  const b = el("button", { class: "more", type: "button", text: "🎬 3D 回放" });
+  b.style.cssText = "margin:0 0 0 auto";
+  b.addEventListener("click", () => {
+    b.disabled = true; b.textContent = "載入中…";
+    import("/assets/replay.js")
+      .then(m => { if (!m.openReplay(d, { api: API, name: N, color: COLOR })) b.title = "這次沒有可以回放的內容"; b.textContent = "🎬 3D 回放"; })
+      .catch(() => { b.textContent = "載入失敗，再試一次"; })
+      .finally(() => { b.disabled = false; });
+  });
+  return b;
+}
+
 function mapCard(d) {
   const card = el("section", { class: "card c-map" });
   // Every position in time order, then one stretch per run on a single map, so the route
@@ -302,7 +317,7 @@ function mapCard(d) {
   const all = [];
   for (const m of d.maps) for (const p of m.points) all.push({ t: new Date(p[0]).getTime(), x: p[1], y: p[2], map: m.map_id });
   all.sort((a, b) => a.t - b.t);
-  if (!all.length) { card.append(el("h2", { text: "路線" }), el("div", { class: "small", text: "這次組隊沒有位置紀錄（副本裡沒有座標）。" })); return card; }
+  if (!all.length) { card.append(el("div", { class: "head" }, el("h2", { text: "路線" }), replayButton(d) || ""), el("div", { class: "small", text: "這次組隊沒有位置紀錄（副本裡沒有座標）。" + (replayButton(d) ? "3D 回放會用示意的副本場景呈現。" : "") })); return card; }
   const meta = Object.fromEntries(d.maps.map(m => [m.map_id, m]));
   const CONTINENT = { 1414: "卡林多（移動中）", 1415: "東部王國（移動中）" };
   const nameOf = id => CONTINENT[id] || meta[id].name || "地圖 " + id;
@@ -443,7 +458,7 @@ function mapCard(d) {
   window.addEventListener("resize", paint);
   const ctl = el("div", null, play, slider);
   ctl.style.cssText = "display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap";
-  card.append(el("div", { class: "head" }, el("h2", { text: "路線" })), legs.length > 1 ? strip : "", canvas, ctl, cap);
+  card.append(el("div", { class: "head" }, el("h2", { text: "路線" }), replayButton(d) || ""), legs.length > 1 ? strip : "", canvas, ctl, cap);
   requestAnimationFrame(() => show(cur));
   return card;
 }

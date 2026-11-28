@@ -872,6 +872,19 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
             raise HTTPException(404, "no such screenshot")
         return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
 
+    # The 3D replay on the party page: its own script and three.js, served from here rather than a
+    # CDN so the page keeps working without other sites. Loaded only when the replay is opened.
+    ASSETS = {"replay.js": ("replay.js", "no-cache"),
+              "three.module.min.js": (os.path.join("vendor", "three.module.min.js"), "public, max-age=2592000")}
+
+    @app.get("/assets/{name}", include_in_schema=False)
+    def asset(name: str):
+        if name not in ASSETS:
+            raise HTTPException(404, "no such file")
+        path, cache = ASSETS[name]
+        return FileResponse(os.path.join(os.path.dirname(__file__), path), media_type="text/javascript",
+                            headers={"Cache-Control": cache})
+
     @app.get("/party/{token}", include_in_schema=False)
     def party_page(token: str):
         # Static page with no data in it; it reads the token from its own address.
