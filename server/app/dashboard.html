@@ -344,6 +344,7 @@ a.btn2 { display: inline-block; text-decoration: none; }
 .pick .pills .pick-note { grid-column: auto; }
 .pick-acts { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; justify-content: flex-end; }
 .pick-acts .grow, .tk-title .grow { flex: 1 1 0; min-width: 0; }
+.tk input.invite-link { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; padding: 6px 9px; cursor: text; }
 .owned .sum { padding-top: 2px; line-height: 1.5; overflow-wrap: anywhere; }
 .tk .tk-add.invite-new { border-style: solid; border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
   background: color-mix(in srgb, var(--accent) 7%, var(--panel)); }
@@ -987,9 +988,13 @@ async function friendsPanel() {
         c => act("POST", "/invite/edit", { code: v.code, ...c }),
         button2("取消邀請", ask({ title: "取消這個邀請連結？", text: "還沒用過的人打開它會看到「邀請已失效」。", ok: "取消邀請", danger: true },
           "POST", "/invite/delete", { code: v.code }), "bad"));
+      // the whole link in view: what is copied, and copyable by hand when the button cannot
+      const field = el("input", { type: "text", class: "invite-link", readonly: "", value: link, "aria-label": "邀請連結", spellcheck: "false" });
+      field.addEventListener("focus", () => field.select());
       inv.append(el("div", { class: "tk-item" + (v.code === fresh ? " fresh" : "") },
-        el("div", { class: "tk-title" }, el("div", { class: "grow" }, el("b", { text: v.code === fresh ? "新的邀請連結" : "邀請連結" }),
-          el("div", { class: "tk-meta", title: `有效到 ${full(v.expires_at)}`, text: `還有 ${days} 天 · 還沒有人接受` })), copyButton(link, "複製連結", true)),
+        el("div", { class: "tk-title" }, el("b", { text: v.code === fresh ? "新的邀請連結" : "邀請連結" }),
+          el("span", { class: "tk-meta", title: `有效到 ${full(v.expires_at)}`, text: `還有 ${days} 天 · 還沒有人接受` })),
+        el("div", { class: "tk-add-row" }, field, copyButton(link, "複製連結", true)),
         row("對方可看", shareSummary(d, v.sections, v.characters), edit),
         editor));
     }
