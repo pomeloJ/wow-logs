@@ -197,7 +197,9 @@ function CreateFrame(kind, name)
     if name == "AdventureCollectorCombatLogSign" then MOCK.sign = f
     elseif name == "AdventureCollectorAIPanel" then MOCK.aipanel = f
     elseif name == "AdventureCollectorAICode" then MOCK.aicode = f
-    elseif kind == "Button" then MOCK.button = f else MOCK.frame = f end
+    elseif name == "AdventureCollectorSaveButton" or (kind == "Button" and name == nil and MOCK.button == nil) then MOCK.button = f
+    elseif kind == "Button" then -- the gear and its menu's buttons
+    else MOCK.frame = f end
     return f
 end
 function fire(e, ...) MOCK.onEvent(MOCK.frame, e, ...) end

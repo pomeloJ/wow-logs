@@ -106,3 +106,16 @@ def test_toc_module_loads_before_login_and_core_initializes_panel():
     chunk("AdventureCollector", g.ns)
     g.fire("PLAYER_LOGIN")
     assert g.ns.threatPanel is not None
+
+
+def test_the_gear_by_the_save_button_sets_the_panel():
+    g = game()
+    assert g.ns.threatPanelMode() == ("auto", False)               # by default: shown in combat
+    g.ns.threatPanelSet("off")
+    assert g.ns.threatPanelMode()[0] == "off" and g.db.settings.threatPanel.enabled is False
+    g.ns.threatPanelSet("show")
+    assert g.ns.threatPanelMode()[0] == "show" and g.db.settings.threatPanel.combatOnly is False
+    g.ns.threatPanelSet("lock")
+    assert g.ns.threatPanelMode()[1] is True
+    assert g.ns.threatPanelSet("nonsense") is False
+    assert g.ns.gear is not None and g.ns.gearMenu is not None     # made with the save button

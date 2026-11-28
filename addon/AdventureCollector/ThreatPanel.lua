@@ -192,10 +192,10 @@ function ns.initThreatPanel()
     refresh()
 end
 
-SLASH_ADVENTURETHREAT1 = "/athreat"
-SlashCmdList.ADVENTURETHREAT = function(msg)
-    if not settings then return end
-    local cmd, arg = tostring(msg or ""):lower():match("^%s*(%S*)%s*(.-)%s*$")
+-- One change of a setting; false when the command is not one. Shared by /athreat and the
+-- gear menu next to the save button.
+local function apply(cmd, arg)
+    if not settings then return false end
     if cmd == "on" then settings.enabled = true
     elseif cmd == "off" then settings.enabled = false
     elseif cmd == "show" then settings.enabled, settings.combatOnly = true, false
@@ -206,12 +206,27 @@ SlashCmdList.ADVENTURETHREAT = function(msg)
     elseif cmd == "scale" and number(tonumber(arg)) then
         settings.scale = math.max(0.6, math.min(1.6, tonumber(arg))); position()
     elseif cmd == "warn" and number(tonumber(arg)) then settings.warn = math.max(1, math.min(100, tonumber(arg)))
-    else
-        print("|cff33ff99仇恨面板|r /athreat show 常駐；auto 戰鬥中顯示；on/off 開關；lock/unlock 鎖定/拖曳；scale 0.6–1.6；warn 85；reset 重設位置")
+    else return false end
+    refresh()
+    return true
+end
+
+SLASH_ADVENTURETHREAT1 = "/athreat"
+SlashCmdList.ADVENTURETHREAT = function(msg)
+    if not settings then return end
+    local cmd, arg = tostring(msg or ""):lower():match("^%s*(%S*)%s*(.-)%s*$")
+    if not apply(cmd, arg) then
+        print("|cff33ff99仇恨面板|r /athreat show 常駐；auto 戰鬥中顯示；on/off 開關；lock/unlock 鎖定/拖曳；scale 0.6–1.6；warn 85；reset 重設位置（存檔按鈕旁的齒輪也能設定）")
         return
     end
-    refresh()
     print("|cff33ff99仇恨面板|r 設定已更新。")
 end
+
+-- For the gear menu: "off", "auto" (in combat) or "show" (always), and whether it is locked.
+function ns.threatPanelMode()
+    if not settings then return nil end
+    return not settings.enabled and "off" or settings.combatOnly and "auto" or "show", settings.locked
+end
+ns.threatPanelSet = apply
 
 ns.collectLiveThreat, ns.refreshThreatPanel = collect, refresh

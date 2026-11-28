@@ -1459,7 +1459,74 @@ function ns.createButton()
     b:SetScript("OnClick", saveNow)
     saveButton = b
     updateButton()
+    pcall(ns.createGear, b)
     if not db.settings.showButton then b:Hide() end
+end
+
+-- A small gear right of the save button: a menu for the live threat panel (off, in combat
+-- only, always) and its position. Moves and hides with the save button.
+function ns.createGear(b)
+    local g = CreateFrame("Button", "AdventureCollectorGearButton", b)
+    g:SetSize(22, 22)
+    g:SetPoint("LEFT", b, "RIGHT", 2, 0)
+    g:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
+    g:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+    local menu = CreateFrame("Frame", "AdventureCollectorGearMenu", g)
+    menu:SetSize(196, 132)
+    menu:SetPoint("TOPLEFT", g, "BOTTOMLEFT", -100, -4)
+    menu:SetFrameStrata("DIALOG")
+    menu:SetClampedToScreen(true)
+    local bg = menu:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints(menu)
+    bg:SetColorTexture(0.04, 0.035, 0.03, 0.95)
+    local title = menu:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("TOPLEFT", menu, "TOPLEFT", 10, -8)
+    title:SetText("即時仇恨面板")
+    local choices, rows = { { "off", "關閉" }, { "auto", "戰鬥中顯示" }, { "show", "一直顯示" } }, {}
+    local lock
+    local function fill()
+        if not ns.threatPanelMode then return end
+        local mode, locked = ns.threatPanelMode()
+        for _, r in ipairs(rows) do
+            r:SetText((r.mode == mode and "|cffffd100● |r" or "○ ") .. r.label)
+        end
+        if lock then lock:SetText(locked and "解除鎖定（可拖曳）" or "鎖定位置") end
+    end
+    for i, c in ipairs(choices) do
+        local r = CreateFrame("Button", nil, menu, "UIPanelButtonTemplate")
+        r:SetSize(176, 20)
+        r:SetPoint("TOPLEFT", menu, "TOPLEFT", 10, -26 - (i - 1) * 22)
+        r.mode, r.label = c[1], c[2]
+        r:SetScript("OnClick", function() if ns.threatPanelSet then ns.threatPanelSet(c[1]) end fill() end)
+        rows[i] = r
+    end
+    lock = CreateFrame("Button", nil, menu, "UIPanelButtonTemplate")
+    lock:SetSize(110, 20)
+    lock:SetPoint("TOPLEFT", menu, "TOPLEFT", 10, -26 - #choices * 22 - 6)
+    lock:SetScript("OnClick", function()
+        local _, locked = ns.threatPanelMode()
+        ns.threatPanelSet(locked and "unlock" or "lock")
+        fill()
+    end)
+    local reset = CreateFrame("Button", nil, menu, "UIPanelButtonTemplate")
+    reset:SetSize(62, 20)
+    reset:SetPoint("LEFT", lock, "RIGHT", 4, 0)
+    reset:SetText("重設位置")
+    reset:SetScript("OnClick", function() ns.threatPanelSet("reset") end)
+    menu:Hide()
+    g:SetScript("OnClick", function()
+        if not ns.threatPanelMode or not ns.threatPanelMode() then say("仇恨面板還沒準備好") return end
+        if menu:IsShown() then menu:Hide() else fill() menu:Show() end
+    end)
+    g:SetScript("OnEnter", function(self)
+        if type(GameTooltip) ~= "table" then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("AdventureCollector 設定")
+        GameTooltip:AddLine("即時仇恨面板：關閉、戰鬥中顯示或一直顯示", 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    g:SetScript("OnLeave", function() if type(GameTooltip) == "table" then GameTooltip:Hide() end end)
+    ns.gear, ns.gearMenu = g, menu
 end
 
 -- ------------------------------------------------------------ AI screenshot
