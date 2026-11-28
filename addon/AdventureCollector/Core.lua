@@ -1472,60 +1472,93 @@ function ns.createGear(b)
     g:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
     g:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
     local menu = CreateFrame("Frame", "AdventureCollectorGearMenu", UIParent)
-    menu:SetSize(196, 160)
+    menu:SetSize(210, 214)
     menu:SetFrameStrata("DIALOG")
     menu:EnableMouse(true)
     -- Esc closes it like any game window (as Cancel would)
     if type(UISpecialFrames) == "table" then table.insert(UISpecialFrames, "AdventureCollectorGearMenu") end
-    menu:SetClampedToScreen(true)
     local bg = menu:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(menu)
-    bg:SetColorTexture(0.04, 0.035, 0.03, 0.95)
-    local title = menu:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    title:SetPoint("TOPLEFT", menu, "TOPLEFT", 10, -8)
-    title:SetText("即時仇恨面板")
+    bg:SetColorTexture(0.06, 0.06, 0.07, 0.96)
+    local edge = menu:CreateTexture(nil, "BORDER")
+    edge:SetPoint("TOPLEFT", menu, "TOPLEFT", 0, 0)
+    edge:SetPoint("TOPRIGHT", menu, "TOPRIGHT", 0, 0)
+    edge:SetHeight(2)
+    edge:SetColorTexture(1, 0.82, 0, 0.9)
+    local function label(text, y, small)
+        local f = menu:CreateFontString(nil, "OVERLAY", small and "GameFontDisableSmall" or "GameFontNormal")
+        f:SetPoint("TOPLEFT", menu, "TOPLEFT", 10, y)
+        f:SetText(text)
+        return f
+    end
+    label("即時仇恨面板", -8)
+    label("顯示方式", -30, true)
+    label("面板位置", -126, true)
+    -- Flat buttons in plain colours: the chosen one bright, the rest dim, so the choice is
+    -- seen at a glance (the game's red buttons all look alike).
+    local function flat(w, h, text)
+        local f = CreateFrame("Button", nil, menu)
+        f:SetSize(w, h)
+        f.bg = f:CreateTexture(nil, "BACKGROUND")
+        f.bg:SetAllPoints(f)
+        local hl = f:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints(f)
+        hl:SetColorTexture(1, 1, 1, 0.12)
+        f.text = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        f.text:SetPoint("CENTER", f, "CENTER", 0, 0)
+        f.text:SetText(text)
+        function f:Paint(r, gg, bb, tr, tg, tb)
+            self.bg:SetColorTexture(r, gg, bb, 1)
+            self.text:SetTextColor(tr, tg, tb)
+        end
+        return f
+    end
     local choices, rows = { { "off", "關閉" }, { "auto", "戰鬥中顯示" }, { "show", "一直顯示" } }, {}
     local lock
     local function fill()
         if not ns.threatPanelMode then return end
         local mode, locked = ns.threatPanelMode()
         for _, r in ipairs(rows) do
-            r:SetText((r.mode == mode and "|cffffd100● |r" or "○ ") .. r.label)
+            if r.mode == mode then
+                r.text:SetText("●  " .. r.label)
+                r:Paint(0.13, 0.55, 0.22, 1, 1, 1)               -- chosen: green, white text
+            else
+                r.text:SetText(r.label)
+                r:Paint(0.16, 0.16, 0.18, 0.62, 0.62, 0.62)      -- not chosen: dark, grey text
+            end
         end
-        if lock then lock:SetText(locked and "解除鎖定（可拖曳）" or "鎖定位置") end
+        if lock then
+            lock.text:SetText(locked and "已鎖定（點此解除）" or "可拖曳（點此鎖定）")
+            if locked then lock:Paint(0.45, 0.32, 0.08, 1, 0.9, 0.6) else lock:Paint(0.16, 0.16, 0.18, 0.85, 0.85, 0.85) end
+        end
     end
     for i, c in ipairs(choices) do
-        local r = CreateFrame("Button", nil, menu, "UIPanelButtonTemplate")
-        r:SetSize(176, 20)
-        r:SetPoint("TOPLEFT", menu, "TOPLEFT", 10, -26 - (i - 1) * 22)
+        local r = flat(190, 24, c[2])
+        r:SetPoint("TOPLEFT", menu, "TOPLEFT", 10, -46 - (i - 1) * 26)
         r.mode, r.label = c[1], c[2]
         r:SetScript("OnClick", function() if ns.threatPanelSet then ns.threatPanelSet(c[1]) end fill() end)
         rows[i] = r
     end
-    lock = CreateFrame("Button", nil, menu, "UIPanelButtonTemplate")
-    lock:SetSize(110, 20)
-    lock:SetPoint("TOPLEFT", menu, "TOPLEFT", 10, -26 - #choices * 22 - 6)
+    lock = flat(124, 22, "")
+    lock:SetPoint("TOPLEFT", menu, "TOPLEFT", 10, -142)
     lock:SetScript("OnClick", function()
         local _, locked = ns.threatPanelMode()
         ns.threatPanelSet(locked and "unlock" or "lock")
         fill()
     end)
-    local reset = CreateFrame("Button", nil, menu, "UIPanelButtonTemplate")
-    reset:SetSize(62, 20)
+    local reset = flat(62, 22, "重設位置")
     reset:SetPoint("LEFT", lock, "RIGHT", 4, 0)
-    reset:SetText("重設位置")
+    reset:Paint(0.16, 0.16, 0.18, 0.85, 0.85, 0.85)
     reset:SetScript("OnClick", function() ns.threatPanelSet("reset") end)
     -- OK keeps what was chosen; Cancel (and Esc) puts back what it was when the menu opened.
     local before
-    local ok = CreateFrame("Button", nil, menu, "UIPanelButtonTemplate")
-    ok:SetSize(85, 22)
-    ok:SetPoint("BOTTOMLEFT", menu, "BOTTOMLEFT", 10, 8)
-    ok:SetText("確定")
+    local ok = flat(92, 26, "確定")
+    ok:SetPoint("BOTTOMLEFT", menu, "BOTTOMLEFT", 10, 10)
+    ok:Paint(0.85, 0.65, 0.05, 0.1, 0.07, 0)                  -- gold, dark text: the main action
     ok:SetScript("OnClick", function() before = nil menu:Hide() end)
-    local cancel = CreateFrame("Button", nil, menu, "UIPanelButtonTemplate")
-    cancel:SetSize(85, 22)
+    local cancel = flat(92, 26, "取消")
     cancel:SetPoint("LEFT", ok, "RIGHT", 6, 0)
-    cancel:SetText("取消")
+    cancel:Paint(0.28, 0.28, 0.3, 0.92, 0.92, 0.92)
     cancel:SetScript("OnClick", function() menu:Hide() end)
     menu:SetScript("OnHide", function()
         if before then
