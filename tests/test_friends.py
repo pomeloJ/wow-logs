@@ -125,3 +125,39 @@ def test_invites_are_one_use_limited_and_never_from_another_site(tmp_path):
     loner = browser("s-loner", "loner@gmail.com", "路人")
     assert loner.post("/api/v1/me/friends/invite").status_code == 403
     assert lan.get("/api/v1/me/friends").status_code == 401
+
+
+def test_what_each_side_shows_is_chosen_before_becoming_friends(tmp_path):
+    import sqlite3
+    lan, browser = site(tmp_path)
+    ming, ming_token = person(lan, browser, "s-ming", "小明", ["m1", "m2"])
+    hua, _ = person(lan, browser, "s-hua", "小華", ["h1", "h2"])
+    full_record(lan, ming_token, "m1")
+    # the invite carries what its maker will show: here one character, its position only
+    made = ming.post("/api/v1/me/friends/invite", json={"sections": ["location"], "characters": ["m1", "h1"]}).json()
+    code = made["made"]
+    assert (made["invites"][0]["sections"], made["invites"][0]["characters"]) == (["location"], ["m1"])   # not someone else's
+    assert ming.post("/api/v1/me/friends/invite", json={"sections": ["nonsense"]}).status_code == 400
+    # the one invited sees that before accepting, and what is needed to choose their own
+    look = hua.get(f"/api/v1/me/friends/invite/{code}").json()
+    assert look["shows_you"]["sections"] == ["location"] and [c["id"] for c in look["shows_you"]["characters"]] == ["m1"]
+    assert [c["id"] for c in look["my_characters"]] == ["h1", "h2"] and "screenshots" not in look["default"]
+    # accepting carries what they show back
+    f, = hua.post("/api/v1/me/friends/accept", json={"code": code, "sections": ["items", "quests"], "characters": None}).json()["friends"]
+    assert f["shown"]["sections"] == ["location"] and [c["id"] for c in f["shown"]["characters"]] == ["m1"]
+    assert f["mine"]["sections"] == ["items", "quests"] and f["mine"]["all"]
+    # and the server holds to it: 小華 reads 小明's m1 position, not its items or m2
+    fid = f["id"]
+    assert seen(hua, **{"X-Friend": fid}) == ["m1"]
+    assert hua.get("/api/v1/locations?character_id=m1", headers={"X-Friend": fid}).status_code == 200
+    assert hua.get("/api/v1/characters/m1/items", headers={"X-Friend": fid}).status_code == 403
+
+    # an invite made before choices existed still gives what it always did
+    old = ming.post("/api/v1/me/friends/invite").json()["made"]
+    db = sqlite3.connect(tmp_path / "f.db")
+    db.execute("UPDATE friend_invites SET shares=NULL WHERE code=?", (old,))
+    db.commit()
+    zz, _ = person(lan, browser, "s-zz", "路人", ["z1"])
+    assert zz.get(f"/api/v1/me/friends/invite/{old}").json()["shows_you"]["sections"] == look["default"]
+    g, = zz.post("/api/v1/me/friends/accept", json={"code": old}).json()["friends"]
+    assert g["shown"]["sections"] == look["default"] and g["mine"]["sections"] == look["default"]

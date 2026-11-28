@@ -251,12 +251,12 @@ button.link { background: none; color: var(--muted); padding: 0; font-size: 13px
 .sheet > .say { font-size: 13px; min-height: 1.2em; margin-top: 10px; color: var(--warn); }
 .tk .what code { display: inline-block; margin: 3px 0; }
 .tk .shows { display: block; color: var(--muted); font-size: 12px; }
-.tk .parts { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 8px 10px; margin-top: 4px;
+.tk .parts, .parts.chooser { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 8px 10px; margin-top: 4px;
   background: var(--bg); border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
 .tk .parts[hidden] { display: none; }
-.tk .parts label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
-.tk .parts input { width: auto; margin: 0; }
-.tk .parts .always { flex-basis: 100%; color: var(--muted); font-size: 12px; }
+.tk .parts label, .parts.chooser label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.tk .parts input, .parts.chooser input { width: auto; margin: 0; }
+.tk .parts .always, .parts.chooser .always { flex-basis: 100%; color: var(--muted); font-size: 12px; }
 .tk .parts button { margin-left: auto; padding: 4px 12px; font-size: 13px; }
 .sharenote { margin-bottom: 12px; font-size: 13px; color: var(--muted); padding: 10px 14px; }
 .friendbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; padding: 10px 14px;
@@ -265,8 +265,8 @@ button.link { background: none; color: var(--muted); padding: 0; font-size: 13px
 .friendbar button { margin-left: auto; padding: 4px 12px; font-size: 13px; }
 .tk .who { display: flex; align-items: center; gap: 10px; }
 .tk .who img { width: 32px; height: 32px; border-radius: 50%; flex: none; }
-.tk .parts .group { flex-basis: 100%; font-weight: 600; color: var(--muted); font-size: 12px; margin-top: 4px; }
-.tk .parts label.off { opacity: .45; }
+.tk .parts .group, .parts.chooser .group { flex-basis: 100%; font-weight: 600; color: var(--muted); font-size: 12px; margin-top: 4px; }
+.tk .parts label.off, .parts.chooser label.off { opacity: .45; }
 .invite-from { display: flex; align-items: center; gap: 12px; margin: 14px 0; font-size: 15px; }
 .invite-from img { width: 44px; height: 44px; border-radius: 50%; }
 .sheet .acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
@@ -323,6 +323,11 @@ a.btn2 { display: inline-block; text-decoration: none; }
 .tk .tk-new-zone .tk-add { margin-top: 12px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
   background: color-mix(in srgb, var(--accent) 7%, var(--panel)); }
 .tk-new-zone .tk-add b { color: var(--accent); }
+.tk-add .parts.chooser { margin: 0; background: var(--bg); }
+.tk-add.invite-new .tk-add-row { justify-content: flex-end; }
+.invite-part { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--line); }
+.invite-part h4 { margin: 0 0 8px; font-size: 13px; color: var(--muted); font-weight: 600; }
+.invite-part .parts.chooser { margin: 0; }
 .tk-add-row { display: flex; gap: 8px; } .tk-add-row input { flex: 1 1 auto; min-width: 0; margin: 0; } .tk-add-row button { flex: none; white-space: nowrap; }
 .tk-pane > .tk-empty { margin: 14px 0; padding: 18px; text-align: center; font-size: 13px; color: var(--muted); border: 1px dashed var(--line); border-radius: 12px; }
 @media (max-width: 520px) {
@@ -843,6 +848,34 @@ async function friendCall(method, path, body) {
   return r.json();
 }
 
+// What one side will show a friend, chosen before they are friends (on the invite, or on
+// accepting one): parts ticked, and every character or the ones ticked. d: parts,
+// my_characters, kind, default from the server. value() is what the server takes.
+function shareChooser(d, init) {
+  const charText = c => shownName(c) + (c.level ? ` Lv${c.level}` : "");
+  const start = init || { sections: d.default, characters: null };
+  const boxes = d.parts.map(p => { const c = el("input", { type: "checkbox", value: p.key }); c.checked = start.sections.includes(p.key); return [p, c]; });
+  const every = el("input", { type: "checkbox" });
+  every.checked = start.characters === null;
+  const picks = d.my_characters.map(c => { const b = el("input", { type: "checkbox", value: c.id });
+    b.checked = start.characters === null || start.characters.includes(c.id); return [c, b]; });
+  const labels = picks.map(([c, b]) => el("label", null, b, charText(c)));
+  const personal = d.kind === "personal";
+  const follow = () => { if (personal) for (const [i, [, b]] of picks.entries()) { b.disabled = every.checked; labels[i].classList.toggle("off", every.checked); } };
+  every.addEventListener("change", follow);
+  follow();
+  const node = el("div", { class: "parts chooser" }, el("span", { class: "group", text: "可看區塊" }),
+    ...boxes.map(([p, c]) => el("label", null, c, p.name)),
+    el("span", { class: "group", text: "分享的角色" }),
+    personal ? el("label", null, every, "全部角色（包含之後新增的）") : null,
+    ...labels,
+    !personal ? el("span", { class: "always", text: "你的帳號能看到伺服器上所有人的角色，只會分享你勾選的。" }) : null,
+    el("span", { class: "always", text: "角色的名字、職業、等級與經驗一律看得到；聊天內容一律看不到。之後隨時可以在「好友」裡改。" }));
+  const value = () => ({ sections: boxes.filter(([, c]) => c.checked).map(([p]) => p.key),
+    characters: personal && every.checked ? null : picks.filter(([, b]) => b.checked).map(([c]) => c.id) });
+  return { node, value };
+}
+
 // asked once after signing in, when this browser was given an invite link
 let asking = false;
 async function askAboutInvite() {
@@ -866,9 +899,17 @@ async function askAboutInvite() {
     return;
   }
   const say = el("div", { class: "say", role: "status" });
-  body.replaceChildren(from, el("p", { text: `${info.from.name} 邀請你成為好友。接受後，你們預設可以看到彼此的角色（遊戲截圖除外，聊天內容一律看不到）。之後可以在「好友」裡調整要分享什麼，或隨時移除好友。` }),
+  const partName = Object.fromEntries(info.parts.map(p => [p.key, p.name]));
+  const theirs = info.shows_you;
+  const charText = c => shownName(c) + (c.level ? ` Lv${c.level}` : "");
+  const back = shareChooser(info);
+  body.replaceChildren(from, el("p", { text: `${info.from.name} 邀請你成為好友。` }),
+    el("div", { class: "invite-part" }, el("h4", { text: "對方給你看" }),
+      el("div", { class: "owned" }, el("span", { text: "角色" }), chipsOf(theirs.characters.map(charText), "還沒有分享角色")),
+      el("div", { class: "owned" }, el("span", { text: "區塊" }), chipsOf(theirs.sections.map(k => partName[k]), "只有名字、職業、等級與經驗"))),
+    el("div", { class: "invite-part" }, el("h4", { text: "你要給對方看" }), back.node),
     el("div", { class: "acts" }, button2("不要", done),
-      button2("接受", async () => { try { await friendCall("POST", "/accept", { code }); done(); friendsPanel(); } catch (e) { say.textContent = e.message; } }, "go")),
+      button2("接受", async () => { try { await friendCall("POST", "/accept", { code, ...back.value() }); done(); friendsPanel(); } catch (e) { say.textContent = e.message; } }, "go")),
     say);
 }
 
@@ -926,17 +967,28 @@ async function friendsPanel() {
     // invite links
     const inv = el("section", { class: "tk" },
       el("div", { class: "tk-head" }, el("h3", { text: "邀請好友" }), el("span", { class: "count", text: `${d.invites.length} / ${d.max_invites}` })),
-      el("p", { class: "tkhint", text: "產生邀請連結傳給朋友（LINE、Discord 都可以）。對方用 Google 登入並綁定權杖後打開連結、按「接受」就成為好友。連結 7 天內有效，只能用一次。" }));
+      el("p", { class: "tkhint", text: "先選好對方能看到什麼，再產生邀請連結傳給朋友（LINE、Discord 都可以）。對方用 Google 登入並綁定權杖後打開連結，選好他要給你看的，按「接受」就成為好友。連結 7 天內有效，只能用一次。" }));
+    const sharedChars = v => v.characters === null ? (d.kind === "personal" ? ["全部角色"] : [])
+      : d.my_characters.filter(c => v.characters.includes(c.id)).map(charText);
     for (const v of d.invites) {
       const link = location.origin + "/#friend=" + v.code;
       inv.append(el("div", { class: "tk-item" + (v.code === fresh ? " fresh" : "") },
         el("div", { class: "tk-secret" }, el("code", { text: link })),
+        el("div", { class: "owned" }, el("span", { text: "你分享" }), chipsOf(sharedChars(v), "沒有分享角色")),
+        el("div", { class: "owned" }, el("span", { text: "對方可看" }),
+          chipsOf(v.sections.length === d.parts.length ? ["全部區塊"] : v.sections.map(k => partName[k]), "只有名字、職業、等級與經驗")),
         el("div", { class: "tk-acts" }, copyButton(link, "複製連結", true), el("span", { class: "tk-meta inline", text: `有效到 ${full(v.expires_at)}` }),
           el("span", { class: "grow" }),
           button2("取消邀請", ask({ title: "取消這個邀請連結？", text: "還沒用過的人打開它會看到「邀請已失效」。", ok: "取消邀請", danger: true },
             "POST", "/invite/delete", { code: v.code }), "bad"))));
     }
-    if (d.invites.length < d.max_invites) inv.append(el("div", { class: "tk-new" }, button2("＋ 產生邀請連結", () => act("POST", "/invite"), "go")));
+    if (d.invites.length < d.max_invites) {
+      // what the friend will see is chosen first; the link carries it
+      const pick = shareChooser(d);
+      inv.append(el("div", { class: "tk-new-zone" }, el("div", { class: "tk-sep", role: "separator" }, el("span", { text: "新增" })),
+        el("div", { class: "tk-add invite-new" }, el("b", { text: "新的邀請：對方可以看到" }), pick.node,
+          el("div", { class: "tk-add-row" }, button2("＋ 產生邀請連結", () => act("POST", "/invite", pick.value()), "go")))));
+    }
     s.box.replaceChildren(s.head, list, inv, say);
   };
   s.box.replaceChildren(s.head, el("div", { class: "loading", role: "status" }, el("i"), "讀取中…"));

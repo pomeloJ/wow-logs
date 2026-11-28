@@ -64,6 +64,17 @@ class ShareIn(BaseModel):
     characters: Optional[List[str]] = Field(None, max_length=200)     # None: every character of the token
 
 
+class ChoiceIn(BaseModel):
+    """What one side will show the other, chosen before they are friends: on the invite by its
+    maker, on accepting by the one who accepts. Left out: DEFAULT, every character."""
+    sections: Optional[List[str]] = Field(None, max_length=20)
+    characters: Optional[List[str]] = Field(None, max_length=200)     # None: every character of the token
+
+
+class AcceptIn(ChoiceIn):
+    code: str = Field(min_length=4, max_length=64)
+
+
 def friend_id(sub: str) -> str:
     """How a friend is named to the page: never the Google account's own id."""
     return hashlib.sha256(("friend:" + sub).encode()).hexdigest()[:16]
@@ -79,6 +90,10 @@ def register(app, db, account_of: Callable[[Request], Optional[Dict[str, Any]]])
     with db() as conn:
         conn.executescript(SCHEMA)
         parts.split_trades(conn, "friend_shares")    # trades became a part of their own
+        # what the invite's maker will show whoever accepts: JSON {"sections", "characters"};
+        # NULL for an invite made before this column (DEFAULT, every character)
+        if "shares" not in {r[1] for r in conn.execute("PRAGMA table_info(friend_invites)")}:
+            conn.execute("ALTER TABLE friend_invites ADD COLUMN shares TEXT")
 
     def link_of_sub(conn, sub: str) -> Optional[Dict[str, Any]]:
         """What an account is bound to, as auth.link_of has it; None when unbound."""
@@ -143,6 +158,29 @@ def register(app, db, account_of: Callable[[Request], Optional[Dict[str, Any]]])
                  "full_name": rows[c]["full_name"] if c in rows else None, "class": rows[c]["class"] if c in rows else None,
                  "level": rows[c]["level"] if c in rows else None} for c in ids]
 
+    def choice(conn, sub: str, body: Optional[ChoiceIn]) -> Dict[str, Any]:
+        """A choice made before being friends, checked: known parts, and only the person's own characters."""
+        sections = DEFAULT if body is None or body.sections is None else body.sections
+        if not set(sections) <= parts.KEYS:
+            raise HTTPException(400, "unknown part")
+        chars = None if body is None else body.characters
+        if chars is not None:
+            _, mine = own_characters(conn, sub)
+            chars = [c for c in chars if c in set(mine)]
+        return {"sections": [k for k, _ in parts.PARTS if k in set(sections)], "characters": chars}
+
+    def stored(row) -> Dict[str, Any]:
+        """What an invite's maker will show: as chosen on it, or what invites made before showed."""
+        got = json.loads(row["shares"]) if row["shares"] else {}
+        return {"sections": got.get("sections", DEFAULT), "characters": got.get("characters")}
+
+    def shows(conn, sub: str, pick: Dict[str, Any]) -> List[str]:
+        """The characters a choice comes to: every one of a person's token for None, as shared() has it."""
+        kind, mine = own_characters(conn, sub)
+        if pick["characters"] is None:
+            return mine if kind == "personal" else []
+        return [c for c in mine if c in set(pick["characters"])]
+
     def listing(sub: str, made: Optional[str] = None) -> JSONResponse:
         keys = [k for k, _ in parts.PARTS]
         with db() as conn:
@@ -162,10 +200,11 @@ def register(app, db, account_of: Callable[[Request], Optional[Dict[str, Any]]])
                     "mine": {"characters": ours, "all": picked is None and kind == "personal",
                              "sections": [k for k in keys if our_parts is None or k in our_parts]}})
             invites = [{"code": r["code"], "created_at": r["created_at"],
-                        "expires_at": datetime.fromtimestamp(r["expires"], timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+                        "expires_at": datetime.fromtimestamp(r["expires"], timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "sections": stored(r)["sections"], "characters": stored(r)["characters"]}
                        for r in conn.execute("SELECT * FROM friend_invites WHERE sub=? ORDER BY created_at", (sub,))]
             out = {"kind": kind, "friends": friends, "invites": invites, "my_characters": names(conn, mine),
-                   "parts": [{"key": k, "name": n} for k, n in parts.PARTS], "max_invites": MAX_INVITES}
+                   "parts": [{"key": k, "name": n} for k, n in parts.PARTS], "default": DEFAULT, "max_invites": MAX_INVITES}
         if made:
             out["made"] = made
         return JSONResponse(out, headers=NO_STORE)
@@ -176,15 +215,18 @@ def register(app, db, account_of: Callable[[Request], Optional[Dict[str, Any]]])
         return listing(signed(request)["sub"])
 
     @app.post("/api/v1/me/friends/invite", include_in_schema=False)
-    def invite(request: Request):
-        """A link that makes whoever accepts it a friend: once, within seven days."""
+    def invite(request: Request, body: Optional[ChoiceIn] = None):
+        """A link that makes whoever accepts it a friend: once, within seven days. It carries what
+        its maker will show that friend (parts and characters), chosen now."""
         sub = signed(request)["sub"]
         with db() as conn:
+            pick = choice(conn, sub, body)
             conn.execute("DELETE FROM friend_invites WHERE expires<?", (time.time(),))
             if conn.execute("SELECT COUNT(*) FROM friend_invites WHERE sub=?", (sub,)).fetchone()[0] >= MAX_INVITES:
                 raise HTTPException(409, f"at most {MAX_INVITES} open invites")
             code = secrets.token_urlsafe(12)
-            conn.execute("INSERT INTO friend_invites VALUES (?,?,?,?)", (code, sub, _now_iso(), time.time() + INVITE_DAYS * 86400))
+            conn.execute("INSERT INTO friend_invites (code, sub, created_at, expires, shares) VALUES (?,?,?,?,?)",
+                         (code, sub, _now_iso(), time.time() + INVITE_DAYS * 86400, json.dumps(pick)))
         return listing(sub, code)
 
     @app.post("/api/v1/me/friends/invite/delete", include_in_schema=False)
@@ -200,7 +242,8 @@ def register(app, db, account_of: Callable[[Request], Optional[Dict[str, Any]]])
 
     @app.get("/api/v1/me/friends/invite/{code}", include_in_schema=False)
     def look_at_invite(code: str, request: Request):
-        """Who an invite is from, for the page to ask before accepting."""
+        """Who an invite is from and what they will show, for the page to ask before accepting;
+        with what is needed to choose what to show them back."""
         sub = signed(request)["sub"]
         with db() as conn:
             row = open_invite(conn, code)
@@ -208,15 +251,23 @@ def register(app, db, account_of: Callable[[Request], Optional[Dict[str, Any]]])
                 raise HTTPException(404, "this invite has been used or has expired")
             acct = conn.execute("SELECT email, name, picture FROM google_accounts WHERE sub=?", (row["sub"],)).fetchone()
             already = row["sub"] in friends_of(conn, sub)
-        return JSONResponse({"from": {"name": (acct["name"] or acct["email"]) if acct else "?", "picture": acct["picture"] if acct else None},
-                             "self": row["sub"] == sub, "already": already}, headers=NO_STORE)
+            theirs = stored(row)
+            kind, mine = own_characters(conn, sub)
+            out = {"from": {"name": (acct["name"] or acct["email"]) if acct else "?", "picture": acct["picture"] if acct else None},
+                   "self": row["sub"] == sub, "already": already,
+                   "shows_you": {"sections": theirs["sections"], "characters": names(conn, shows(conn, row["sub"], theirs))},
+                   "kind": kind, "my_characters": names(conn, mine), "parts": [{"key": k, "name": n} for k, n in parts.PARTS],
+                   "default": DEFAULT}
+        return JSONResponse(out, headers=NO_STORE)
 
     @app.post("/api/v1/me/friends/accept", include_in_schema=False)
-    def accept(body: CodeIn, request: Request):
-        """Become friends with the invite's maker. Each side starts out showing the other every
-        part but screenshots; the link is used up."""
+    def accept(body: AcceptIn, request: Request):
+        """Become friends with the invite's maker. The maker shows what the invite says; the one
+        accepting shows what they chose on accepting (left out: every part but screenshots, every
+        character). The link is used up."""
         sub = signed(request)["sub"]
         with db() as conn:
+            mine = choice(conn, sub, body)
             row = open_invite(conn, body.code)
             if not row:
                 raise HTTPException(404, "this invite has been used or has expired")
@@ -228,8 +279,9 @@ def register(app, db, account_of: Callable[[Request], Optional[Dict[str, Any]]])
             conn.execute("DELETE FROM friend_invites WHERE code=?", (body.code,))
             a, b = sorted((sub, other))
             conn.execute("INSERT OR IGNORE INTO friendships VALUES (?,?,?)", (a, b, _now_iso()))
-            for x, y in ((sub, other), (other, sub)):
-                conn.execute("INSERT OR IGNORE INTO friend_shares VALUES (?,?,?,NULL)", (x, y, parts.dump(DEFAULT)))
+            for x, y, pick in ((sub, other, mine), (other, sub, stored(row))):
+                conn.execute("INSERT OR IGNORE INTO friend_shares VALUES (?,?,?,?)", (x, y, parts.dump(pick["sections"]),
+                             None if pick["characters"] is None else json.dumps(pick["characters"])))
         out = listing(sub)
         return out
 
