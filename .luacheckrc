@@ -4,7 +4,7 @@ globals = { "AdventureCollectorDB", "SlashCmdList", "StaticPopupDialogs", "SLASH
             "AdventureCollector_AIShot", "BINDING_HEADER_ADVENTURECOLLECTOR", "BINDING_NAME_ADVENTURECOLLECTOR_AISHOT" }
 read_globals = {
     "UnitCanAttack",
-    "UnitFullName", "GetUnitName", "GetPlayerInfoByGUID", "GetTime", "UnitDetailedThreatSituation", "UnitHealthPercent", "UnitPowerPercent", "Minimap", "C_CVar", "GetCVar", "IsIndoors", "GetScreenWidth", "GetScreenHeight", "GetTradePlayerItemInfo", "GetTradeTargetItemInfo", "GetTradePlayerItemLink", "GetTradeTargetItemLink", "GetPlayerTradeMoney", "GetTargetTradeMoney", "MAX_TRADE_ITEMS", "ERR_TRADE_COMPLETE", "ERR_TRADE_CANCELLED", "TradeFrameRecipientNameText", "C_Spell", "CreateVector2D", "GameTooltip", "GetBindingAction", "GetBindingKey", "GetComboPoints",
+    "UnitFullName", "GetUnitName", "GetPlayerInfoByGUID", "GetTime", "UISpecialFrames", "UnitDetailedThreatSituation", "UnitHealthPercent", "UnitPowerPercent", "Minimap", "C_CVar", "GetCVar", "IsIndoors", "GetScreenWidth", "GetScreenHeight", "GetTradePlayerItemInfo", "GetTradeTargetItemInfo", "GetTradePlayerItemLink", "GetTradeTargetItemLink", "GetPlayerTradeMoney", "GetTargetTradeMoney", "MAX_TRADE_ITEMS", "ERR_TRADE_COMPLETE", "ERR_TRADE_CANCELLED", "TradeFrameRecipientNameText", "C_Spell", "CreateVector2D", "GameTooltip", "GetBindingAction", "GetBindingKey", "GetComboPoints",
     "GetCurrentBindingSet", "GetNumQuestWatches", "GetPlayerFacing", "GetQuestIndexForWatch", "GetShapeshiftForm", "GetShapeshiftFormInfo",
     "GetSpellInfo", "STANDARD_TEXT_FONT", "SaveBindings", "SetBinding", "UnitAffectingCombat", "UnitClassification",
     "UnitCreatureType", "UnitExists", "UnitHealth", "UnitPower", "UnitPowerType", "UnitReaction",

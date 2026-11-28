@@ -1471,10 +1471,12 @@ function ns.createGear(b)
     g:SetPoint("LEFT", b, "RIGHT", 2, 0)
     g:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
     g:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-    local menu = CreateFrame("Frame", "AdventureCollectorGearMenu", g)
-    menu:SetSize(196, 132)
-    menu:SetPoint("TOPLEFT", g, "BOTTOMLEFT", -100, -4)
+    local menu = CreateFrame("Frame", "AdventureCollectorGearMenu", UIParent)
+    menu:SetSize(196, 160)
     menu:SetFrameStrata("DIALOG")
+    menu:EnableMouse(true)
+    -- Esc closes it like any game window (as Cancel would)
+    if type(UISpecialFrames) == "table" then table.insert(UISpecialFrames, "AdventureCollectorGearMenu") end
     menu:SetClampedToScreen(true)
     local bg = menu:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(menu)
@@ -1513,10 +1515,47 @@ function ns.createGear(b)
     reset:SetPoint("LEFT", lock, "RIGHT", 4, 0)
     reset:SetText("重設位置")
     reset:SetScript("OnClick", function() ns.threatPanelSet("reset") end)
+    -- OK keeps what was chosen; Cancel (and Esc) puts back what it was when the menu opened.
+    local before
+    local ok = CreateFrame("Button", nil, menu, "UIPanelButtonTemplate")
+    ok:SetSize(85, 22)
+    ok:SetPoint("BOTTOMLEFT", menu, "BOTTOMLEFT", 10, 8)
+    ok:SetText("確定")
+    ok:SetScript("OnClick", function() before = nil menu:Hide() end)
+    local cancel = CreateFrame("Button", nil, menu, "UIPanelButtonTemplate")
+    cancel:SetSize(85, 22)
+    cancel:SetPoint("LEFT", ok, "RIGHT", 6, 0)
+    cancel:SetText("取消")
+    cancel:SetScript("OnClick", function() menu:Hide() end)
+    menu:SetScript("OnHide", function()
+        if before then
+            ns.threatPanelSet(before.mode)
+            ns.threatPanelSet(before.locked and "lock" or "unlock")
+            before = nil
+        end
+    end)
     menu:Hide()
+    -- Opens above the save button when it sits in the lower half of the screen, else below it,
+    -- so it never covers the button and the gear.
+    local function place()
+        menu:ClearAllPoints()
+        local _, y = b:GetCenter()
+        local h = UIParent:GetHeight()
+        if type(y) == "number" and type(h) == "number" and y < h / 2 then
+            menu:SetPoint("BOTTOM", b, "TOP", 12, 6)
+        else
+            menu:SetPoint("TOP", b, "BOTTOM", 12, -6)
+        end
+        menu:SetClampedToScreen(true)
+    end
     g:SetScript("OnClick", function()
         if not ns.threatPanelMode or not ns.threatPanelMode() then say("仇恨面板還沒準備好") return end
-        if menu:IsShown() then menu:Hide() else fill() menu:Show() end
+        if menu:IsShown() then menu:Hide() return end
+        local mode, locked = ns.threatPanelMode()
+        before = { mode = mode, locked = locked }
+        place()
+        fill()
+        menu:Show()
     end)
     g:SetScript("OnEnter", function(self)
         if type(GameTooltip) ~= "table" then return end
