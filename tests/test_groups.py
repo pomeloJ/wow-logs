@@ -514,10 +514,11 @@ def test_buffs_and_debuffs_with_their_times(client):
 
 def test_replay_assets(client):
     # the party page's 3D replay: its script and three.js come from this server, as scripts
-    for name in ("replay.js", "three.module.min.js"):
+    for name in ("replay.js", "scenery.js", "three.module.min.js"):
         r = client.get(f"/assets/{name}")
         assert r.status_code == 200 and r.headers["content-type"].startswith("text/javascript")
     assert 'from "./three.module.min.js"' in client.get("/assets/replay.js").text
+    assert 'from "./scenery.js"' in client.get("/assets/replay.js").text
     assert "max-age" in client.get("/assets/three.module.min.js").headers["cache-control"]
     for name in ("party.html", "..%2Fmain.py", "vendor%2Fthree.module.min.js", "nope.js"):
         assert client.get(f"/assets/{name}").status_code == 404
