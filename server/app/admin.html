@@ -6,114 +6,282 @@
 <meta name="robots" content="noindex">
 <title>管理</title>
 <style>
-:root { --bg: #f4f1ea; --panel: #fffdf8; --ink: #2a2520; --muted: #7a7065; --line: #e2dbcd; --accent: #b5651d; --accent-soft: #f0dcc4; --ok: #3d7a4a; --bad: #a8402f; }
+:root { --bg: #f4f1ea; --panel: #fffdf8; --ink: #2a2520; --muted: #7a7065; --line: #e2dbcd; --accent: #b5651d; --accent-soft: #f0dcc4; --ok: #3d7a4a; --bad: #a8402f; --warn-soft: #f6e3c8; }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #17140f; --panel: #211d17; --ink: #ece5d8; --muted: #9c9182; --line: #3a332a; --accent: #e0964a; --accent-soft: #4a3520; --ok: #7fc08a; --bad: #e08a7a; }
+  :root { --bg: #17140f; --panel: #211d17; --ink: #ece5d8; --muted: #9c9182; --line: #3a332a; --accent: #e0964a; --accent-soft: #4a3520; --ok: #7fc08a; --bad: #e08a7a; --warn-soft: #3d2e1c; }
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
-main { max-width: 980px; margin: 0 auto; padding: 22px 16px 56px; }
-h1 { font-size: 24px; margin: 0 0 4px; } .sub { color: var(--muted); margin: 0 0 16px; }
-section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; min-width: 0; }
-h2 { font-size: 16px; margin: 0 0 10px; } .hint { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
-.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-input, select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 0; }
-input { flex: 1 1 180px; } select { flex: 1 1 200px; max-width: 100%; } td select { padding: 4px 8px; font-size: 13px; }
-button { font: inherit; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); background: none; color: var(--ink); cursor: pointer; white-space: nowrap; }
+main { max-width: 1000px; margin: 0 auto; padding: 22px 16px 56px; }
+header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+h1 { font-size: 22px; margin: 0; }
+.lan { font-size: 12px; padding: 2px 9px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
+header .grow { flex: 1 1 0; }
+h2 { font-size: 16px; margin: 0; }
+.muted { color: var(--muted); } .small { font-size: 13px; }
+button { font: inherit; font-size: 14px; padding: 6px 13px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; white-space: nowrap; }
+button:hover { border-color: var(--accent); }
 button.main { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-button.small { padding: 3px 10px; font-size: 13px; } button.danger { color: var(--bad); }
-.scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+button.mini { padding: 2px 9px; font-size: 12px; }
+button.danger { color: var(--bad); background: none; } button.danger:hover { border-color: var(--bad); }
+button.quiet { background: none; border-color: transparent; color: var(--muted); } button.quiet:hover { border-color: var(--line); color: var(--ink); }
+input, select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; min-width: 0; }
+/* the numbers at the top */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+.stat b { display: block; font-size: 22px; line-height: 1.2; }
+.stat span { font-size: 12px; color: var(--muted); }
+.stat.warn { border-color: var(--accent); background: var(--warn-soft); }
+/* tabs */
+.tabs { display: flex; gap: 4px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 14px; }
+.tabs button { flex: 1 1 0; border: 0; background: none; color: var(--muted); padding: 8px 6px; }
+.tabs button small { font-size: 11px; opacity: .8; margin-left: 4px; }
+.tabs button[aria-selected="true"] { background: var(--bg); color: var(--ink); font-weight: 600; }
+.pane[hidden] { display: none; }
+.tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.tools input { flex: 1 1 220px; }
+/* one card per person */
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 12px; overflow: hidden; }
+.card.fresh { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.card > .top { display: flex; align-items: center; gap: 12px; padding: 14px 16px; flex-wrap: wrap; }
+.card .who { flex: 1 1 260px; min-width: 0; display: flex; align-items: center; gap: 12px; }
+.face { width: 38px; height: 38px; border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent-soft); color: var(--accent); font-weight: 700; object-fit: cover; }
+.face.sm { width: 22px; height: 22px; font-size: 11px; }
+.who .name { font-size: 16px; font-weight: 700; }
+.who .acct { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.badge { font-size: 12px; padding: 2px 9px; border-radius: 99px; background: var(--bg); border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.badge.on { background: var(--accent-soft); border-color: transparent; color: var(--accent); font-weight: 600; }
+.badge.off { border-style: dashed; }
+.rows { border-top: 1px solid var(--line); padding: 4px 16px; }
+.row { display: grid; grid-template-columns: 6.5em minmax(0, 1fr); gap: 4px 12px; padding: 9px 0; font-size: 14px; align-items: start; }
+.row + .row { border-top: 1px dashed var(--line); }
+.row > .k { color: var(--muted); font-size: 13px; padding-top: 2px; }
+.list { display: flex; flex-direction: column; gap: 4px; }
+.item { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.item .when { color: var(--muted); font-size: 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip { font-size: 13px; padding: 1px 9px; border-radius: 99px; border: 1px solid var(--line); background: var(--bg); }
+.secret { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+code.token { font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 2px 8px; user-select: all; overflow-wrap: anywhere; }
+.secret code.token.hide { filter: blur(4px); user-select: none; cursor: pointer; }
+.card > .foot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 16px; border-top: 1px solid var(--line); background: var(--bg); }
+.card > .foot .grow { flex: 1 1 0; }
+/* the new-person form */
+.new { background: var(--panel); border: 1px solid var(--accent); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 10px; }
+.new .line { display: flex; gap: 8px; flex-wrap: wrap; }
+.new .line input { flex: 1 1 200px; } .new .line select { flex: 1 1 200px; }
+.new p { margin: 0; font-size: 13px; color: var(--muted); }
+/* tables (characters) */
+.scroll { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
 table { border-collapse: collapse; width: 100%; font-size: 14px; }
-th, td { padding: 7px 10px; border-top: 1px solid var(--line); text-align: left; white-space: nowrap; vertical-align: middle; }
+th, td { padding: 8px 12px; border-top: 1px solid var(--line); text-align: left; white-space: nowrap; vertical-align: middle; }
 thead th { border-top: 0; color: var(--muted); font-weight: 600; font-size: 13px; }
-code.token { font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; user-select: all; }
-.free { color: var(--muted); } .say { font-size: 14px; margin-top: 10px; min-height: 1.4em; } .say.ok { color: var(--ok); } .say.bad { color: var(--bad); }
-.empty { color: var(--muted); padding: 6px 0; }
+td select { padding: 4px 8px; font-size: 13px; }
+tr.nobody td:first-child::before { content: "●"; color: var(--accent); margin-right: 6px; font-size: 10px; vertical-align: 2px; }
+.empty { color: var(--muted); padding: 18px; text-align: center; border: 1px dashed var(--line); border-radius: 12px; font-size: 14px; }
+.say { font-size: 14px; min-height: 1.4em; margin: 0 0 10px; } .say.ok { color: var(--ok); } .say.bad { color: var(--bad); }
+.section-title { display: flex; align-items: baseline; gap: 8px; margin: 18px 0 8px; }
+.section-title:first-child { margin-top: 0; }
+@media (max-width: 560px) { .row { grid-template-columns: 1fr; } .row > .k { padding-top: 0; } }
 </style>
 </head>
 <body>
 <main>
-  <h1>管理</h1>
-  <p class="sub">每個人一個權杖，他的角色都用同一個。這一頁沒有密碼，只有和伺服器在同一個區域網路的電腦打得開。</p>
-
-  <section>
-    <h2>產生權杖</h2>
-    <div class="row">
-      <input id="label" type="text" maxlength="60" placeholder="這是誰的，例如：小明" autocomplete="off">
-      <select id="bind" aria-label="先給他的角色"><option value="">不先指定角色</option></select>
-      <button class="main" id="make" type="button">產生</button>
-    </div>
-    <p class="hint">一個權杖代表一個人。把它交給對方，填進 AdventureSync 視窗的「權杖」欄：他用這個權杖上傳過的角色都算他的，換角色玩不用換權杖。
-      角色是用遊戲裡的角色編號認的；一個角色第一次由誰的權杖上傳，就歸誰，別人的權杖之後傳同一個角色會被拒絕。同一個權杖也能讓他在瀏覽器看自己所有的角色。</p>
-    <div class="say" id="say" role="status"></div>
-  </section>
-
-  <section>
-    <h2>權杖</h2>
-    <div class="scroll" id="tokens"></div>
-  </section>
-
-  <section>
-    <h2>角色</h2>
-    <div class="scroll" id="chars"></div>
-  </section>
-
-  <section>
-    <h2>Google 帳號 <small>BETA</small></h2>
-    <p class="hint">用 Google 登入過網頁的帳號。第一次登入時本人貼上自己的權杖就會綁定，之後只要 Google 登入就能看那個權杖名下的角色；
-      綁到唯讀或主權杖的帳號看得到全部角色。用 Google 登入只能看，不能上傳。刪除權杖時，綁在它上面的帳號也會一起失去存取。</p>
-    <div class="scroll" id="google"></div>
-  </section>
+  <header>
+    <h1>管理</h1>
+    <span class="lan" title="這一頁沒有密碼，只有和伺服器在同一個區域網路的電腦打得開">🔒 只限區網</span>
+    <span class="grow"></span>
+    <button type="button" class="quiet" id="reload">↻ 重新整理</button>
+  </header>
+  <div class="stats" id="stats"></div>
+  <div class="say" id="say" role="status"></div>
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <section class="pane" id="pane-people"></section>
+  <section class="pane" id="pane-chars" hidden></section>
+  <section class="pane" id="pane-google" hidden></section>
 </main>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
-const el = (tag, attrs, ...kids) => { const n = document.createElement(tag); for (const [k, v] of Object.entries(attrs || {})) k === "text" ? n.textContent = v : n.setAttribute(k, v); n.append(...kids.filter(k => k != null)); return n; };
+const el = (tag, attrs, ...kids) => { const n = document.createElement(tag); for (const [k, v] of Object.entries(attrs || {})) k === "text" ? n.textContent = v : k === "class" ? n.className = v : n.setAttribute(k, v); n.append(...kids.filter(k => k != null && k !== false)); return n; };
 const CLASS = { WARRIOR: "戰士", PALADIN: "聖騎士", HUNTER: "獵人", ROGUE: "盜賊", PRIEST: "牧師", SHAMAN: "薩滿", MAGE: "法師", WARLOCK: "術士", DRUID: "德魯伊" };
 const when = iso => iso ? new Date(iso).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }) : "—";
+const ago = iso => {
+  if (!iso) return "從沒用過";
+  const s = (Date.now() - new Date(iso)) / 1000;
+  return s < 120 ? "剛剛" : s < 3600 ? `${Math.round(s / 60)} 分鐘前` : s < 86400 ? `${Math.round(s / 3600)} 小時前` : s < 86400 * 30 ? `${Math.round(s / 86400)} 天前` : when(iso);
+};
+const latest = (...isos) => isos.filter(Boolean).sort().pop() || null;
 const say = (text, kind) => { $("say").textContent = text; $("say").className = "say " + (kind || ""); };
 const api = (path, method = "GET", body) => fetch("/api/v1/admin" + path, { method, headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined })
   .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(new Error(e.detail || r.status)), () => Promise.reject(new Error(r.status))));
 function copy(text, button) {
-  const done = () => { const was = button.textContent; button.textContent = "已複製"; setTimeout(() => { button.textContent = was; }, 1200); };
-  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, () => {});
-  else { const t = el("textarea"); t.value = text; document.body.append(t); t.select(); try { document.execCommand("copy"); done(); } catch (e) { /* select it by hand */ } t.remove(); }
+  const done = () => { const was = button.textContent; button.textContent = "✓ 已複製"; setTimeout(() => { button.textContent = was; }, 1200); };
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, () => window.prompt("複製這段", text));
+  else { const t = el("textarea"); t.value = text; document.body.append(t); t.select(); try { document.execCommand("copy"); done(); } catch (e) { window.prompt("複製這段", text); } t.remove(); }
 }
-const table = (heads, rows) => el("table", null, el("thead", null, el("tr", null, ...heads.map(h => el("th", { text: h })))), el("tbody", null, ...rows));
-const act = (text, cls, run) => { const b = el("button", { type: "button", class: "small " + cls, text }); b.addEventListener("click", run); return b; };
+const btn = (text, cls, run, title) => { const b = el("button", { type: "button", class: cls || "", text, title: title || "" }); b.addEventListener("click", run); return b; };
+const face = (a, small) => a && a.picture ? el("img", { class: "face" + (small ? " sm" : ""), src: a.picture, alt: "", referrerpolicy: "no-referrer" })
+  : el("span", { class: "face" + (small ? " sm" : ""), text: ((a && (a.name || a.email)) || "?").trim().charAt(0).toUpperCase() });
+const badge = (text, on, title) => el("span", { class: "badge " + (on ? "on" : "off"), text, title: title || "" });
+
+let data = null, tab = "people", fresh = null, filter = "";
+try { tab = localStorage.getItem("admin-tab") || "people"; } catch (e) { /* the first tab */ }
+
+function tabs(d) {
+  const nobody = d.characters.filter(c => !c.token).length;
+  const loose = d.google.filter(g => !g.kind).length;
+  const list = [["people", "使用者", d.tokens.length], ["chars", "角色", d.characters.length + (nobody ? ` · ${nobody} 未歸屬` : "")],
+    ["google", "Google 帳號", d.google.length + (loose ? ` · ${loose} 未綁定` : "")]];
+  $("tabs").replaceChildren(...list.map(([key, name, n]) => {
+    const b = btn("", "", () => { tab = key; try { localStorage.setItem("admin-tab", key); } catch (e) { /* not kept */ } show(); });
+    b.setAttribute("role", "tab"); b.setAttribute("aria-selected", String(key === tab));
+    b.append(name, el("small", { text: String(n) }));
+    return b;
+  }));
+}
+function show() {
+  for (const k of ["people", "chars", "google"]) $("pane-" + k).hidden = k !== tab;
+  for (const b of $("tabs").children) b.setAttribute("aria-selected", String(b.firstChild.textContent === { people: "使用者", chars: "角色", google: "Google 帳號" }[tab]));
+}
+
+function stats(d) {
+  const P = Object.values(d.people || {});
+  const shares = P.reduce((n, p) => n + p.shares.length, 0), voice = P.reduce((n, p) => n + p.voice.length, 0);
+  const bound = d.google.filter(g => g.kind).length;
+  const pairs = Math.round(P.reduce((n, p) => n + p.friends, 0) / 2);
+  const week = d.tokens.filter(t => latest(t.last_used_at, ...(d.people[t.token] || { sync: [] }).sync.map(s => s.last_used_at))
+    && Date.now() - new Date(latest(t.last_used_at, ...(d.people[t.token] || { sync: [] }).sync.map(s => s.last_used_at))) < 7 * 86400000).length;
+  const nobody = d.characters.filter(c => !c.token).length;
+  const tile = (n, label, warn, title) => el("div", { class: "stat" + (warn ? " warn" : ""), title: title || "" }, el("b", { text: String(n) }), el("span", { text: label }));
+  $("stats").replaceChildren(tile(d.tokens.length, `使用者 · ${week} 人這週有同步`), tile(`${bound} / ${d.google.length}`, "Google 帳號已綁定"),
+    tile(d.characters.length, "角色" + (nobody ? ` · ${nobody} 未歸屬` : ""), nobody > 0), tile(shares, "分享連結"), tile(voice, "語音 API"), tile(pairs, "好友關係"));
+}
+
+function personCard(d, t) {
+  const p = d.people[t.token] || { accounts: [], shares: [], voice: [], sync: [], friends: 0, invites: 0 };
+  const main = p.accounts[0];
+  const active = latest(t.last_used_at, ...p.sync.map(s => s.last_used_at));
+  const secret = el("code", { class: "token hide", text: t.token, title: "點一下顯示" });
+  secret.addEventListener("click", () => secret.classList.remove("hide"));
+  const cp = btn("複製", "mini", () => copy(t.token, cp));
+  const row = (k, ...v) => el("div", { class: "row" }, el("span", { class: "k", text: k }), el("div", null, ...v));
+  const none = text => el("span", { class: "muted small", text });
+  const items = (list, render) => list.length ? el("div", { class: "list" }, ...list.map(render)) : null;
+  const card = el("article", { class: "card" + (t.token === fresh ? " fresh" : "") },
+    el("div", { class: "top" },
+      el("div", { class: "who" }, face(main ? { ...main, name: t.label || main.name } : { name: t.label || "?" }),
+        el("div", { style: "min-width:0" }, el("div", { class: "name", text: t.label || "（沒有名字）" }),
+          el("div", { class: "acct", text: main ? `${main.name ? main.name + " · " : ""}${main.email}` + (p.accounts.length > 1 ? ` 等 ${p.accounts.length} 個帳號` : "") : "還沒綁定 Google 帳號" }))),
+      el("div", { class: "badges" },
+        badge(active ? "同步 " + ago(active) : "還沒同步過", active && Date.now() - new Date(active) < 7 * 86400000, active ? when(active) : ""),
+        badge(`${p.shares.length} 分享`, p.shares.length > 0), badge(`${p.voice.length} 語音`, p.voice.length > 0),
+        badge(`${p.friends} 好友` + (p.invites ? ` · ${p.invites} 邀請中` : ""), p.friends > 0))),
+    el("div", { class: "rows" },
+      row("角色", t.characters.length ? el("div", { class: "chips" }, ...t.characters.map(c => el("span", { class: "chip", text: c.name || c.id }))) : none("還沒上傳過角色")),
+      row("同步權杖", el("div", { class: "list" },
+        el("div", { class: "secret" }, secret, cp, el("span", { class: "when small muted", text: `最後使用 ${ago(t.last_used_at)}` })),
+        ...p.sync.map(s => el("div", { class: "item small" }, el("span", { text: "＋ " + (s.label || "另一台電腦") }), el("span", { class: "when", text: `最後使用 ${ago(s.last_used_at)}` }))))),
+      row("Google", items(p.accounts, a => el("div", { class: "item" }, face(a, true), el("span", { text: a.name || a.email }),
+        a.name ? el("span", { class: "when", text: a.email }) : null, el("span", { class: "when", text: `· 登入 ${ago(a.last_seen)}` }),
+        btn("解除綁定", "mini danger", () => unbind(a)))) || none("沒有綁定，本人用 Google 登入後貼上權杖就會綁定")),
+      row("分享連結", items(p.shares, s => el("div", { class: "item small" }, el("span", { text: s.label || "（沒有名字）" }),
+        el("span", { class: "badge", text: s.all ? "全部區塊" : "部分區塊" }), el("span", { class: "when", text: `最後使用 ${ago(s.last_used_at)}` }))) || none("沒有")),
+      p.voice.length ? row("語音 API", items(p.voice, v => el("div", { class: "item small" }, el("span", { text: v.label || "（沒有名字）" }),
+        el("span", { class: "when", text: `最後使用 ${ago(v.last_used_at)}` })))) : null),
+    el("div", { class: "foot" }, el("span", { class: "muted small", text: `建立於 ${when(t.created_at)}` }), el("span", { class: "grow" }),
+      btn("刪除使用者", "mini danger", () => confirm(`刪除「${t.label || t.token}」？\n\n他的同步程式會立刻無法上傳，Google 綁定、分享連結、語音 API 與額外的同步權杖也會一起失效。\n已上傳的資料不會動，名下的角色會變成不屬於任何人。`)
+        && api(`/tokens/${t.token}`, "DELETE").then(() => { say(`已刪除「${t.label || "使用者"}」`, "ok"); return load(); }))));
+  card.dataset.find = [t.label, ...p.accounts.map(a => a.email + " " + (a.name || "")), ...t.characters.map(c => c.name || c.id)].join(" ").toLowerCase();
+  return card;
+}
+
+function unbind(a) {
+  if (confirm(`解除 ${a.email} 的綁定？\n他還能用 Google 登入，但要重新貼權杖才看得到資料；他的好友也會看不到他分享的角色。`))
+    api(`/google/${encodeURIComponent(a.sub)}`, "DELETE").then(() => { say(`已解除 ${a.email}`, "ok"); return load(); });
+}
+
+function newForm(d) {
+  const label = el("input", { type: "text", maxlength: "60", placeholder: "這是誰的，例如：小明", autocomplete: "off" });
+  const bind = el("select", { "aria-label": "先給他的角色" }, el("option", { value: "", text: "不先指定角色" }),
+    ...d.characters.filter(c => !c.token).map(c => el("option", { value: c.id, text: `先把 ${c.name || c.id} 給他` })));
+  const box = el("div", { class: "new" }, el("b", { text: "新增使用者" }),
+    el("div", { class: "line" }, label, bind, btn("產生權杖", "main", () => api("/tokens", "POST", { label: label.value.trim() || null, character_id: bind.value || null })
+      .then(r => { fresh = r.token; say("已產生權杖，複製後交給對方填進 AdventureSync 的「權杖」欄。", "ok"); return load(); }, e => say("產生失敗：" + e.message, "bad")))),
+    el("p", { text: "一個權杖代表一個人：他用這個權杖上傳過的角色都算他的，換角色玩不用換權杖。角色第一次由誰的權杖上傳就歸誰。" }));
+  return box;
+}
+
+function people(d) {
+  const pane = $("pane-people");
+  let open = false;
+  const formSlot = el("div");
+  const search = el("input", { type: "search", placeholder: "找人：名字、Email 或角色", value: filter });
+  const cards = el("div");
+  const apply = () => { filter = search.value.trim().toLowerCase(); let n = 0;
+    for (const c of cards.children) { const hit = !filter || (c.dataset.find || "").includes(filter); c.hidden = !hit; n += hit; }
+    count.textContent = filter ? `${n} 人符合` : ""; };
+  const count = el("span", { class: "muted small" });
+  search.addEventListener("input", apply);
+  const add = btn("＋ 新增使用者", "main", () => { open = !open; formSlot.replaceChildren(open ? newForm(d) : ""); add.textContent = open ? "收起" : "＋ 新增使用者"; });
+  // the most recently active first
+  const order = d.tokens.slice().sort((a, b) => (latest(b.last_used_at, ...(d.people[b.token] || { sync: [] }).sync.map(s => s.last_used_at)) || b.created_at || "")
+    .localeCompare(latest(a.last_used_at, ...(d.people[a.token] || { sync: [] }).sync.map(s => s.last_used_at)) || a.created_at || ""));
+  if (fresh) order.sort((a, b) => (b.token === fresh) - (a.token === fresh));
+  cards.replaceChildren(...order.map(t => personCard(d, t)));
+  pane.replaceChildren(el("div", { class: "tools" }, search, count, add), formSlot,
+    d.tokens.length ? cards : el("div", { class: "empty", text: "還沒有使用者。按「＋ 新增使用者」產生第一個權杖。" }));
+  if (!d.tokens.length) add.click();
+  apply();
+}
+
+function chars(d) {
+  const rows = d.characters.map(c => {
+    const give = el("select", { "aria-label": `${c.name || c.id} 屬於誰` }, el("option", { value: "", text: "不屬於任何人" }),
+      ...d.tokens.map(t => el("option", { value: t.token, text: t.label || t.token.slice(0, 8) + "…" })));
+    give.value = c.token || "";
+    give.addEventListener("change", () => api(`/characters/${encodeURIComponent(c.id)}/token` + (give.value ? "?token=" + encodeURIComponent(give.value) : ""), "POST")
+      .then(() => { say(`${c.name || c.id} 已改為${give.value ? "屬於 " + give.selectedOptions[0].text : "不屬於任何人"}`, "ok"); return load(); }, e => { say("更改失敗：" + e.message, "bad"); load(); }));
+    return el("tr", { class: c.token ? "" : "nobody", title: c.token ? "" : "由主權杖上傳，或等人認領" }, el("td", { text: c.name || c.id }), el("td", { text: CLASS[c.class] || c.class || "—" }),
+      el("td", { text: c.level || "—" }), el("td", { text: (c.events || 0).toLocaleString() }), el("td", { text: ago(c.updated_at) }), el("td", null, give));
+  });
+  $("pane-chars").replaceChildren(d.characters.length
+    ? el("div", { class: "scroll" }, el("table", null, el("thead", null, el("tr", null, ...["角色", "職業", "等級", "事件", "最後更新", "屬於"].map(h => el("th", { text: h })))), el("tbody", null, ...rows)))
+    : el("div", { class: "empty", text: "還沒有任何角色上傳過資料。" }),
+    el("p", { class: "muted small", text: "● 標記的角色不屬於任何人：由主權杖上傳，或等下一個上傳它的個人權杖認領。改「屬於」不會動到已記錄的資料。" }));
+}
+
+function google(d) {
+  const everyone = d.people["*"] || { accounts: [], shares: [], voice: [], friends: 0, invites: 0 };
+  const loose = d.google.filter(g => !g.kind);
+  const line = (g, extra) => el("div", { class: "card" }, el("div", { class: "top" },
+    el("div", { class: "who" }, face({ ...g, picture: (Object.values(d.people).flatMap(p => p.accounts).find(a => a.sub === g.sub) || {}).picture }),
+      el("div", { style: "min-width:0" }, el("div", { class: "name", text: g.name || g.email }), el("div", { class: "acct", text: `${g.email} · 登入 ${ago(g.last_seen)}` }))),
+    ...extra));
+  const owner = g => g.kind === "personal" ? (d.tokens.find(t => t.token === g.token) || {}).label || "某個權杖" : "";
+  const bound = d.google.filter(g => g.kind === "personal");
+  $("pane-google").replaceChildren(
+    el("div", { class: "section-title" }, el("h2", { text: "還沒綁定" }), el("span", { class: "muted small", text: "登入過但還沒貼權杖，看不到任何資料" })),
+    loose.length ? el("div", null, ...loose.map(g => line(g, [badge("未綁定", false)]))) : el("div", { class: "empty", text: "沒有。" }),
+    el("div", { class: "section-title" }, el("h2", { text: "看得到全部角色" }), el("span", { class: "muted small", text: "綁定唯讀或主權杖的帳號" })),
+    everyone.accounts.length ? el("div", null, ...everyone.accounts.map(a => line(a, [
+      badge(`${everyone.shares.length} 分享`, everyone.shares.length > 0), badge(`${everyone.friends} 好友`, everyone.friends > 0), btn("解除綁定", "mini danger", () => unbind(a))])))
+      : el("div", { class: "empty", text: "沒有。" }),
+    el("div", { class: "section-title" }, el("h2", { text: "綁定到個人權杖" }), el("span", { class: "muted small", text: "詳細資料在「使用者」" })),
+    bound.length ? el("div", null, ...bound.map(g => line(g, [el("span", { class: "badge on", text: "→ " + owner(g) }), btn("解除綁定", "mini danger", () => unbind(g))])))
+      : el("div", { class: "empty", text: "沒有。" }),
+    el("p", { class: "muted small", text: "用 Google 登入只能看，不能上傳。第一次登入時本人貼上自己的權杖就會綁定；刪除權杖時綁在上面的帳號也會一起失去存取。" }));
+}
 
 function draw(d) {
-  const pick = $("bind").value;
-  $("bind").replaceChildren(el("option", { value: "", text: "不先指定角色" }), ...d.characters.filter(c => !c.token).map(c => el("option", { value: c.id, text: `先把 ${c.name || c.id} 給他` })));
-  $("bind").value = [...$("bind").options].some(o => o.value === pick) ? pick : "";
-  $("tokens").replaceChildren(d.tokens.length ? table(["誰的", "權杖", "名下角色", "建立", "最後使用", ""], d.tokens.map(t => {
-    const cp = act("複製", "", () => copy(t.token, cp));
-    return el("tr", null, el("td", { text: t.label || "—" }), el("td", null, el("code", { class: "token", text: t.token }), " ", cp),
-      el("td", { class: t.characters.length ? "" : "free", text: t.characters.length ? t.characters.map(c => c.name || c.id).join("、") : "還沒上傳過" }),
-      el("td", { text: when(t.created_at) }), el("td", { text: when(t.last_used_at) }),
-      el("td", null, act("刪除", "danger", () => confirm("刪除這個權杖？用它的同步程式會立刻無法上傳。\n已上傳的資料不會動，名下的角色會變成不屬於任何人。") && api(`/tokens/${t.token}`, "DELETE").then(load))));
-  })) : el("div", { class: "empty", text: "還沒有個人權杖。上面按「產生」建立第一個。" }));
-  $("chars").replaceChildren(d.characters.length ? table(["角色", "職業", "等級", "事件", "最後更新", "屬於", ""], d.characters.map(c => {
-    const give = el("select", { "aria-label": `${c.name || c.id} 屬於誰` }, el("option", { value: "", text: "不屬於任何人" }), ...d.tokens.map(t => el("option", { value: t.token, text: t.label || t.token })));
-    give.value = c.token || "";
-    give.addEventListener("change", () => api(`/characters/${encodeURIComponent(c.id)}/token` + (give.value ? "?token=" + encodeURIComponent(give.value) : ""), "POST").then(load, e => { say("更改失敗：" + e.message, "bad"); load(); }));
-    return el("tr", null, el("td", { text: c.name || c.id }), el("td", { text: CLASS[c.class] || c.class || "—" }), el("td", { text: c.level || "—" }), el("td", { text: (c.events || 0).toLocaleString() }),
-      el("td", { text: when(c.updated_at) }), el("td", null, give), el("td", { class: "free", text: c.token ? "" : "由主權杖上傳，或等人認領" }));
-  })) : el("div", { class: "empty", text: "還沒有任何角色上傳過資料。" }));
-  const bound = g => g.kind === "all" ? "全部角色（唯讀或主權杖）" : g.kind === "personal" ? (g.token_label || g.token) : "";
-  $("google").replaceChildren((d.google || []).length ? table(["帳號", "名字", "綁定到", "最後登入", ""], d.google.map(g =>
-    el("tr", null, el("td", { text: g.email }), el("td", { text: g.name || "—" }),
-      el("td", { class: g.kind ? "" : "free", text: g.kind ? bound(g) : "還沒綁定（看不到任何資料）" }), el("td", { text: when(g.last_seen) }),
-      el("td", null, g.kind ? act("解除綁定", "danger", () => confirm(`解除 ${g.email} 的綁定？\n他還能用 Google 登入，但要重新貼權杖才看得到資料。`)
-        && api(`/google/${encodeURIComponent(g.sub)}`, "DELETE").then(load)) : null))))
-    : el("div", { class: "empty", text: "還沒有人用 Google 登入過。" }));
+  data = d;
+  stats(d); tabs(d); people(d); chars(d); google(d); show();
 }
 const load = () => api("/overview").then(draw, e => say("讀取失敗：" + e.message, "bad"));
-function make(characterId) {
-  api("/tokens", "POST", { label: $("label").value.trim() || null, character_id: characterId || null })
-    .then(r => { say(`已產生：${r.token}`, "ok"); $("label").value = ""; $("bind").value = ""; return load(); }, e => say("產生失敗：" + e.message, "bad"));
-}
-$("make").addEventListener("click", () => make($("bind").value));
+$("reload").addEventListener("click", () => { say(""); load().then(() => say("已更新 " + new Date().toLocaleTimeString("zh-TW", { hour12: false }), "ok")); });
 load();
 </script>
 </body>

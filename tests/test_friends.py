@@ -169,3 +169,19 @@ def test_what_each_side_shows_is_chosen_before_becoming_friends(tmp_path):
     assert zz.get(f"/api/v1/me/friends/invite/{old}").json()["shows_you"]["sections"] == look["default"]
     g, = zz.post("/api/v1/me/friends/accept", json={"code": old}).json()["friends"]
     assert g["shown"]["sections"] == look["default"] and g["mine"]["sections"] == look["default"]
+
+
+def test_the_admin_page_shows_what_each_person_has_set_up(tmp_path):
+    lan, browser = site(tmp_path)
+    ming, ming_token = person(lan, browser, "s-ming", "小明", ["m1"])
+    hua, hua_token = person(lan, browser, "s-hua", "小華", ["h1"])
+    befriend(ming, hua)
+    ming.post("/api/v1/me/friends/invite")                                    # one still open
+    made = ming.post("/api/v1/me/tokens", json={"label": "給朋友"}).json()["made"]
+    d = lan.get("/api/v1/admin/overview").json()
+    me = d["people"][ming_token]
+    assert [a["email"] for a in me["accounts"]] == ["s-ming@gmail.com"]
+    assert [s["label"] for s in me["shares"]] == ["給朋友"] and me["voice"] == [] and me["sync"] == []
+    assert (me["friends"], me["invites"]) == (1, 1)
+    assert d["people"][hua_token]["friends"] == 1 and d["people"][hua_token]["invites"] == 0
+    assert made not in str(d["people"])                                       # sharing tokens are named, never shown

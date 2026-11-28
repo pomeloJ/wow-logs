@@ -528,7 +528,7 @@ function showMe(account) {
   const box = document.getElementById("me");
   const face = account && account.picture ? el("img", { src: account.picture, alt: "", referrerpolicy: "no-referrer" })
     : el("i", { text: account ? (account.name || account.email || "?").trim().charAt(0).toUpperCase() : "🔑" });
-  const label = account ? account.email || account.name || "Google 帳號" : SHARED ? "分享連結" : "Token 登入";
+  const label = account ? account.name || (account.email || "").split("@")[0] || "Google 帳號" : SHARED ? "分享連結" : "Token 登入";
   box.replaceChildren(face, el("span", { class: "me-text", text: label }));
   box.title = account ? [account.name, account.email].filter(Boolean).join("\n") : SHARED ? "用分享連結看的" : "用 Token 進入，沒有登入 Google";
   box.hidden = false;

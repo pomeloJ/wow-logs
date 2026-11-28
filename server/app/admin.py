@@ -8,6 +8,7 @@ import ipaddress
 import os
 import re
 import secrets
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -99,7 +100,37 @@ def register(app, db) -> None:
                 if g["kind"] == "personal" and g["token_label"] is None and not conn.execute(
                         "SELECT 1 FROM upload_tokens WHERE token=?", (g["token"],)).fetchone():
                     g["kind"] = g["token"] = None
-        return {"characters": chars, "tokens": tokens, "google": google}
+            people = person_details(conn, tokens, google)
+        return {"characters": chars, "tokens": tokens, "google": google, "people": people}
+
+    def person_details(conn, tokens: List[Dict[str, Any]], google: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """What each person has set up, for the page to show one card per person: keyed by their
+        upload token, and '*' for accounts bound to every character. Sharing and voice tokens are
+        named, never shown; friends and invites are counted by the Google accounts bound."""
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        pictures = {r["sub"]: r["picture"] for r in conn.execute("SELECT sub, picture FROM google_accounts")}
+        out: Dict[str, Any] = {}
+        for owner in [t["token"] for t in tokens] + ["*"]:
+            subs = [g["sub"] for g in google if (g["kind"] == "personal" and g["token"] == owner) or (owner == "*" and g["kind"] == "all")]
+            shares, voice = [], []
+            if "view_tokens" in tables:
+                for r in conn.execute("SELECT label, sections, kind, created_at, last_used_at FROM view_tokens WHERE owner=? "
+                                      "ORDER BY created_at", (owner,)):
+                    (voice if r["kind"] == "voice" else shares).append(
+                        {"label": r["label"], "created_at": r["created_at"], "last_used_at": r["last_used_at"],
+                         "all": r["sections"] is None})
+            sync = [dict(r) for r in conn.execute("SELECT label, created_at, last_used_at FROM sync_aliases WHERE owner=? "
+                                                  "ORDER BY created_at", (owner,))] if owner != "*" else []
+            friends = invites = 0
+            if subs and "friendships" in tables:
+                marks = ",".join("?" * len(subs))
+                friends = conn.execute(f"SELECT COUNT(*) FROM friendships WHERE a IN ({marks}) OR b IN ({marks})", subs + subs).fetchone()[0]
+                invites = conn.execute(f"SELECT COUNT(*) FROM friend_invites WHERE sub IN ({marks}) AND expires>?",
+                                       subs + [time.time()]).fetchone()[0]
+            out[owner] = {"accounts": [{**{k: g[k] for k in ("sub", "email", "name", "last_seen")}, "picture": pictures.get(g["sub"])}
+                                       for g in google if g["sub"] in subs],
+                          "shares": shares, "voice": voice, "sync": sync, "friends": friends, "invites": invites}
+        return out
 
     @app.delete("/api/v1/admin/google/{sub}", include_in_schema=False, dependencies=only)
     def unbind_google(sub: str):
