@@ -345,6 +345,13 @@ a.btn2 { display: inline-block; text-decoration: none; }
 .pick-acts { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; justify-content: flex-end; }
 .pick-acts .grow, .tk-title .grow { flex: 1 1 0; min-width: 0; }
 .tk input.invite-link { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; padding: 6px 9px; cursor: text; }
+.share-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.share-box { min-width: 0; padding: 8px 12px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.sb-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 24px; font-size: 12px; color: var(--muted); }
+.sb-who { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.sb-what { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.tk-title .face.initial { display: inline-flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+@media (max-width: 520px) { .share-pair { grid-template-columns: 1fr; } }
 .owned .sum { padding-top: 2px; line-height: 1.5; overflow-wrap: anywhere; }
 .tk .tk-add.invite-new { border-style: solid; border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
   background: color-mix(in srgb, var(--accent) 7%, var(--panel)); }
@@ -821,7 +828,7 @@ async function tokensPanel() {
       const name = v.label || "（沒有名稱）";
       const url = `${location.origin}/voice?t=${encodeURIComponent(v.token)}`;
       voice.append(card(v, name, null, dates(v, "最後使用"),
-        [field("權杖", address(v.token)),
+        [field("權杖", secret(v.token, v.token === fresh)),      // hidden until asked for, like the sync tokens
          charsField(v),
          field("用法", el("ul", { class: "tk-how" },
            el("li", null, "語音網址：", el("code", { text: "/voice?t=權杖" }), "（用「複製語音網址」）"),
@@ -910,12 +917,25 @@ async function friendCall(method, path, body) {
 const PART_SHORT = { location: "位置", activity: "動態", items: "裝備", bank: "銀行", trades: "交易", quests: "任務",
   character: "屬性", groups: "組隊", screenshots: "截圖" };
 const charText = c => shownName(c) + (c.level ? ` Lv${c.level}` : "");
-// one line: which characters, which parts ("全部角色 · 位置、動態、裝備")
-function shareSummary(d, sections, chars) {
-  const who = chars === null ? (d.kind === "personal" ? "全部角色" : "沒有角色")
-    : (chars.length ? chars.map(c => typeof c === "string" ? (d.my_characters.find(m => m.id === c) || { name: c }) : c).map(shownName).join("、") : "沒有角色");
-  const what = sections.length === d.parts.length ? "全部" : sections.length ? sections.map(k => PART_SHORT[k] || k).join("、") : "只有名字與等級";
-  return `${who} · ${what}`;
+// which characters a choice shares: "全部角色", or their names (ids looked up in d.my_characters)
+function shareWho(d, chars) {
+  if (chars === null) return d.kind === "personal" ? "全部角色" : "沒有角色";
+  return chars.length ? chars.map(c => typeof c === "string" ? (d.my_characters.find(m => m.id === c) || { name: c }) : c).map(shownName).join("、") : "沒有角色";
+}
+// which parts, said the short way: what is left out when that is the fewer ("全部，除了 銀行、交易")
+function shareWhat(d, sections) {
+  const short = k => PART_SHORT[k] || k;
+  if (sections.length === d.parts.length) return "全部區塊";
+  if (!sections.length) return "只有名字與等級";
+  const out = d.parts.map(p => p.key).filter(k => !sections.includes(k));
+  return out.length < sections.length ? "全部，除了 " + out.map(short).join("、") : sections.map(short).join("、");
+}
+const shareSummary = (d, sections, chars) => `${shareWho(d, chars)} · ${shareWhat(d, sections)}`;
+// a box of what one side shares: the characters, then the parts; the full list on hover
+function shareBox(d, title, sections, chars, ...tools) {
+  return el("div", { class: "share-box", title: sections.map(k => (d.parts.find(p => p.key === k) || { name: k }).name).join("、") || "只有名字與等級" },
+    el("div", { class: "sb-head" }, el("span", { text: title }), ...tools),
+    el("div", { class: "sb-who", text: shareWho(d, chars) }), el("div", { class: "sb-what", text: shareWhat(d, sections) }));
 }
 function shareChooser(d, init, opts) {
   opts = opts || {};
@@ -1000,12 +1020,15 @@ async function friendsPanel() {
         button2("移除好友", ask({ title: `移除好友「${f.name}」？`, text: "你們會立刻看不到彼此的角色。之後想再當好友，要重新邀請。", ok: "移除", danger: true },
           "POST", "/remove", { id: f.id }), "bad"));
       const look = button2("查看角色", () => { s.close(); viewFriend(f); }, "go");
-      if (!f.shown.characters.length) look.disabled = true;
-      list.append(el("div", { class: "tk-item" },
-        el("div", { class: "tk-title" }, f.picture ? el("img", { class: "face", src: f.picture, alt: "", referrerpolicy: "no-referrer" }) : null,
+      if (!f.shown.characters.length) { look.disabled = true; look.title = "對方還沒分享角色給你"; }
+      const face = f.picture ? el("img", { class: "face", src: f.picture, alt: "", referrerpolicy: "no-referrer" })
+        : el("span", { class: "face initial", text: (f.name || "?").trim().charAt(0).toUpperCase() });
+      list.append(el("div", { class: "tk-item friend" },
+        el("div", { class: "tk-title" }, face,
           el("div", { class: "grow" }, el("b", { text: f.name }), f.since ? el("div", { class: "tk-meta", text: `${full(f.since).split(" ")[0]} 成為好友` }) : null), look),
-        row("給你看", shareSummary(d, f.shown.sections, f.shown.characters)),
-        row("你分享", shareSummary(d, f.mine.sections, f.mine.all ? null : f.mine.characters), edit),
+        el("div", { class: "share-pair" },
+          shareBox(d, "他給你看", f.shown.sections, f.shown.characters),
+          shareBox(d, "你給他看", f.mine.sections, f.mine.all ? null : f.mine.characters, edit)),
         editor));
     }
     // invites: one short card each; what it shares can change until someone accepts it
@@ -1026,7 +1049,7 @@ async function friendsPanel() {
         el("div", { class: "tk-title" }, el("b", { text: v.code === fresh ? "新的邀請連結" : "邀請連結" }),
           el("span", { class: "tk-meta", title: `有效到 ${full(v.expires_at)}`, text: `還有 ${days} 天 · 還沒有人接受` })),
         el("div", { class: "tk-add-row" }, field, copyButton(link, "複製連結", true)),
-        row("對方可看", shareSummary(d, v.sections, v.characters), edit),
+        shareBox(d, "對方可以看到", v.sections, v.characters, edit),
         editor));
     }
     if (d.invites.length < d.max_invites) {
