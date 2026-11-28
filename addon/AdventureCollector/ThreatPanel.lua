@@ -1,6 +1,7 @@
 -- Live display: reads the current target directly, independently of saved combat samples.
 local _, ns = ...
-local panel, settings
+local panel, settings, options
+local editing = false
 local MAX_ROWS = 8
 local WHITE = "Interface\\Buttons\\WHITE8X8"
 local GREEN, AMBER, RED, GREY = {0.35, 0.85, 0.5}, {1, 0.72, 0.2}, {1, 0.3, 0.25}, {0.65, 0.65, 0.65}
@@ -105,11 +106,13 @@ local function position()
         panel:SetPoint(at.point, UIParent, at.relative, at.x, at.y)
     else panel:SetPoint("RIGHT", UIParent, "RIGHT", -40, 0) end
     panel:SetScale(settings.scale)
+    panel:SetAlpha(settings.alpha)
+    panel.background:SetColorTexture(0.035, 0.03, 0.02, settings.backgroundAlpha)
 end
 
 local function refresh()
     if not panel then return end
-    if not settings.enabled or (settings.combatOnly and not read(UnitAffectingCombat, "player")) then
+    if not editing and (not settings.enabled or (settings.combatOnly and not read(UnitAffectingCombat, "player"))) then
         panel:Hide(); return
     end
     panel:Show()
@@ -142,6 +145,60 @@ local function refresh()
     panel:SetHeight(170 + visible * 25)
 end
 
+local function openOptions()
+    if not options then
+        -- Independent parent keeps controls readable even when the panel is faint or tiny.
+        options = CreateFrame("Frame", "AdventureCollectorThreatOptions", UIParent)
+        options:SetSize(310, 300); options:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+        options:SetFrameStrata("DIALOG"); options:EnableMouse(true)
+        options:SetClampedToScreen(true); options:SetMovable(true); options:RegisterForDrag("LeftButton")
+        options:SetScript("OnDragStart", function(self) self:StartMoving() end)
+        options:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+        local bg = options:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints(); bg:SetColorTexture(0.06, 0.06, 0.06, 1)
+        text(options, 17, 16, -16, 280):SetText("仇恨面板設定")
+        text(options, 11, 16, -42, 280):SetText("即時預覽・自動保存・關閉後恢復顯示模式")
+        options.sliders = {}
+        local function slider(key, title, y, low, high)
+            local label = text(options, 13, 16, y, 280)
+            local s = CreateFrame("Slider", nil, options)
+            s:SetPoint("TOPLEFT", options, "TOPLEFT", 20, y - 23)
+            s:SetSize(270, 18); s:SetOrientation("HORIZONTAL")
+            s:SetMinMaxValues(low, high); s:SetValueStep(1); s:EnableMouse(true)
+            local track = s:CreateTexture(nil, "BACKGROUND")
+            track:SetPoint("LEFT", s, "LEFT", 0, 0); track:SetPoint("RIGHT", s, "RIGHT", 0, 0)
+            track:SetHeight(5); track:SetColorTexture(0.3, 0.3, 0.3, 1)
+            local thumb = s:CreateTexture(nil, "OVERLAY")
+            thumb:SetSize(12, 20); thumb:SetColorTexture(1, 0.72, 0.2, 1)
+            s:SetThumbTexture(thumb)
+            s:SetScript("OnValueChanged", function(_, value)
+                settings[key] = math.floor(value + 0.5) / 100
+                label:SetText(title .. "：" .. math.floor(value + 0.5) .. "%")
+                position()
+            end)
+            options.sliders[key] = s
+        end
+        slider("scale", "大小", -70, 50, 200)
+        slider("alpha", "整體不透明度（越低越透明）", -130, 20, 100)
+        slider("backgroundAlpha", "背景不透明度", -190, 0, 100)
+        local close = CreateFrame("Button", nil, options, "UIPanelButtonTemplate")
+        close:SetSize(90, 24); close:SetPoint("BOTTOMRIGHT", options, "BOTTOMRIGHT", -16, 12)
+        close:SetText("完成"); close:SetScript("OnClick", function() options:Hide() end)
+        local reset = CreateFrame("Button", nil, options, "UIPanelButtonTemplate")
+        reset:SetSize(120, 24); reset:SetPoint("BOTTOMLEFT", options, "BOTTOMLEFT", 16, 12)
+        reset:SetText("重設外觀")
+        reset:SetScript("OnClick", function()
+            options.sliders.scale:SetValue(100)
+            options.sliders.alpha:SetValue(100)
+            options.sliders.backgroundAlpha:SetValue(90)
+        end)
+        options:SetScript("OnHide", function() editing = false; refresh() end)
+        ns.threatOptions = options
+    end
+    for key, s in pairs(options.sliders) do s:SetValue(settings[key] * 100) end
+    editing = true; options:Show(); refresh()
+end
+
 function ns.initThreatPanel()
     if panel or not AdventureCollectorDB then return end
     local saved = AdventureCollectorDB.settings
@@ -150,7 +207,9 @@ function ns.initThreatPanel()
     if settings.enabled == nil then settings.enabled = true end
     if settings.combatOnly == nil then settings.combatOnly = true end
     if settings.locked == nil then settings.locked = false end
-    settings.scale = number(settings.scale) and math.max(0.6, math.min(1.6, settings.scale)) or 1
+    settings.scale = number(settings.scale) and math.max(0.5, math.min(2, settings.scale)) or 1
+    settings.alpha = number(settings.alpha) and math.max(0.2, math.min(1, settings.alpha)) or 1
+    settings.backgroundAlpha = number(settings.backgroundAlpha) and math.max(0, math.min(1, settings.backgroundAlpha)) or 0.9
     settings.warn = number(settings.warn) and math.max(1, math.min(100, settings.warn)) or 85
     panel = CreateFrame("Frame", "AdventureCollectorThreatPanel", UIParent)
     panel:SetSize(320, 220); panel:SetFrameStrata("MEDIUM")
@@ -158,7 +217,11 @@ function ns.initThreatPanel()
     panel:RegisterForDrag("LeftButton")
     local bg = panel:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(); bg:SetColorTexture(0.035, 0.03, 0.02, 0.9)
-    text(panel, 17, 12, -12, 290):SetText("仇恨監控")
+    panel.background = bg
+    text(panel, 17, 12, -12, 210):SetText("仇恨監控")
+    local config = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    config:SetSize(60, 22); config:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -10, -8)
+    config:SetText("設定"); config:SetScript("OnClick", openOptions)
     panel.target = text(panel, 13, 12, -38, 296)
     panel.holder = text(panel, 12, 12, -58, 296)
     panel.rows = {}
@@ -196,17 +259,25 @@ end
 -- gear menu next to the save button.
 local function apply(cmd, arg)
     if not settings then return false end
-    if cmd == "on" then settings.enabled = true
+    if cmd == "" or cmd == "config" then openOptions(); return true
+    elseif cmd == "on" then settings.enabled = true
     elseif cmd == "off" then settings.enabled = false
     elseif cmd == "show" then settings.enabled, settings.combatOnly = true, false
     elseif cmd == "auto" then settings.enabled, settings.combatOnly = true, true
     elseif cmd == "lock" then settings.locked = true
     elseif cmd == "unlock" then settings.locked = false
-    elseif cmd == "reset" then settings.at, settings.scale = nil, 1; position()
+    elseif cmd == "position" then settings.at = nil; position()
+    elseif cmd == "reset" then
+        settings.at, settings.scale, settings.alpha, settings.backgroundAlpha = nil, 1, 1, 0.9; position()
     elseif cmd == "scale" and number(tonumber(arg)) then
-        settings.scale = math.max(0.6, math.min(1.6, tonumber(arg))); position()
+        settings.scale = math.max(0.5, math.min(2, tonumber(arg))); position()
+    elseif cmd == "alpha" and number(tonumber(arg)) then
+        settings.alpha = math.max(0.2, math.min(1, tonumber(arg))); position()
+    elseif cmd == "bg" and number(tonumber(arg)) then
+        settings.backgroundAlpha = math.max(0, math.min(1, tonumber(arg))); position()
     elseif cmd == "warn" and number(tonumber(arg)) then settings.warn = math.max(1, math.min(100, tonumber(arg)))
     else return false end
+    if editing then openOptions() end
     refresh()
     return true
 end
@@ -216,7 +287,7 @@ SlashCmdList.ADVENTURETHREAT = function(msg)
     if not settings then return end
     local cmd, arg = tostring(msg or ""):lower():match("^%s*(%S*)%s*(.-)%s*$")
     if not apply(cmd, arg) then
-        print("|cff33ff99仇恨面板|r /athreat show 常駐；auto 戰鬥中顯示；on/off 開關；lock/unlock 鎖定/拖曳；scale 0.6–1.6；warn 85；reset 重設位置（存檔按鈕旁的齒輪也能設定）")
+        print("|cff33ff99仇恨面板|r /athreat show 常駐；auto 戰鬥中顯示；on/off 開關；lock/unlock 鎖定/拖曳；config 大小與透明度；scale 0.5–2；alpha 0.2–1；bg 0–1；warn 85；reset 重設外觀與位置（存檔按鈕旁的齒輪也能設定）")
         return
     end
     print("|cff33ff99仇恨面板|r 設定已更新。")

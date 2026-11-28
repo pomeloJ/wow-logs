@@ -6,9 +6,11 @@ from wowmock import Game
 PANEL = Path(__file__).resolve().parents[1] / "addon/AdventureCollector/ThreatPanel.lua"
 
 
-def game():
+def game(saved_settings=None):
     g = Game()
     g.login()
+    if saved_settings is not None:
+        g.db.settings.threatPanel = g.lua.table_from(saved_settings)
     g.lua.execute('''
         MOCK.threat = {
             player = {false, 0, 88, 96, 8200},
@@ -71,7 +73,7 @@ def test_combat_visibility_settings_and_warning_threshold():
     g.ns.refreshThreatPanel()
     assert p.shown
     command("scale 100")
-    assert g.db.settings.threatPanel.scale == 1.6
+    assert g.db.settings.threatPanel.scale == 2
     command("lock")
     assert g.db.settings.threatPanel.locked
     command("reset")
@@ -119,3 +121,32 @@ def test_the_gear_by_the_save_button_sets_the_panel():
     assert g.ns.threatPanelMode()[1] is True
     assert g.ns.threatPanelSet("nonsense") is False
     assert g.ns.gear is not None and g.ns.gearMenu is not None     # made with the save button
+def test_options_preview_sliders_and_restore_hidden_mode():
+    g = game()
+    command = g.lua.globals().SlashCmdList.ADVENTURETHREAT
+    command("off")
+    command("")
+    p, options = g.ns.threatPanel, g.ns.threatOptions
+    assert p.shown and options.shown
+    assert not g.db.settings.threatPanel.enabled
+    calls = {}
+    p.SetScale = lambda _, value: calls.update(scale=value)
+    p.SetAlpha = lambda _, value: calls.update(alpha=value)
+    for key, value in [("scale", 150), ("alpha", 40), ("backgroundAlpha", 0)]:
+        slider = options.sliders[key]
+        slider.scripts.OnValueChanged(slider, value)
+    assert calls == {"scale": 1.5, "alpha": 0.4}
+    assert g.db.settings.threatPanel.backgroundAlpha == 0
+    restored = game(dict(g.db.settings.threatPanel.items()))
+    assert restored.db.settings.threatPanel.scale == 1.5
+    assert restored.db.settings.threatPanel.alpha == 0.4
+    assert restored.db.settings.threatPanel.backgroundAlpha == 0
+    options.scripts.OnHide(options)
+    assert not p.shown
+    command("alpha 0")
+    assert g.db.settings.threatPanel.alpha == 0.2
+    command("bg 2")
+    assert g.db.settings.threatPanel.backgroundAlpha == 1
+    command("reset")
+    assert g.db.settings.threatPanel.alpha == 1
+    assert g.db.settings.threatPanel.backgroundAlpha == 0.9

@@ -80,7 +80,7 @@ cd agent && ../.venv/bin/python AdventureSync.pyw      # Windows：..\.venv\Scri
 | `/adventure combatlog` | 戰鬥紀錄有沒有開；加 `auto` 每次登入自動開，加 `quiet` 不再提醒 |
 | `/adventure mapshot` | 把目前的世界地圖截下來當網頁底圖 |
 
-## 遊戲內即時仇恨面板（插件 0.3.8）
+## 遊戲內即時仇恨面板（插件 0.3.9）
 
 將 `addon/AdventureCollector` 整個資料夾複製到遊戲的 `Interface/AddOns/`，
 取代舊版同名插件，然後重新登入或 `/reload`。請一併更新 `.toc`、`Core.lua` 與新增的 `ThreatPanel.lua`。
@@ -92,13 +92,18 @@ cd agent && ../.venv/bin/python AdventureSync.pyw      # Windows：..\.venv\Scri
 
 | 指令 | 用途 |
 | --- | --- |
+| `/athreat` / `/athreat config` | 開啟設定視窗，滑桿即時預覽與保存大小、整體／背景不透明度 |
 | `/athreat show` | 常駐顯示，方便查看及移動面板 |
 | `/athreat auto` | 只在戰鬥中顯示（預設） |
 | `/athreat off` / `/athreat on` | 關閉／啟用面板 |
 | `/athreat lock` / `/athreat unlock` | 鎖定／允許左鍵拖曳 |
-| `/athreat scale 0.8` | 調整大小，範圍 0.6–1.6 |
+| `/athreat scale 0.8` | 調整大小，範圍 0.5–2（50%–200%） |
 | `/athreat warn 85` | 調整自己的比例警示門檻，範圍 1–100 |
-| `/athreat reset` | 重設位置與大小 |
+| `/athreat alpha 0.7` | 整體不透明度 0.2–1，越低越透明 |
+| `/athreat bg 0.5` | 背景不透明度 0–1，0 為完全透明背景 |
+| `/athreat reset` | 重設位置、大小及透明度 |
+
+點面板右上角「設定」也可開啟滑桿。設定期間暫時顯示面板，關閉後恢復原本的顯示模式；設定視窗本身不受透明度與大小影響。
 
 位置與設定會隨遊戲存檔保留。這是目前目標的即時監控，不提供整群怪物的仇恨或即時 TPS 推算。
 

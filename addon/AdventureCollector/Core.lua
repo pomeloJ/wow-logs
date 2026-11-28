@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.3.8"
+local VERSION = "0.3.9"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -1472,7 +1472,7 @@ function ns.createGear(b)
     g:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
     g:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
     local menu = CreateFrame("Frame", "AdventureCollectorGearMenu", UIParent)
-    menu:SetSize(210, 242)
+    menu:SetSize(210, 274)
     menu:SetFrameStrata("DIALOG")
     menu:EnableMouse(true)
     -- Esc closes it like any game window (as Cancel would)
@@ -1555,7 +1555,11 @@ function ns.createGear(b)
     local reset = flat(190, 24, "重設位置（回到畫面右側）")
     reset:SetPoint("TOPLEFT", lock, "BOTTOMLEFT", 0, -4)
     reset:Paint(0.11, 0.2, 0.33, 0.7, 0.85, 1)
-    reset:SetScript("OnClick", function() ns.threatPanelSet("reset") end)
+    reset:SetScript("OnClick", function() ns.threatPanelSet("position") end)
+    local appearance = flat(190, 24, "大小與透明度…")
+    appearance:SetPoint("TOPLEFT", reset, "BOTTOMLEFT", 0, -4)
+    appearance:Paint(0.11, 0.2, 0.33, 0.7, 0.85, 1)
+    appearance:SetScript("OnClick", function() ns.threatPanelSet("config") end)
     -- OK keeps what was chosen; Cancel (and Esc) puts back what it was when the menu opened.
     local before
     local ok = flat(92, 26, "確定")
