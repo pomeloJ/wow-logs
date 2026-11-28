@@ -472,17 +472,26 @@ const TAB_KEY = "adventure-hub-tab";
 const CHAR_KEY = "adventure-hub-character";      // the character last looked at, per browser
 
 let token = "";
-// Signed in with a Google account that is bound to a token: requests carry the sign-in cookie
-// instead of a token. A token, when there is one, always wins.
+// Signed in with a Google account that is bound to a token: that is who is here, and requests
+// carry the sign-in cookie. A token from a link is then only a visit (`visiting`): for this tab,
+// shown with a way back, never replacing the account. Without a Google account a token is the
+// way in, remembered in this browser as before.
 let session = false;
-// The token arrives after the "#": written out as #token=abc, or just #abc. Either replaces
-// the one this browser remembered, so a link always shows what that link is for.
+let visiting = false;
+const VISIT_KEY = "adventure-hub-visit";          // a link's token, for this tab (sessionStorage)
+// The token arrives after the "#": written out as #token=abc, or just #abc. It is held for this
+// tab first; load() decides what it is once it knows whether a Google account is signed in.
 function takeToken() {
   const m = location.hash.match(/token=([^&]+)/) || location.hash.match(/^#([A-Za-z0-9_-]{8,})$/);
   if (!m) return false;
-  localStorage.setItem(KEY, decodeURIComponent(m[1]));
+  sessionStorage.setItem(VISIT_KEY, decodeURIComponent(m[1]));
   history.replaceState(null, "", location.pathname);
   return true;
+}
+function endVisit() {
+  try { sessionStorage.removeItem(VISIT_KEY); } catch (e) { /* nothing held */ }
+  visiting = false;
+  if (session) token = "";
 }
 // A friend invite arrives the same way, as #friend=CODE: kept in this browser until its owner
 // is signed in with Google (which leaves the page and comes back), then asked about once.
@@ -507,8 +516,9 @@ if (SHARED) token = SHARED;
 else try {
   takeInvite();
   takeToken();
-  token = localStorage.getItem(KEY) || "";
+  token = sessionStorage.getItem(VISIT_KEY) || localStorage.getItem(KEY) || "";
 } catch (e) { /* storage unavailable: fall through to the token form */ }
+let knownWho = !!SHARED;                          // whether load() has asked who is signed in yet
 
 const app = document.getElementById("app");
 // The parts a sharing token shows (null: everything); the page leaves out the rest.
@@ -545,8 +555,8 @@ async function whoAmI() {
   try { const r = await fetch(API + "/me"); return r.ok ? await r.json() : null; } catch (e) { return null; }
 }
 
-async function get(path) {
-  const r = await fetch(API + path, { headers: auth() });
+async function get(path, headers) {
+  const r = await fetch(API + path, { headers: headers || auth() });
   if (r.status === 403) {
     // a sharing token limited to some parts says which one it does not show: that is no failed sign-in
     const why = await r.json().catch(() => null);
@@ -1071,11 +1081,13 @@ async function friendsPanel() {
 
 document.getElementById("logout").addEventListener("click", async () => {
   if (SHARED) { location.href = "/"; return; }     // leaving a sharing link: back to this browser's own page
-  try { localStorage.removeItem(KEY); } catch (e) { /* nothing stored */ }
+  try { localStorage.removeItem(KEY); sessionStorage.removeItem(VISIT_KEY); } catch (e) { /* nothing stored */ }
   token = "";
+  visiting = false;
   state.friend = null;
-  // signed in with Google: signing out of the page signs out of that too
-  if (session) try { await fetch("/auth/logout", { method: "POST" }); } catch (e) { /* the cookie lapses by itself */ }
+  loads++;                                         // whatever is still loading is dropped
+  // signing out of the page signs out of Google too, whichever way the page was showing
+  try { await fetch("/auth/logout", { method: "POST" }); } catch (e) { /* the cookie lapses by itself */ }
   showLogin(false, await whoAmI());
 });
 
@@ -1862,12 +1874,34 @@ function renderMap(card) {
 let loads = 0;                                     // only the latest load draws: a slow earlier one is dropped
 async function load(quiet) {
   const mine = ++loads;
+  if (!knownWho) {                                 // once: is a Google account signed in?
+    knownWho = true;
+    const me = await whoAmI();
+    let held = null;
+    try { held = sessionStorage.getItem(VISIT_KEY); } catch (e) { /* none */ }
+    if (me && me.link) {
+      // the account is who is here: a token saved before goes; a link's token is only a visit
+      session = true;
+      showMe(me.account);
+      try { localStorage.removeItem(KEY); } catch (e) { /* nothing stored */ }
+      visiting = !!held;
+      token = held || "";
+    } else if (held) {                             // no account: the link's token is the way in, as before
+      try { localStorage.setItem(KEY, held); sessionStorage.removeItem(VISIT_KEY); } catch (e) { /* this visit only */ }
+      token = held;
+    }
+    if (!token && !session) return showLogin(false, me);
+  }
   if (!token && !session) {
     const me = await whoAmI();
     if (!(me && me.link)) return showLogin(false, me);
     session = true;
     showMe(me.account);
   }
+  // the identity this load reads as, fixed now: going back from a friend (or ending a visit)
+  // while it is still on its way must not send the rest of its requests as someone else
+  const asWho = auth();
+  const get = (path, headers) => window.get(path, headers || asWho);
   if (shownAccount === undefined) {
     if (session) whoAmI().then(me => showMe(me && me.account));
     else showMe(null);
@@ -2368,6 +2402,11 @@ async function load(quiet) {
     state.redraw = () => { if (xpCanvas.clientWidth) drawXp(xpCanvas, act.xp_points); if (window.onresize) window.onresize(); };
     const y = window.scrollY;
     let note = state.parts && !state.friend ? el("div", { class: "card sharenote", text: "這是分享的檢視：擁有者只開放了部分內容。" }) : null;
+    if (visiting && !state.friend) {
+      const back = el("button", { type: "button", text: "回到我的帳號" });
+      back.addEventListener("click", () => { endVisit(); state.parts = null; state.charId = null; load(); });
+      note = el("div", { class: "card friendbar" }, "正在用連結裡的權杖檢視（只在這個分頁，不影響你的登入）", back);
+    }
     if (state.friend) {
       const back = el("button", { type: "button", text: "回到我的角色" });
       back.addEventListener("click", leaveFriend);
@@ -2398,6 +2437,12 @@ async function load(quiet) {
     window.scrollTo(0, y);                           // a refresh must not move the page
     if (session && !quiet) askAboutInvite();
   } catch (err) {
+    if (mine !== loads) return;                      // overtaken by a newer load: its failure says nothing now
+    if (err.message === "auth" && visiting) {          // the visited token stopped working: back to the account
+      endVisit();
+      load();
+      return;
+    }
     if (err.message === "auth" && state.friend) {      // no longer friends, or nothing shared any more
       leaveFriend();
       return;
