@@ -514,11 +514,12 @@ def test_buffs_and_debuffs_with_their_times(client):
 
 def test_replay_assets(client):
     # the party page's 3D replay: its script and three.js come from this server, as scripts
-    for name in ("replay.js", "scenery.js", "three.module.min.js"):
+    for name in ("replay.js", "scenery.js", "figures.js", "themes.js", "three.module.min.js"):
         r = client.get(f"/assets/{name}")
         assert r.status_code == 200 and r.headers["content-type"].startswith("text/javascript")
     assert 'from "./three.module.min.js"' in client.get("/assets/replay.js").text
     assert 'from "./scenery.js"' in client.get("/assets/replay.js").text
+    assert 'from "./figures.js"' in client.get("/assets/replay.js").text and 'from "./themes.js"' in client.get("/assets/replay.js").text
     # its own address: the party page ending in #replay, which Back leaves and a link opens
     js = client.get("/assets/replay.js").text
     assert "ctx.link" in js and "ctx.onOpen(shut)" in js

@@ -10,9 +10,16 @@
 // happened (who, on whom, with what, for how much); otherwise the party just fights each kill.
 // What stands where at a moment follows from the replay time alone, so the slider can jump
 // anywhere; attacks, bursts and floating numbers are fired only while playing forward.
+// Being in the group is not being there: a member is drawn only around the moments the game
+// placed them on the recorder's map or the combat log saw them act.
+// The files: replay.js (this: the session as scenes, the player, the camera), scenery.js (ground,
+// sky, trees, sights, the dungeon), figures.js (people and beasts), themes.js (how each place and
+// boss looks, as data).
 import * as THREE from "./three.module.min.js";
 import * as S from "./scenery.js";
-import { FORMS, VEILS } from "./scenery.js";
+import * as F from "./figures.js";
+import { FORMS, VEILS } from "./figures.js";
+import * as TH from "./themes.js";
 
 const GAP = 3 * 60 * 1000;                 // ms between position samples that is a break, not a walk
 const MELEE = new Set(["WARRIOR", "ROGUE", "PALADIN", "DRUID", "SHAMAN"]);
@@ -90,6 +97,7 @@ function model(d, ctx, hitsJson) {
     let m = byGuid.get(h.guid);
     if (!m) byGuid.set(h.guid, m = { guid: h.guid, name: h.enemy, first: h.t, last: h.t, kill: null, by: null, total: 0, dmg: [], logged: true });
     m.last = h.t; h.mob = m;
+    if (h.way === "in") { m.ins = (m.ins || 0) + 1; if (h.school > 1) { m.sch = m.sch || {}; m.sch[h.school] = (m.sch[h.school] || 0) + 1; } }
     if (h.way === "out") { m.total += h.amount; m.dmg.push([h.t, m.total]); if (h.over != null && h.over >= 0 && m.kill == null) { m.kill = h.t; m.by = h.who; } }
   }
   const monsters = [...byGuid.values()];
@@ -114,6 +122,8 @@ function model(d, ctx, hitsJson) {
     let boss = inside.find(m => m.name === e.name) || inside.sort((a, b) => b.total - a.total)[0];
     if (!boss) { boss = { guid: null, name: e.name, first: e.start, last: e.end, kill: e.success ? e.end : null, total: 0, dmg: [], logged: false, spawn: e.start, end: e.end + (e.success ? 0 : 2500) }; monsters.push(boss); }
     boss.boss = true; boss.enc = e; boss.title = e.name;
+    const magic = Object.entries(boss.sch || {}).sort((a, b) => b[1] - a[1])[0];          // the damage it dealt most, if not plain blows
+    boss.school = magic && magic[1] >= (boss.ins || 1) * 0.2 ? +magic[0] : 0;
     if (e.success && boss.kill == null) { boss.kill = e.end; boss.end = e.end; }
     if (!e.success) boss.fled = true;
   }
@@ -127,6 +137,9 @@ function model(d, ctx, hitsJson) {
     else if (m.boss) events.push({ t: m.end, kind: "wipe", m, text: `首領戰失敗：${m.title}` });
     if (m.boss) events.push({ t: m.enc.start, kind: "pull", m, text: `首領戰開始：${m.title}` });
   }
+  let best = null;                                                 // the hardest hit of the session gets its moment
+  for (const h of hits) if (h.way === "out" && h.mob && inParty.has(h.who) && (!best || h.amount > best.amount)) best = h;
+  if (best && best.amount > 0) events.push({ t: best.t, kind: "best", who: best.who, m: best.mob, text: `本場最強一擊：${N(best.who)} 的 ${best.spell || "攻擊"} ${fmt(best.amount)}` });
   for (const h of hits) if (h.way === "death" && !h.pet && inParty.has(h.who)) events.push({ t: h.t, kind: "death", who: h.who, text: `${N(h.who)} 倒下了` });
   for (const h of d.highlights) {
     if (!h.timestamp) continue;
@@ -194,6 +207,32 @@ function model(d, ctx, hitsJson) {
   if (end - cursor > 60000 && busy(cursor, end)) virtual(cursor, end);
   else if (scenes.length) scenes[scenes.length - 1].t1 = Math.max(scenes[scenes.length - 1].t1, Math.min(end, cursor + 60000));
   for (const s of scenes) if (s.t1 - s.t0 < 1000) s.t1 = s.t0 + 1000;
+  for (const s of scenes) {                                        // how the place looks
+    if (s.kind === "virtual" && s.theme === "dungeon") s.look = TH.dungeonTheme(s.name);
+    else s.biome = TH.biomeOf(s.kind === "field" ? (d.maps.find(m => m.map_id === s.map) || {}).name : s.name, s.kind === "field" && !!CONTINENT[s.map]);
+  }
+
+  // ---- who was really with the recorder: around the moments the game placed them on the recorder's
+  // map (stored only when they moved) or the combat log saw them. With neither kept, everyone, as before.
+  const posEv = {}, logEv = {};
+  for (const m of d.maps) for (const [name, list] of Object.entries(m.members || {})) for (const p of list) (posEv[name] = posEv[name] || []).push([T(p[0]), m.map_id]);
+  for (const h of hits) if (h.who !== me && inParty.has(h.who)) (logEv[h.who] = logEv[h.who] || []).push(h.t);
+  const hasPos = Object.keys(posEv).length > 0, hasLog = Object.keys(logEv).length > 0;
+  const stretches = (ts, join, before, after) => { const out = []; for (const t of ts) { const l = out[out.length - 1]; if (l && t - l[1] <= join) l[1] = t; else out.push([t, t]); } return out.map(([a, b]) => [a - before, b + after]); };
+  for (const s of scenes) {
+    s.near = {};
+    const field = s.kind === "field";
+    for (const p of roster) {
+      if (p.owner) continue;
+      if (field ? !hasPos && !hasLog : !hasLog) { s.near[p.name] = null; continue; }
+      const ts = (logEv[p.name] || []).filter(t => t >= s.t0 - 60000 && t <= s.t1 + 60000);
+      if (field) for (const [t, map] of posEv[p.name] || []) if (map === s.map && t >= s.t0 - 60000 && t <= s.t1 + 60000) ts.push(t);
+      ts.sort((a, b) => a - b);
+      s.near[p.name] = stretches(ts, field ? 5 * 60000 : 10 * 60000, 20000, field ? 90000 : 120000);
+    }
+  }
+  const flights = []; let flew = null;                             // on a flight path: from the timeline
+  for (const e of d.timeline) { if (e.type === "FLIGHT_STARTED") flew = T(e.timestamp); else if (e.type === "FLIGHT_ENDED" && flew != null) { flights.push([flew, T(e.timestamp)]); flew = null; } }
 
   // ---- replay time, warped: walking fast, fighting slower, a boss slowest
   const real = scenes.reduce((n, s) => n + s.t1 - s.t0, 0) || 1;
@@ -257,7 +296,7 @@ function model(d, ctx, hitsJson) {
     if (i < 0 || t - minutes[i][0] > 90000) return 0;
     return (minutes[i][1][name] || 0) / peak;
   };
-  return { roster, scenes, events: events.filter(e => e.r != null), monsters: monsters.filter(m => m.scene), hits: H, hasHits, forms,
+  return { roster, scenes, events: events.filter(e => e.r != null), monsters: monsters.filter(m => m.scene), hits: H, hasHits, forms, flights,
     total: off, fury, hasMeter: minutes.length > 0, realOf, catOf, fightRate,
     mates: Object.fromEntries(d.maps.map(m => [m.map_id, m.members || {}])),
     mapInfo: Object.fromEntries(d.maps.map(m => [m.map_id, m])) };
@@ -320,6 +359,16 @@ function style() {
 .rp-m b{grid-column:2;height:4px;border-radius:2px;background:#ffffff1f;overflow:hidden}.rp-m b u{display:block;height:100%;width:0;transition:width .25s}
 .rp-m.down{opacity:.5}.rp-m.down span::after{content:"　☠"}
 .rp-m.away{opacity:.22}.rp-m.away span::after{content:"　不在隊伍"}
+.rp-m.far{opacity:.34}.rp-m.far span::after{content:"　不在附近"}
+.rp-bars::before,.rp-bars::after{content:"";position:absolute;left:0;right:0;height:0;background:#000;transition:height .5s ease;pointer-events:none}
+.rp-bars::before{top:0}.rp-bars::after{bottom:0}.rp.cine .rp-bars::before,.rp.cine .rp-bars::after{height:8%}
+.rp-bars{position:absolute;inset:0;pointer-events:none}
+.rp.cine .rp-side,.rp.cine .rp-tick{opacity:.25}.rp-side,.rp-tick{transition:opacity .5s}
+.rp-curtain{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;background:radial-gradient(ellipse at center,#000000d0,#000000fa 70%);opacity:0;pointer-events:none;transition:opacity .9s}
+.rp-curtain.on{opacity:1;transition:opacity .3s}
+.rp-curtain b{font-size:clamp(30px,7vw,64px);letter-spacing:.22em;margin-right:-.22em;font-weight:700;color:#f6e7c8;text-shadow:0 0 28px var(--glow,#e0964a),0 2px 6px #000}
+.rp-curtain small{font-size:14px;letter-spacing:.3em;color:#cbbfa8}
+.rp-curtain i{display:block;width:min(360px,60%);height:1px;background:linear-gradient(90deg,transparent,var(--glow,#e0964a),transparent)}
 .rp-tick{position:absolute;left:16px;bottom:124px;display:grid;gap:4px;max-width:min(420px,calc(100% - 32px));pointer-events:none}
 .rp-tick div{background:#0000007a;border-radius:6px;padding:3px 10px;font-size:13px;text-shadow:0 1px 2px #000;animation:rpin .35s ease-out}
 .rp-tick time{color:#cbbfa8;font-size:12px;margin-right:8px;font-variant-numeric:tabular-nums}
@@ -353,7 +402,7 @@ function style() {
 .rp-end .acts{display:flex;gap:8px;justify-content:flex-end}
 .rp-end .ghost{background:transparent;border:1px solid #ffffff40}
 @media (max-width:640px){.rp-side{top:auto;bottom:124px;right:16px;width:130px}.rp-tick{max-width:calc(100% - 170px)}.rp-help{display:none}.rp-view{padding:0 10px}.rp-link{font-size:0;width:38px;padding:0}.rp-link::before{content:"🔗";font-size:15px}}
-@media (prefers-reduced-motion:reduce){.rp-tick div{animation:none}}`;
+@media (prefers-reduced-motion:reduce){.rp-tick div{animation:none}.rp-bars::before,.rp-bars::after{transition:none}}`;
   document.head.append(s);
 }
 
@@ -404,6 +453,7 @@ export async function openReplay(d, ctx) {
   const bossBox = h("div", "rp-boss"), bossName = h("b"), bossPct = h("span"), bossTrack = h("div", "rp-boss-bar"), bossFill = h("i");
   bossTrack.append(bossFill); const bossHead = h("div"); bossHead.append(bossName, bossPct); bossBox.append(bossHead, bossTrack);
   const side = h("div", "rp-side"), tick = h("div", "rp-tick"), card = h("div", "rp-card"), flash = h("div", "rp-flash"), wait = h("div", "rp-wait", "載入場景…");
+  const bars = h("div", "rp-bars"), curtain = h("div", "rp-curtain");
   const bar = h("div", "rp-bar"), chips = h("div", "rp-chips"), row = h("div", "rp-row");
   const play = h("button", "rp-btn", "▶ 播放"); play.type = "button";
   const track = h("div", "rp-track"), marks = h("div", "rp-marks");
@@ -416,7 +466,7 @@ export async function openReplay(d, ctx) {
   if (M.scenes.length > 1) bar.append(chips);
   bar.append(row);
   const endCard = h("div", "rp-end");
-  root.append(top, slow, bossBox, side, tick, card, flash, wait, endCard, bar);
+  root.append(bars, curtain, top, slow, bossBox, side, tick, card, flash, wait, endCard, bar);
   document.body.append(root);
   const prevOverflow = document.body.style.overflow; document.body.style.overflow = "hidden";
 
@@ -456,7 +506,7 @@ export async function openReplay(d, ctx) {
 
   const heroes = M.roster.map((p, i) => {
     const col = new THREE.Color(p.color), hs = hash(p.name);
-    const rig = S.humanoid({ ...S.heroLook(p.cls), armor: col.clone(), trim: col.clone().multiplyScalar(0.5), skin: SKIN[hs % SKIN.length], hair: HAIR[(hs >> 4) % HAIR.length],
+    const rig = F.humanoid({ ...F.heroLook(p.cls), armor: col.clone(), trim: col.clone().multiplyScalar(0.5), skin: SKIN[hs % SKIN.length], hair: HAIR[(hs >> 4) % HAIR.length],
       cape: col.clone().multiplyScalar(0.38) });
     const g = new THREE.Group();
     const shadow = new THREE.Mesh(G.disc, shadowMat); shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.03;
@@ -473,7 +523,7 @@ export async function openReplay(d, ctx) {
       pet.add(ps, pm, ph); scene.add(pet);
     }
     scene.add(g);
-    return { ...p, i, g, rig, cur: rig, rigs: { human: rig }, formKey: "human", base: col.clone(), ring, label, pet, last: new THREE.Vector3(), charge: Math.random(), act: null,
+    return { ...p, i, g, rig, cur: rig, rigs: { human: rig }, formKey: "human", base: col.clone(), ring, shadow, label, pet, alt: 0, mount: null, last: new THREE.Vector3(), charge: Math.random(), act: null,
       cool: 0, pend: null, foe: null, ui: null, shown: 0, walk: 0, phase: 0, face: 0 };
   });
   const heroOf = new Map(heroes.map(x => [x.name, x]));
@@ -501,7 +551,7 @@ export async function openReplay(d, ctx) {
   });
   const disposeWorld = w => { if (!w) return; scene.remove(w.group); dispose(w.group); if (w.grass) { scene.remove(w.grass.group); w.grass.dispose(); } for (const mo of w.mobs.values()) releaseMob(mo); };
 
-  const MOTES = 260, motePos = new Float32Array(MOTES * 3), moteR = rng(7);
+  const MOTES = 620, motePos = new Float32Array(MOTES * 3), moteR = rng(7);
   for (let k = 0; k < MOTES * 3; k++) motePos[k] = (moteR() - 0.5) * (k % 3 === 1 ? 8 : 44);
   const moteGeo = new THREE.BufferGeometry(); moteGeo.setAttribute("position", new THREE.BufferAttribute(motePos, 3));
   const motes = new THREE.Points(moteGeo, new THREE.PointsMaterial({ map: GLOW, color: 0xffd9a0, size: 0.16, transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending }));
@@ -569,7 +619,7 @@ export async function openReplay(d, ctx) {
         const xs2 = w.track.map(p => p.X).concat(...Object.values(w.mates).map(l => l.map(p => p.X))), zs2 = w.track.map(p => p.Z).concat(...Object.values(w.mates).map(l => l.map(p => p.Z)));
         const size = clamp(Math.max(Math.max(...xs2) - Math.min(...xs2), Math.max(...zs2) - Math.min(...zs2)) + 260, 260, 1800);
         const tc = { x: (Math.max(...xs2) + Math.min(...xs2)) / 2, z: (Math.max(...zs2) + Math.min(...zs2)) / 2 };
-        outdoors(w, { cx: tc.x, cz: tc.z, size, seed, avoid: w.track.map(p => [p.X, p.Z]),
+        outdoors(w, { cx: tc.x, cz: tc.z, size, seed, biome: sc.biome, avoid: w.track.map(p => [p.X, p.Z]),
           sample: sample ? (x, z) => sample((cx + x / A * 100) / 100, (cy + z / (A * aspect) * 100) / 100) : null });
       } else {
         if (tex) {
@@ -585,37 +635,38 @@ export async function openReplay(d, ctx) {
       }
     } else {
       Object.assign(w, walkway(sc, r));
-      const mine = /礦|坑/.test(sc.name);
+      const look = sc.look;
       if (chase && sc.theme === "dungeon") {
-        const tn = S.tunnel(w.segs, w.rooms, seed, mine);
-        group.add(tn.group); w.tunnel = tn;
-        scene.fog = new THREE.Fog(0x0a0706, 10, 48); scene.background = new THREE.Color(0x0a0706);
-        hemi.color.set(0xffd6a8); hemi.groundColor.set(0x1a120c); hemi.intensity = 0.32; sun.intensity = 0; sun.castShadow = false; torch.intensity = 26; torch.distance = 18;
-        motes.material.color.set(0xffc27a);
+        const tn = S.tunnel(w.segs, w.rooms, seed, look);
+        group.add(tn.group); w.tunnel = tn; w.lights = tn.lights; w.flames = tn.group.userData.flames; w.air = look.air;
+        scene.fog = new THREE.Fog(look.fog, 10, look.far); scene.background = new THREE.Color(look.fog);
+        hemi.color.set(look.hemi[0]); hemi.groundColor.set(look.hemi[1]); hemi.intensity = look.hemi[2]; sun.intensity = 0; sun.castShadow = false;
+        torch.intensity = 26; torch.distance = 18; torch.color.set(look.torch).lerp(new THREE.Color(0xffffff), 0.45);
       } else if (chase) {
         const pts = []; for (const g of w.segs) pts.push([g.a.x, g.a.z]); pts.push([w.segs[w.segs.length - 1].b.x, w.segs[w.segs.length - 1].b.z]);
         const xs = pts.map(p => p[0]), zs = pts.map(p => p[1]);
         outdoors(w, { cx: (Math.max(...xs) + Math.min(...xs)) / 2, cz: (Math.max(...zs) + Math.min(...zs)) / 2, size: clamp(Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)) + 260, 260, 1400),
-          seed, avoid: pts, road: true, lush: 0.35, sample: null });
-      } else if (sc.theme === "dungeon") dungeon(group, w.segs, w.rooms, r, seed); else forestRoad(group, w.segs, r, seed);
+          seed, biome: sc.biome, avoid: pts, road: true, lush: 0.35, sample: null });
+      } else if (sc.theme === "dungeon") dungeon(group, w.segs, w.rooms, r, seed, look); else forestRoad(group, w.segs, r, seed);
     }
     for (const l of lamps) l.intensity = 0;
     return w;
 
     function outdoors(w, o) {
       const tr = S.terrain(o);
-      const trees = S.scatter(tr, o);
-      group.add(tr.group, trees);
-      w.ground = tr.ground; w.terrain = tr; w.trees = trees;
-      w.grass = S.grass(tr, windTime); scene.add(w.grass.group);
+      const trees = S.scatter(tr, o), sg = S.sights(tr, o, o.biome || {});
+      group.add(tr.group, trees, sg.group);
+      w.ground = tr.ground; w.terrain = tr; w.trees = trees; w.flames = sg.flames; w.lights = sg.lights; w.biome = o.biome || {}; w.air = w.biome.air || null;
+      if (w.biome.grass !== false) { w.grass = S.grass(tr, windTime); scene.add(w.grass.group); }
       w.outdoors = true;
       scene.background = null; sun.castShadow = true; torch.intensity = 0;
     }
   }
+  let flatMote = 0xfff3b0;
   function flatLight(fog, near, far, hemiI, sunI, torchI, mote) {
     scene.fog = new THREE.Fog(fog, near, far); scene.background = new THREE.Color(fog);
     hemi.color.set(0xfff2dd); hemi.groundColor.set(0x2a2018); hemi.intensity = hemiI; sun.intensity = sunI; sun.color.set(0xfff0d6); sun.castShadow = false;
-    sun.position.set(30, 60, 20); sun.target.position.set(0, 0, 0); torch.intensity = torchI; torch.distance = 34; motes.material.color.set(mote);
+    sun.position.set(30, 60, 20); sun.target.position.set(0, 0, 0); torch.intensity = torchI; torch.distance = 34; torch.color.set(0xffa04a); flatMote = mote;
   }
 
   function ribbon(group, pts, width, color, w) {
@@ -671,11 +722,11 @@ export async function openReplay(d, ctx) {
     const sub = new THREE.Group(); trees(sub, r, 420, 160, (x, z) => !near(x + cx, z + cz)); sub.position.set(cx, 0, cz); group.add(sub);
     flatLight(0x1d2418, 40, 150, 1.0, 1.3, 0, 0xd8ff9a);
   }
-  function dungeon(group, segs, rooms, r, seed) {
+  function dungeon(group, segs, rooms, r, seed, look) {
     const W = 8, tex = stoneTex(seed); tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x3b332b, roughness: 1, flatShading: true });
-    const pillarMat = new THREE.MeshStandardMaterial({ color: 0x5c5247, roughness: 0.9, flatShading: true });
-    const flameMat = new THREE.SpriteMaterial({ map: GLOW, color: 0xff9a3c, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false });
+    const wallMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(look.wall).multiplyScalar(0.3), roughness: 1, flatShading: true });
+    const pillarMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(look.wall).multiplyScalar(0.5), roughness: 0.9, flatShading: true });
+    const flameMat = new THREE.SpriteMaterial({ map: GLOW, color: look.torch, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false });
     const pillarG = new THREE.BoxGeometry(0.9, 3.2, 0.9), wallG = new THREE.BoxGeometry(1, 1.6, 0.7);
     const inRoom = (x, z) => rooms.some(c => Math.hypot(x - c.x, z - c.z) < 12.5);
     const flames = [];
@@ -705,26 +756,29 @@ export async function openReplay(d, ctx) {
       const ft = tex.clone(); ft.needsUpdate = true; ft.repeat.set(5, 5);
       const fl = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, 0.3, 40), new THREE.MeshStandardMaterial({ map: ft, roughness: 0.95 }));
       fl.position.set(c.x, -0.13, c.z); group.add(fl);
-      const rune = new THREE.Mesh(new THREE.RingGeometry(5.2, 5.6, 48), new THREE.MeshBasicMaterial({ color: 0xb23cff, transparent: true, opacity: 0.55, side: THREE.DoubleSide }));
+      const rune = new THREE.Mesh(new THREE.RingGeometry(5.2, 5.6, 48), new THREE.MeshBasicMaterial({ color: look.rune, transparent: true, opacity: 0.55, side: THREE.DoubleSide }));
       rune.rotation.x = -Math.PI / 2; rune.position.set(c.x, 0.04, c.z); group.add(rune); (group.userData.runes = group.userData.runes || []).push(rune);
       for (let k = 0; k < 10; k++) { const a = k / 10 * Math.PI * 2; const p = new THREE.Mesh(pillarG, pillarMat); p.position.set(c.x + Math.cos(a) * 11.5, 2.2, c.z + Math.sin(a) * 11.5); p.scale.y = 1.4; group.add(p);
-        const f = new THREE.Sprite(flameMat.clone()); f.material.color.set(0xc06bff); f.position.set(c.x + Math.cos(a) * 10.8, 4.6, c.z + Math.sin(a) * 10.8); f.scale.setScalar(1.4); f.userData.ph = r() * 6; group.add(f); flames.push(f); }
+        const f = new THREE.Sprite(flameMat.clone()); f.material.color.set(look.hall); f.position.set(c.x + Math.cos(a) * 10.8, 4.6, c.z + Math.sin(a) * 10.8); f.scale.setScalar(1.4); f.userData.ph = r() * 6; group.add(f); flames.push(f); }
     }
     group.userData.flames = flames;
-    flatLight(0x0b0807, 14, 60, 0.35, 0.25, 60, 0xffc27a);
+    flatLight(look.fog, 14, 60, 0.4, 0.25, 60, look.air ? look.air.color : 0xffc27a); torch.color.set(look.torch).lerp(new THREE.Color(0xffffff), 0.4);
   }
 
   // ---- monsters: jointed figures by kind (people dressed by name, beasts shaped by name, oozes), kept in pools
   const pools = {};
   function takeMob(m) {
-    const arch = S.archetype(m.name), kind = m.boss && arch !== "beast" ? "humanoid" : arch, hs = hash(m.name || "");
-    const look = kind === "humanoid" ? S.foeLook(m.name, hs) : null, shape = kind === "beast" ? S.beastShape(m.name) : null;
-    const key = kind === "humanoid" ? `h:${look.head}:${look.gear}:${look.weapon}:${look.robe ? 1 : 0}:${look.shield ? 1 : 0}` : kind === "beast" ? "b:" + shape : "o";
+    const arch = F.archetype(m.name), kind = m.boss && arch !== "beast" ? "humanoid" : arch, hs = hash(m.name || "");
+    let look = kind === "humanoid" ? F.foeLook(m.name, hs) : null; const shape = kind === "beast" ? F.beastShape(m.name) : null;
+    // a boss has a look of its own: body, colours and a glow after its name and the damage it dealt
+    const style = m.boss ? TH.bossStyle(m.title || m.name, m.school, look) : null;
+    if (style && look) look = style;
+    const key = kind === "humanoid" ? `h:${look.head}:${look.gear}:${look.weapon}:${look.robe ? 1 : 0}:${look.shield ? 1 : 0}:${look.spikes ? 1 : 0}:${look.offhand ? 1 : 0}:${look.bulk || 1}:${look.weapon === "staff" ? look.orb || 0 : 0}` : kind === "beast" ? "b:" + shape : "o";
     const list = pools[key] || (pools[key] = []);
     let o = list.pop();
     if (!o) {
-      const rig = kind === "beast" ? S.beast({ color: 0x6b5034, shape }) : kind === "blob" ? S.blob({ color: 0x3fb8a0 })
-        : S.humanoid({ armor: 0x6a2a24, trim: 0x3a1a14, skin: 0xc79a74, hair: 0x1a1410, ...look, scale: 1 });
+      const rig = kind === "beast" ? F.beast({ color: 0x6b5034, shape }) : kind === "blob" ? F.blob({ color: 0x3fb8a0 })
+        : F.humanoid({ armor: 0x6a2a24, trim: 0x3a1a14, skin: 0xc79a74, hair: 0x1a1410, ...look, scale: 1 });
       const g = new THREE.Group();
       const shadow = new THREE.Mesh(G.disc, shadowMat); shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.03;
       const ring = new THREE.Mesh(G.ring, new THREE.MeshBasicMaterial({ color: 0xff3b2f, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
@@ -743,20 +797,25 @@ export async function openReplay(d, ctx) {
       g.add(rig.root, shadow, ring, barRim, barBg, barFg);
       o = { key, kind, g, rig, crown, ring, barRim, barBg, barFg, label: null, act: null, flinch: 0, lungeDir: new THREE.Vector3(), phase: 0, h0: rig.height };
     }
-    const boss = !!m.boss, sc = (boss ? 2.2 : 1.0 + (hs % 30) / 100) * (look && look.scale || 1) * (kind === "beast" ? 1.15 : 1);
+    const boss = !!m.boss, sc = (boss ? (look ? look.scale : 2.2) : (1.0 + (hs % 30) / 100) * (look && look.scale || 1)) * (kind === "beast" ? 1.15 : 1);
     o.rig.root.scale.setScalar(sc);
     const mats = o.rig.mats;
     if (kind === "humanoid") {
-      const armor = boss ? 0x4a2266 : FOE_ARMOR[hs % FOE_ARMOR.length];
+      const armor = boss ? style.armor : FOE_ARMOR[hs % FOE_ARMOR.length];
       mats[0].color.set(armor); mats[1].color.set(armor).multiplyScalar(0.55); mats[2].color.set(look.skin || FOE_SKIN[(hs >> 3) % FOE_SKIN.length]); mats[3].color.set(HAIR[(hs >> 5) % HAIR.length]);
-      mats[4].color.set(boss ? 0xff3030 : look.head === "skull" ? 0x6ad8ff : 0x1a1410);
+      mats[4].color.set(boss ? style.aura : look.head === "skull" ? 0x6ad8ff : 0x1a1410);
       o.crown.visible = boss;
     } else if (kind === "beast") { const c = new THREE.Color(shape === "spider" ? [0x2a2420, 0x3a3a2a, 0x4a2a1a][hs % 3] : BEAST_FUR[hs % BEAST_FUR.length]); mats[0].color.copy(c); mats[1].color.copy(c).multiplyScalar(0.5); }
     else { const c = new THREE.Color(BLOB_COLOR[hs % BLOB_COLOR.length]); mats[0].color.copy(c); mats[0].emissive.copy(c).multiplyScalar(0.25); }
     o.rig.base = mats.map(x => x.color.clone());
     o.H = o.h0 * sc;
     o.ring.scale.setScalar(boss ? 2.4 : kind === "beast" ? 1.4 : 1);
-    o.ring.material.color.set(boss ? 0xc040ff : 0xff3b2f);
+    o.ring.material.color.set(boss ? style.aura : 0xff3b2f);
+    if (boss) {                                                    // lights circling it
+      o.aura = new THREE.Group();
+      for (let k = 0; k < style.orbs; k++) { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW, color: style.aura, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false })); sp.scale.setScalar(0.9); o.aura.add(sp); }
+      o.g.add(o.aura);
+    }
     const bw = boss ? 2.2 : 1.3, by = o.H + 0.3;
     o.barBg.scale.set(bw, 0.15, 1); o.barBg.position.set(-bw / 2, by, 0);
     o.barRim.scale.set(bw + 0.08, 0.23, 1); o.barRim.position.set(-bw / 2 - 0.04, by, 0);
@@ -769,6 +828,7 @@ export async function openReplay(d, ctx) {
   function releaseMob(o) {
     scene.remove(o.g);
     if (o.label) { o.g.remove(o.label); o.label.material.map.dispose(); o.label.material.dispose(); o.label = null; }
+    if (o.aura) { o.g.remove(o.aura); for (const sp of o.aura.children) sp.material.dispose(); o.aura = null; }
     pools[o.key].push(o);
   }
 
@@ -841,10 +901,10 @@ export async function openReplay(d, ctx) {
       else if ((trail += dt) > 0.03) { trail = 0; spark(m.position, color, 0.55); }
     }, onHit);
   }
-  function ring(pos, color) {
+  function ring(pos, color, grow = 1.4, life = 0.45) {
     const m = new THREE.Mesh(G.ring, new THREE.MeshBasicMaterial({ color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
     m.rotation.x = -Math.PI / 2; m.position.set(pos.x, pos.y + 0.07, pos.z);
-    add(m, 0.45, (dt, f) => { m.scale.setScalar(1 + f * 1.4); m.material.opacity = 1 - f; });
+    add(m, life, (dt, f) => { m.scale.setScalar(1 + f * grow); m.material.opacity = 1 - f; });
   }
   const dropFx = () => { for (const e of fx.splice(0)) { scene.remove(e.o); dispose(e.o); } numbers = 0; };
 
@@ -871,7 +931,25 @@ export async function openReplay(d, ctx) {
 
   // ---- state
   let g = 0, playing = false, lastNow = performance.now(), lastG = 0, curScene = null, tickShown = -1, uiAt = 0, first = true, shownScene = null;
-  let evAt = 0, hitAt = 0, now = 0, lampAt = 0;
+  let evAt = 0, hitAt = 0, now = 0, lampAt = 0, sceneAt0 = 0, intro = null;
+  // ---- staged moments: time slows and the camera swings round whoever it is about.
+  // o: { rank, dur (s), slow (replay s per s; none: the chosen speed), focus() -> position, sweep, dist, pitch, h, label }
+  let cine = null, cineAt = -1e9;
+  const calm = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  function stage(o) {
+    if (!playing || calm || !world) return false;
+    if (cine ? cine.rank >= o.rank : now - cineAt < 4000 && o.rank < 3) return false;
+    cine = { age: 0, yaw0: cam.heading + cam.yawOff + Math.PI, h: 1.2, ...o }; root.classList.add("cine");
+    return true;
+  }
+  const endCine = () => { if (!cine) return; cine = null; cineAt = now; root.classList.remove("cine"); };
+  const mobAt = m => () => { const o = world && world.mobs.get(m); return o ? o.g.position : null; };
+  const raise = sc => {                                             // the curtain between two places
+    const dg = sc.kind === "virtual" && sc.theme === "dungeon", glow = dg ? sc.look.glow : 0xe0964a;
+    curtain.style.setProperty("--glow", "#" + glow.toString(16).padStart(6, "0"));
+    curtain.replaceChildren(h("small", null, dg ? "進入副本" : clock(sc.t0).slice(0, 5)), h("i"), h("b", null, fmtScene(sc)), h("i"), h("small", null, dg ? "INSTANCE" : sc.kind === "field" ? "" : "示意場景"));
+    curtain.classList.add("on");
+  };
   const fmtScene = sc => (sc.kind === "field" ? (CONTINENT[sc.map] ? CONTINENT[sc.map] + "（移動中）" : (M.mapInfo[sc.map] && M.mapInfo[sc.map].name) || "地圖 " + sc.map) : sc.name);
   const sceneAt = v => { let k = M.scenes.length - 1; while (k > 0 && M.scenes[k].off > v) k--; return M.scenes[k]; };
   M.scenes.forEach(sc => {
@@ -885,7 +963,7 @@ export async function openReplay(d, ctx) {
     help.textContent = v === "chase" ? "拖曳轉鏡頭・滾輪拉遠近・空白鍵播放" : "拖曳旋轉・滾輪縮放・空白鍵播放";
     camera.fov = v === "chase" ? 58 : 48; camera.updateProjectionMatrix();
     scene.remove(sky.group); if (v === "chase") scene.add(sky.group);
-    if (world) { disposeWorld(world); dropFx(); world = null; } building = null; ticket++; first = true; shownScene = null;
+    if (world) { disposeWorld(world); dropFx(); world = null; } building = null; ticket++; first = true; shownScene = null; endCine();
   };
   viewBtn.addEventListener("click", () => setView(view === "chase" ? "map" : "chase"));
   setView(view);
@@ -894,8 +972,8 @@ export async function openReplay(d, ctx) {
     g = clamp(v, 0, M.total); lastG = g; slider.value = Math.round(g / M.total * 1000);
     evAt = lowerBound(M.events, g, e => e.r); hitAt = lowerBound(M.hits, g, x => x.r);
     for (const hr of heroes) { hr.pend = null; hr.act = null; }
-    for (const m of M.monsters) m.pend = null;
-    endCard.classList.remove("on");
+    for (const m of M.monsters) { m.pend = null; m.fin = false; }
+    endCard.classList.remove("on"); endCine();
   }
   const setPlaying = on => {
     playing = on; play.textContent = on ? "❚❚ 暫停" : "▶ 播放";
@@ -952,8 +1030,10 @@ export async function openReplay(d, ctx) {
   };
   const drawTo = (geo, pts, t) => geo.setDrawRange(0, Math.max(0, lowerBound(pts, t, p => p.t) - 1) * 6);
   const slot = k => k === 0 ? [0, 0] : [((k - 1) % 3 - 1) * 1.6, -(1 + Math.floor((k - 1) / 3)) * 1.5];
-  const V = new THREE.Vector3(), V2 = new THREE.Vector3();
-  const present = (hr, t) => hr.spans.some(([a, b]) => t >= a && t <= b);
+  const V = new THREE.Vector3(), V2 = new THREE.Vector3(), V3 = new THREE.Vector3();
+  const inGroup = (hr, t) => hr.spans.some(([a, b]) => t >= a && t <= b);
+  // in the group and really there (see the model: sc.near)
+  const present = (hr, t, sc) => { if (!inGroup(hr, t)) return false; if (hr.owner) return true; const n = sc.near[hr.name]; return n == null || n.some(([a, b]) => t >= a && t <= b); };
   const isDown = hr => hr.down.some(([a, b]) => g >= a && g < b);
   const hpOf = (m, t) => { if (m.kill != null && t >= m.kill) return 0; if (!m.dmg.length) return m.kill != null ? clamp(1 - (t - m.spawn) / (m.kill - m.spawn), 0.05, 1) : 1;
     const i = lowerBound(m.dmg, t, x => x[0]) - 1; return clamp(1 - (i >= 0 ? m.dmg[i][1] : 0) / m.peak, 0.02, 1); };
@@ -970,6 +1050,7 @@ export async function openReplay(d, ctx) {
     if (!world || world.sc !== sc || world.view !== view) {
       if (building !== sc) {
         building = sc; wait.style.display = "";
+        if (playing && sc !== curScene && !calm) { raise(sc); wait.style.display = "none"; }
         const v = view;
         build(sc).then(w => {
           if (!w || building !== sc || view !== v) return;
@@ -977,8 +1058,9 @@ export async function openReplay(d, ctx) {
           for (const s of M.scenes) s.chip && s.chip.classList.toggle("on", s === sc);
           if (sc !== curScene) { curScene = sc; showCard(fmtScene(sc), sc.kind === "virtual" ? (sc.theme === "dungeon" ? "副本內沒有座標，這段以示意場景呈現" : "這段沒有位置紀錄，以示意場景呈現") : `${clock(sc.t0)} – ${clock(sc.t1)}`); }
           title.textContent = fmtScene(sc);
-          if (sc !== shownScene) { shownScene = sc; cam.phi = sc.kind === "virtual" && sc.theme === "dungeon" ? 0.72 : 0.92; }
-          lastNow = performance.now(); first = true;
+          if (sc !== shownScene) { shownScene = sc; cam.phi = sc.kind === "virtual" && sc.theme === "dungeon" ? 0.72 : 0.92; intro = sc; }
+          lastNow = performance.now(); first = true; sceneAt0 = lastNow; endCine();
+          clearTimeout(raise.t); raise.t = setTimeout(() => curtain.classList.remove("on"), sc.kind === "virtual" && sc.theme === "dungeon" ? 1500 : 450);
         });
       }
       return;
@@ -989,16 +1071,30 @@ export async function openReplay(d, ctx) {
     if (world.outdoors) {
       const d0 = new Date(t), hour = d0.getHours() + d0.getMinutes() / 60, skyNow = S.skyAt(hour);
       sky.set(skyNow); sky.follow(camera.position, dt);
-      const fogC = skyNow.horizon.clone().lerp(new THREE.Color(0x000000), skyNow.night * 0.3);
-      if (!scene.fog || !scene.fog.isFog) scene.fog = new THREE.Fog(fogC, 60, 330); else { scene.fog.color.copy(fogC); scene.fog.near = 60; scene.fog.far = 330; }
-      hemi.color.copy(skyNow.horizon).lerp(new THREE.Color(0xffffff), 0.4); hemi.groundColor.copy(world.terrain.avgColor).multiplyScalar(0.6); hemi.intensity = 0.35 + skyNow.light * 0.55;
-      sun.color.copy(skyNow.sun); sun.intensity = skyNow.light * 1.9;
-      sun.position.copy(cam.target).addScaledVector(skyNow.dir, 120); sun.target.position.copy(cam.target);
-      if (world.trees && world.trees.userData.tint) world.trees.userData.tint(skyNow);
-      motes.material.color.set(skyNow.night > 0.5 ? 0xd8ff7a : 0xfff3c0); motes.material.opacity = skyNow.night > 0.5 ? 0.85 : 0.35;
+      const bio = world.biome, cv = bio.cavern;
+      const fogC = cv ? new THREE.Color(cv.fog) : skyNow.horizon.clone().lerp(new THREE.Color(0x000000), skyNow.night * 0.3);
+      if (bio.fog && !cv) fogC.lerp(new THREE.Color(bio.fog[0]).multiplyScalar(0.3 + skyNow.light * 0.55), bio.fog[1]);
+      const near = cv ? 14 : bio.near || 60, far = cv ? 120 : bio.near ? 230 : 330;
+      if (!scene.fog || !scene.fog.isFog) scene.fog = new THREE.Fog(fogC, near, far); else { scene.fog.color.copy(fogC); scene.fog.near = near; scene.fog.far = far; }
+      if (cv) {                                                    // a city under a mountain: no sky, its own light
+        sky.group.visible = false; scene.background = fogC;
+        hemi.color.set(cv.hemi[0]); hemi.groundColor.set(cv.hemi[1]); hemi.intensity = cv.hemi[2]; sun.color.set(cv.sun[0]); sun.intensity = cv.sun[1];
+        sun.position.copy(cam.target).add(V3.set(20, 120, 30)); sun.target.position.copy(cam.target);
+      } else {
+        hemi.color.copy(skyNow.horizon).lerp(new THREE.Color(0xffffff), 0.4); hemi.groundColor.copy(world.terrain.avgColor).multiplyScalar(0.6); hemi.intensity = 0.35 + skyNow.light * 0.55;
+        sun.color.copy(skyNow.sun); sun.intensity = skyNow.light * 1.9;
+        sun.position.copy(cam.target).addScaledVector(skyNow.dir, 120); sun.target.position.copy(cam.target);
+      }
+      if (world.trees && world.trees.userData.tint) world.trees.userData.tint(cv ? { horizon: fogC } : skyNow);
+      world.night = cv ? 1 : skyNow.night;
+      if (!world.air) { motes.material.color.set(skyNow.night > 0.5 ? 0xd8ff7a : 0xfff3c0); motes.material.opacity = skyNow.night > 0.5 ? 0.85 : 0.35; }
       windTime.value = now / 1000;
-      world.grass.update(cam.target.x, cam.target.z);
-    }
+      if (world.grass) world.grass.update(cam.target.x, cam.target.z);
+    } else if (!world.tunnel) { motes.material.color.set(flatMote); motes.material.opacity = 0.6; }
+    // what drifts in the air here: dust, bubbles, snow, embers…
+    const air = world.air;
+    if (air) { motes.material.color.set(air.color); motes.material.opacity = air.opacity; }
+    motes.material.size = air ? air.size : 0.16; moteGeo.setDrawRange(0, air && air.many ? MOTES : 260);
     // monsters up at this moment
     const up = M.monsters.filter(m => m.scene === sc && g >= m.spawnR && g < m.endR + 1.4);
     const live = new Set(up);
@@ -1039,10 +1135,15 @@ export async function openReplay(d, ctx) {
       const lg = act === "swing" ? Math.sin(f * Math.PI) * 0.6 : 0;
       const gy = ground(x, z);
       o.g.position.set(x + o.lungeDir.x * lg, gy - (k > 0.7 ? (k - 0.7) * 1.2 : 0), z + o.lungeDir.z * lg);
-      const foe = m.foe && present(m.foe, t) ? m.foe.g.position : lead;
+      const foe = m.foe && present(m.foe, t, sc) ? m.foe.g.position : lead;
       o.rig.root.rotation.y = comeIn < 1 ? Math.atan2(lead.x - x, lead.z - z) : Math.atan2(foe.x - x, foe.z - z);
       o.phase += dt * (comeIn < 1 ? 14 : 0);
-      o.rig.pose({ walk: comeIn < 1 ? 1 : 0, phase: o.phase, act, f, down: k > 0, t: now / 1000 + (m.spawn % 997) });
+      o.rig.pose({ walk: comeIn < 1 ? 1 : 0, phase: o.phase, act, f, down: k > 0, fall: clamp(k / 0.45, 0, 1), t: now / 1000 + (m.spawn % 997) });
+      if (o.aura) { o.aura.visible = k === 0; const n = o.aura.children.length, R = o.H * 0.42; o.aura.children.forEach((sp, i) => { const a = now / 650 + i / n * Math.PI * 2; sp.position.set(Math.cos(a) * R, o.H * 0.5 + Math.sin(now / 420 + i * 2) * o.H * 0.16, Math.sin(a) * R); }); }
+      // the last blow on a boss: slow it right down and swing the camera round
+      if (m.boss && playing && !m.fin && m.killR != null && g < m.killR && m.killR - g < 0.55) {
+        m.fin = stage({ rank: 3, dur: 5.4, slow: 0.2, focus: mobAt(m), sweep: Math.PI * 1.45, dist: Math.max(6.5, o.H * 1.7), pitch: 0.2, h: o.H * 0.5, label: "🎬 最後一擊" }) || true;
+      }
       tint(o.rig, 0, k > 0.7 ? Math.max(0, 1 - (k - 0.7) / 0.7) : 1);
       for (const mt of o.rig.mats) if (mt.emissive && o.kind !== "blob") mt.emissive.setRGB(o.flinch * 0.45, o.flinch * 0.12, o.flinch * 0.06);
       o.ring.material.opacity = k > 0 ? 0 : 0.7;
@@ -1056,21 +1157,24 @@ export async function openReplay(d, ctx) {
     const right = { x: -dir.z, z: dir.x };
     let order = 0;
     for (const hr of heroes) {
-      const here = present(hr, t);
+      const here = present(hr, t, sc);
       hr.shown = lerp(hr.shown, here ? 1 : 0, first ? 1 : Math.min(1, dt * 4));
       hr.g.visible = hr.shown > 0.02; if (hr.pet) hr.pet.visible = hr.g.visible;
       if (!here && hr.shown < 0.02) continue;
       const fm = formAt(hr, t), wantForm = fm.shape || "human";
       if (wantForm !== hr.formKey) {                               // shape-shift: swap the body
         let r2 = hr.rigs[wantForm];
-        if (!r2) { r2 = hr.rigs[wantForm] = S.formRig(wantForm); hr.g.add(r2.root); }
+        if (!r2) { r2 = hr.rigs[wantForm] = F.formRig(wantForm); hr.g.add(r2.root); }
         hr.cur.root.visible = false; r2.root.visible = true; hr.cur = r2; hr.formKey = wantForm;
         hr.label.position.y = r2.height + 0.45;
         if (playing && !first) { burst(lift(hr.g.position, 1), hr.cls === "DRUID" ? 0x7dff6a : hr.cls === "SHAMAN" ? 0x6ab8ff : 0xb0b0b0, 40, 3, 0.9); spark(lift(hr.g.position, 1), 0xffffff, 3); }
       }
       let x, z, real = false;
       if (sc.kind === "field" && hr.owner) { x = lead.x; z = lead.z; real = true; }
-      else if (sc.kind === "field" && world.mates[hr.name]) { const pts = world.mates[hr.name]; if (t >= pts[0].t - 30000 && t <= pts[pts.length - 1].t + 30000) { [x, z] = at(pts, t); real = true; } }
+      else if (sc.kind === "field" && world.mates[hr.name]) {     // where the game last placed them, while that is recent
+        const pts = world.mates[hr.name], i = lowerBound(pts, t, p => p.t);
+        if (Math.min(i > 0 ? t - pts[i - 1].t : 1e12, i < pts.length ? pts[i].t - t : 1e12) < 5 * 60000) { [x, z] = at(pts, t); real = true; }
+      }
       const down = isDown(hr);
       const fight = hr.foe && alive.find(a => a.m === hr.foe) || (alive.length ? nearest(lead.x, lead.z) : null);
       if (!real) {
@@ -1082,21 +1186,28 @@ export async function openReplay(d, ctx) {
           if (meleeStand(hr) || dd > reach) { x = lerp(x, mx + Math.sin(a) * reach, 0.85); z = lerp(z, mz + Math.cos(a) * reach, 0.85); }
         }
       }
+      // on a flight path: up on a winged mount (the recorder, and whoever is placed close by)
+      const fly = sc.kind === "field" && here && (hr.owner || (real && Math.hypot(x - lead.x, z - lead.z) < 80)) && M.flights.some(([a, b]) => t >= a && t <= b);
+      hr.alt = lerp(hr.alt, fly ? 1 : 0, first ? 1 : Math.min(1, dt * 1.6));
+      const aloft = hr.alt > 0.03;
+      if (aloft && !hr.mount) { hr.mount = F.bird(hr.base.clone().multiplyScalar(0.55)); hr.mount.root.scale.setScalar(1.25); hr.mountG = new THREE.Group(); hr.mountG.add(hr.mount.root); hr.g.add(hr.mountG); }
+      if (hr.mount) { hr.mountG.visible = aloft; if (aloft) { hr.mount.flap(now / 1000 + hr.i); hr.mountG.rotation.y = hr.face; hr.mountG.position.y = 0.35; for (const mt of hr.mount.mats) mt.opacity = hr.shown; } }
+      hr.ring.visible = hr.shadow.visible = hr.alt < 0.3;
       const moved = Math.hypot(x - hr.g.position.x, z - hr.g.position.z);
       if (first || moved > 6) hr.g.position.set(x, 0, z);
       else hr.g.position.set(lerp(hr.g.position.x, x, Math.min(1, dt * 8)), 0, lerp(hr.g.position.z, z, Math.min(1, dt * 8)));
-      hr.g.position.y = ground(hr.g.position.x, hr.g.position.z);
+      hr.g.position.y = ground(hr.g.position.x, hr.g.position.z) + hr.alt * 15;
       const step = Math.hypot(hr.g.position.x - hr.last.x, hr.g.position.z - hr.last.z);
       const want = fight && !down ? Math.atan2(fight.p[0] - hr.g.position.x, fight.p[1] - hr.g.position.z) : step > 0.01 ? Math.atan2(hr.g.position.x - hr.last.x, hr.g.position.z - hr.last.z) : hr.face;
       hr.face = first ? want : angLerp(hr.face, want, Math.min(1, dt * 10));
       hr.last.copy(hr.g.position);
-      const walking = step / Math.max(dt, 0.001) > 0.6 && !down;
+      const walking = step / Math.max(dt, 0.001) > 0.6 && !down && !aloft;
       hr.walk = lerp(hr.walk, walking ? 1 : 0, Math.min(1, dt * 8)); hr.phase += step * 3.4;
       let act = null, f = 0;
       if (hr.act) { hr.act.age += dt; f = hr.act.age / hr.act.dur; if (f >= 1) hr.act = null; else act = hr.act.kind; }
       const lunge = act === "swing" ? Math.sin(Math.min(1, f * 1.4) * Math.PI) * 0.5 : 0;
       hr.cur.root.rotation.y = hr.face;
-      hr.cur.root.position.set(Math.sin(hr.face) * lunge, 0, Math.cos(hr.face) * lunge);
+      hr.cur.root.position.set(Math.sin(hr.face) * lunge, aloft ? 0.75 : 0, Math.cos(hr.face) * lunge);
       hr.cur.pose({ walk: hr.walk, phase: hr.phase, act, f, down, t: now / 1000 + hr.i });
       if (hr.cur.glow) hr.cur.glow.scale.setScalar(0.6 + (act === "cast" ? Math.sin(f * Math.PI) * 2.2 : 0));
       tint(hr.cur, down ? 0.7 : 0, hr.shown, fm.veil);
@@ -1105,7 +1216,7 @@ export async function openReplay(d, ctx) {
       if (hr.pet) {
         const pa = fight && !down ? [fight.p[0] + Math.sin(hr.face + 2.2) * 1.4, fight.p[1] + Math.cos(hr.face + 2.2) * 1.4] : [hr.g.position.x + right.x * 1.1 - dir.x * 0.4, hr.g.position.z + right.z * 1.1 - dir.z * 0.4];
         hr.pet.position.set(lerp(hr.pet.position.x, pa[0], first ? 1 : Math.min(1, dt * 6)), 0, lerp(hr.pet.position.z, pa[1], first ? 1 : Math.min(1, dt * 6)));
-        hr.pet.position.y = ground(hr.pet.position.x, hr.pet.position.z);
+        hr.pet.position.y = ground(hr.pet.position.x, hr.pet.position.z); if (aloft) hr.pet.visible = false;
         hr.pet.rotation.y = fight ? Math.atan2(fight.p[0] - hr.pet.position.x, fight.p[1] - hr.pet.position.z) : hr.face;
       }
       if (playing && fight && !fight.m.logged && !down && here && !hr.act) {
@@ -1122,18 +1233,25 @@ export async function openReplay(d, ctx) {
     for (const m of M.monsters) if (m.pend && (m.cool -= dt) <= 0) flushMob(m);
     if (world.trail) drawTo(world.trail.geo, world.trail.pts, t);
     for (const mt of world.group.userData.mates || []) drawTo(mt.geo, mt.pts, t);
-    const flames = (world.tunnel ? world.tunnel.group.userData.flames : world.group.userData.flames) || [];
+    const flames = world.flames || world.group.userData.flames || [];
+    if (world.tunnel) world.tunnel.group.userData.swirl.rotation.z += dt * 1.6;
     for (const f of flames) f.scale.setScalar((f.userData.s || (f.userData.s = f.scale.x)) * (1 + Math.sin(now / 90 + f.userData.ph) * 0.12 + Math.random() * 0.06));
     for (const r of (world.tunnel ? world.tunnel.group.userData.runes : world.group.userData.runes) || []) { r.rotation.z += dt * 0.3; r.material.opacity = 0.35 + Math.sin(now / 400) * 0.2 + (cat === 2 ? 0.3 : 0); }
-    // in the tunnel, the torches nearest the party light up
-    if (world.tunnel && now - lampAt > 250) {
+    // the torches, fires and glowing things nearest the party light up
+    const glows = world.lights && world.lights.length ? world.lights : null;
+    if (glows && now - lampAt > 250) {
       lampAt = now;
-      const near = world.tunnel.torches.map(p => [p, p.distanceToSquared(cam.target)]).sort((a, b) => a[1] - b[1]).slice(0, lamps.length);
-      lamps.forEach((l, i) => { const p = near[i]; if (p) { l.position.copy(p[0]); l.userData.base = p[0].y < 2.5 ? 30 : 18; l.color.set(p[0].y < 2.5 ? 0xc06bff : 0xff9a40); } else l.userData.base = 0; });
+      const near = glows.map(l => [l, l.p.distanceToSquared(cam.target)]).filter(x => x[1] < 3600).sort((a, b) => a[1] - b[1]).slice(0, lamps.length);
+      lamps.forEach((l, i) => { const p = near[i]; if (p) { l.position.copy(p[0].p); l.userData.base = p[0].power; l.color.set(p[0].color); } else l.userData.base = 0; });
     }
-    for (const l of lamps) l.intensity = world.tunnel ? (l.userData.base || 0) * (0.85 + Math.sin(now / 70 + l.id) * 0.08 + Math.random() * 0.07) : 0;
-    const mp = moteGeo.attributes.position.array;
-    for (let k = 0; k < MOTES; k++) { mp[k * 3 + 1] += dt * (0.15 + (k % 7) * 0.03); mp[k * 3] += Math.sin(now / 2000 + k) * dt * 0.2; if (mp[k * 3 + 1] > 4) mp[k * 3 + 1] = -4; }
+    const lampK = !glows ? 0 : world.outdoors ? 0.15 + (world.night || 0) * 0.85 : 1;
+    for (const l of lamps) l.intensity = (l.userData.base || 0) * lampK * (0.85 + Math.sin(now / 70 + l.id) * 0.08 + Math.random() * 0.07);
+    const mp = moteGeo.attributes.position.array, vy = air ? air.vy : 0.2, sway = air ? Math.min(air.drift, 1.2) : 0.2, wind = air && air.drift > 2 ? air.drift : 0;
+    for (let k = 0; k < MOTES; k++) {
+      mp[k * 3 + 1] += dt * vy * (0.7 + (k % 7) * 0.1); mp[k * 3] += dt * (Math.sin(now / 2000 + k) * sway + wind);
+      if (mp[k * 3 + 1] > 4) mp[k * 3 + 1] -= 8; else if (mp[k * 3 + 1] < -4) mp[k * 3 + 1] += 8;
+      if (mp[k * 3] > 22) mp[k * 3] -= 44;
+    }
     moteGeo.attributes.position.needsUpdate = true; motes.position.set(cam.target.x, cam.target.y + 2.5, cam.target.z);
     // camera
     const owner = heroes.find(x => x.owner);
@@ -1143,27 +1261,46 @@ export async function openReplay(d, ctx) {
     if (!chase && fightNow) { cam.aim.x = lerp(cam.aim.x, fightNow.p[0], 0.4); cam.aim.z = lerp(cam.aim.z, fightNow.p[1], 0.4); }
     cam.target.lerp(cam.aim, first ? 1 : Math.min(1, dt * (chase ? 6 : 3)));
     const idle = now - cam.touched > (chase ? 3500 : 6000);
-    if (chase) {
-      // facing: where they walk, or the fight when there is one
-      const hw = fightNow ? Math.atan2(fightNow.p[0] - focus.x, fightNow.p[1] - focus.z) : Math.atan2(dir.x, dir.z);
-      cam.heading = first ? hw : angLerp(cam.heading, hw, Math.min(1, dt * (fightNow ? 1.5 : 2.2)));
-      if (idle) { cam.yawOff = angLerp(cam.yawOff, 0, Math.min(1, dt * 0.8)); cam.dist = lerp(cam.dist, cat === 2 ? (world.tunnel ? 8 : 15) : cat === 1 ? 11 : 9.5, Math.min(1, dt * 0.6)); cam.pitch = lerp(cam.pitch, world.tunnel ? (cat === 2 ? 0.62 : 0.5) : cat === 2 ? 0.45 : 0.3, Math.min(1, dt * 0.6)); }
-      const yaw = cam.heading + cam.yawOff + Math.PI;
-      let dist = cam.dist;
-      const place = d0 => cam.pos.set(cam.target.x + Math.sin(yaw) * Math.cos(cam.pitch) * d0, cam.target.y + Math.sin(cam.pitch) * d0 + 0.4, cam.target.z + Math.cos(yaw) * Math.cos(cam.pitch) * d0);
+    // the camera at a distance behind a point, kept inside the walls and under the roof of a tunnel
+    const behind = (c, lift0, yaw, pitch, d0) => {
+      let dist = d0;
+      const place = dd => cam.pos.set(c.x + Math.sin(yaw) * Math.cos(pitch) * dd, c.y + lift0 + Math.sin(pitch) * dd, c.z + Math.cos(yaw) * Math.cos(pitch) * dd);
       place(dist);
-      if (world.tunnel) {                                          // keep inside the walls and under the roof
+      if (world.tunnel) {
         while (dist > 2.5 && world.tunnel.inside(cam.pos.x, cam.pos.z) > world.tunnel.W / 2 - 0.8) { dist *= 0.88; place(dist); }
         if (!world.tunnel.inRoom(cam.pos.x, cam.pos.z, -2)) cam.pos.y = Math.min(cam.pos.y, world.tunnel.H - 0.7);
       }
       cam.pos.y = Math.max(cam.pos.y, ground(cam.pos.x, cam.pos.z) + 1.0);
-      cam.look.set(cam.target.x + Math.sin(cam.heading + cam.yawOff) * 2.5, cam.target.y + 0.4, cam.target.z + Math.cos(cam.heading + cam.yawOff) * 2.5);
+    };
+    if (intro === sc && !first) { intro = null; if (!cat) stage({ rank: 0, dur: 3.4, focus: () => focus, sweep: 1.5, dist: world.tunnel ? 7 : 13, pitch: world.tunnel ? 0.3 : 0.42, h: 1.4, wide: 1.5 }); }
+    if (cine) {
+      const f = clamp(cine.age / cine.dur, 0, 1), e = f * f * (3 - 2 * f), p = cine.focus() || cam.target;
+      behind(p, cine.h, cine.yaw0 + cine.sweep * e, cine.pitch, lerp(cine.dist * (cine.wide || 1.3), cine.dist, e));
+      cam.look.set(p.x, p.y + cine.h, p.z);
+    }
+    if (chase) {
+      // facing: where they walk, or the fight when there is one
+      const hw = fightNow ? Math.atan2(fightNow.p[0] - focus.x, fightNow.p[1] - focus.z) : Math.atan2(dir.x, dir.z);
+      cam.heading = first ? hw : angLerp(cam.heading, hw, Math.min(1, dt * (fightNow ? 1.5 : 2.2)));
+      if (idle) {
+        // while they only walk, the view changes now and then: from the front, from the side, back behind
+        const flying = owner && owner.alt > 0.5, since = (now - sceneAt0) / 1000 % 27;
+        const shot = cat || !playing || calm || flying ? null : since > 9 && since < 14 ? [2.55, 8, 0.14] : since > 21 && since < 26 ? (world.tunnel ? [-0.95, 6, 0.2] : [-1.15, 15, 0.55]) : null;
+        cam.yawOff = angLerp(cam.yawOff, shot ? shot[0] : 0, Math.min(1, dt * 0.8));
+        cam.dist = lerp(cam.dist, shot ? shot[1] : flying ? 17 : cat === 2 ? (world.tunnel ? 8 : 15) : cat === 1 ? 11 : 9.5, Math.min(1, dt * 0.6));
+        cam.pitch = lerp(cam.pitch, shot ? shot[2] : flying ? 0.42 : world.tunnel ? (cat === 2 ? 0.62 : 0.5) : cat === 2 ? 0.45 : 0.3, Math.min(1, dt * 0.6));
+      }
+      if (!cine) {
+        behind(cam.target, 0.4, cam.heading + cam.yawOff + Math.PI, cam.pitch, cam.dist);
+        cam.look.set(cam.target.x + Math.sin(cam.heading + cam.yawOff) * 2.5, cam.target.y + 0.4, cam.target.z + Math.cos(cam.heading + cam.yawOff) * 2.5);
+      }
     } else if (idle && playing) { cam.theta += dt * (cat === 2 ? 0.12 : 0.04); cam.want = cat === 2 ? 17 : cat === 1 ? 20 : 25; cam.r = lerp(cam.r, cam.want, Math.min(1, dt * 0.8)); }
     torch.position.set(cam.target.x, cam.target.y + 3.5, cam.target.z);
     bossBox.classList.toggle("on", !!bossNow);
     if (bossNow) { bossName.textContent = bossNow.m.title; bossFill.style.width = (bossNow.hp * 100).toFixed(1) + "%"; bossPct.textContent = Math.round(bossNow.hp * 100) + "%"; }
-    slow.className = "rp-slow" + (cat ? " on" : "") + (cat === 2 ? " boss" : "");
-    slow.textContent = cat === 2 ? "⏱ 首領戰・慢動作" : "⏱ 戰鬥中・放慢";
+    const staged = cine && cine.label;
+    slow.className = "rp-slow" + (cat || staged ? " on" : "") + (cat === 2 || staged ? " boss" : "");
+    slow.textContent = staged ? cine.label : cat === 2 ? "⏱ 首領戰・慢動作" : "⏱ 戰鬥中・放慢";
     if (now - uiAt > 150) {
       uiAt = now;
       sub.textContent = `${clock(t)}${M.scenes.length > 1 ? `　第 ${M.scenes.indexOf(sc) + 1} / ${M.scenes.length} 段` : ""}`;
@@ -1173,8 +1310,8 @@ export async function openReplay(d, ctx) {
         tick.replaceChildren(...M.events.slice(Math.max(0, k - 4), k + 1).map(e => { const n = h("div"); n.append(h("time", null, clock(e.t).slice(0, 5)), e.text); return n; }));
       }
       for (const hr of heroes) {
-        const here = present(hr, t);
-        hr.ui.m.classList.toggle("away", !here); hr.ui.m.classList.toggle("down", here && isDown(hr));
+        const here = present(hr, t, sc), member = inGroup(hr, t);
+        hr.ui.m.classList.toggle("away", !member); hr.ui.m.classList.toggle("far", member && !here); hr.ui.m.classList.toggle("down", here && isDown(hr));
         if (M.hasMeter) hr.ui.u.style.width = (here ? Math.round(M.fury(hr.name, t) * 100) : 0) + "%";
       }
     }
@@ -1197,6 +1334,7 @@ export async function openReplay(d, ctx) {
       m.foe = hr;
       const p = m.pend || (m.pend = { amount: 0, crit: false, miss: null, hr });
       p.amount += x.amount; p.crit = p.crit || x.crit; if (x.miss && !x.amount) p.miss = x.miss; p.hr = hr; p.spell = x.spell;
+      if (x.kind && x.kind !== "swing" && x.spell) { p.cast = x.spell; p.school = x.school; }
       if (!(m.cool > 0)) flushMob(m);
     }
   }
@@ -1237,6 +1375,11 @@ export async function openReplay(d, ctx) {
     const o = world && world.mobs.get(m); if (!o) return;
     const hr = p.hr;
     o.act = { kind: "swing", age: 0, dur: 0.4 }; o.lungeDir.set(hr.g.position.x - o.g.position.x, 0, hr.g.position.z - o.g.position.z).normalize();
+    if (p.cast) {                                                  // a spell of theirs: a wave over the ground, and a boss names it
+      const c = schoolColor(p.school);
+      ring(o.g.position, c, m.boss ? 7 : 2.4, m.boss ? 0.8 : 0.5);
+      if (m.boss && !(now - (m.saidAt || 0) < 1400)) { m.saidAt = now; number(p.cast, overMob(o), c, { small: true }); cam.shake = Math.max(cam.shake, 0.2); }
+    }
     const pos = above(hr);
     setTimeout(() => { if (!alive_) return;
       if (p.miss) number(MISS[p.miss] || p.miss, pos, "#e8e8e8", { small: true });
@@ -1250,11 +1393,17 @@ export async function openReplay(d, ctx) {
     if (e.kind === "kill" || e.kind === "boss") {
       const o = world.mobs.get(e.m), p = o ? lift(o.g.position, o.H * 0.5) : lift(pos, 0.8);
       burst(p, e.kind === "boss" ? 0xd36bff : 0xff7a3c, e.kind === "boss" ? 140 : 34, e.kind === "boss" ? 9 : 5, e.kind === "boss" ? 1.6 : 0.9);
-      if (e.kind === "boss") { number(`擊敗 ${e.m.title}！`, lift(p, 2.5), "#f0c6ff", { big: true }); flash.style.transition = "none"; flash.style.opacity = 0.55; requestAnimationFrame(() => { flash.style.transition = "opacity .9s"; flash.style.opacity = 0; }); showCard(`擊敗 ${e.m.title}`, clock(e.t)); cam.shake = 0.6; }
+      if (e.kind === "boss") { flash.style.transition = "none"; flash.style.opacity = 0.55; requestAnimationFrame(() => { flash.style.transition = "opacity .9s"; flash.style.opacity = 0; });
+        showCard(`擊敗 ${e.m.title}`, e.m.by ? `最後一擊：${N(e.m.by)}　${clock(e.t)}` : clock(e.t)); cam.shake = 0.6; ring(o ? o.g.position : pos, 0xffffff, 12, 1.2); }
     } else if (e.kind === "wipe") { showCard(`${e.m.title}　首領戰失敗`, clock(e.t)); }
-    else if (e.kind === "pull") { showCard(`首領戰：${e.m.title}`, clock(e.t)); }
-    else if (e.kind === "level") { beam(pos, 0xffd76a); number("升級！", lift(pos, 2.6), "#ffe08a", { big: true }); }
-    else if (e.kind === "death") { burst(lift(pos, 1), 0x9aa0a6, 30, 3, 1.2); number("☠", lift(pos, 2.6), "#e8e8e8", { big: true }); }
+    else if (e.kind === "pull") { showCard(`首領戰：${e.m.title}`, clock(e.t)); const o = world.mobs.get(e.m);
+      stage({ rank: 2, dur: 3, slow: 0.3, focus: mobAt(e.m), sweep: 0.9, dist: o ? Math.max(6.5, o.H * 1.6) : 8, pitch: 0.16, h: o ? o.H * 0.55 : 2, label: "⚔ 首領登場" }); }
+    else if (e.kind === "best") { const o = world.mobs.get(e.m); showCard("本場最強一擊", e.text.replace(/^本場最強一擊：/, ""));
+      stage({ rank: 2, dur: 2.6, slow: 0.15, focus: mobAt(e.m), sweep: 0.8, dist: 6.5, pitch: 0.25, h: o ? o.H * 0.5 : 1.2, label: "💥 本場最強一擊" }); }
+    else if (e.kind === "level") { beam(pos, 0xffd76a); number("升級！", lift(pos, 2.6), "#ffe08a", { big: true });
+      if (hr) stage({ rank: 1, dur: 2.6, slow: 0.4, focus: () => hr.g.position, sweep: 1.5, dist: 5.5, pitch: 0.22, label: "✨ 升級" }); }
+    else if (e.kind === "death") { burst(lift(pos, 1), 0x9aa0a6, 30, 3, 1.2); number("☠", lift(pos, 2.6), "#e8e8e8", { big: true });
+      if (hr) stage({ rank: 1, dur: 2.2, slow: 0.3, focus: () => hr.g.position, sweep: 0.7, dist: 5, pitch: 0.5, h: 0.6, label: "☠ 倒下" }); }
     else if (e.kind === "loot") { if (!fire.lootAt || now - fire.lootAt > 350) { fire.lootAt = now; spark(lift(pos, 1.2), 0xffd24a); number(e.text.replace(/^拾取 /, ""), lift(pos, 2.6), "#ffd86b", { small: true }); } }
     else if (e.kind === "quest") { burst(lift(pos, 1.2), 0xffe066, 40, 4, 1.1); number("！任務完成", lift(pos, 2.6), "#ffe066", { big: true }); }
     else if (e.kind === "achieve") { beam(pos, 0x8ad8ff); number("成就！", lift(pos, 2.6), "#bfe9ff", { big: true }); }
@@ -1272,7 +1421,8 @@ export async function openReplay(d, ctx) {
     now = ts;
     const dt = Math.min(0.1, (ts - lastNow) / 1000); lastNow = ts;
     if (playing && !building && world && world.sc === sceneAt(g)) {
-      g = Math.min(M.total, g + dt * +speed.value);
+      g = Math.min(M.total, g + dt * (cine && cine.slow ? cine.slow : +speed.value));
+      if (cine && (cine.age += dt) >= cine.dur) endCine();
       slider.value = Math.round(g / M.total * 1000);
       if (g >= M.total) { setPlaying(false); credits(); }
     }
@@ -1283,7 +1433,7 @@ export async function openReplay(d, ctx) {
     }
     cam.shake = Math.max(0, cam.shake - dt * 1.5);
     const j = cam.shake * cam.shake * 1.2, jit = () => (Math.random() - 0.5) * j;
-    if (view === "chase") {
+    if (view === "chase" || cine) {
       camera.position.lerp(cam.pos, first ? 1 : Math.min(1, dt * 7)); camera.position.x += jit(); camera.position.y += jit();
       camera.lookAt(cam.look);
     } else {

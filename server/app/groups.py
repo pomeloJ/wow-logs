@@ -886,7 +886,7 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
 
     # The 3D replay on the party page: its own script and three.js, served from here rather than a
     # CDN so the page keeps working without other sites. Loaded only when the replay is opened.
-    ASSETS = {"replay.js": ("replay.js", "no-cache"), "scenery.js": ("scenery.js", "no-cache"),
+    ASSETS = {**{name: (name, "no-cache") for name in ("replay.js", "scenery.js", "figures.js", "themes.js")},
               "three.module.min.js": (os.path.join("vendor", "three.module.min.js"), "public, max-age=2592000")}
 
     @app.get("/assets/{name}", include_in_schema=False)
