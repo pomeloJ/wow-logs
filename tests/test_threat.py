@@ -99,3 +99,31 @@ def test_the_peak_is_never_below_the_average_over_a_long_enough_stretch():
                  "17.7,1,275,100,100,3;18.2,1,417,100,100,3"}, "我")
     [me] = a["units"]
     assert me["avg_tps"] == 45.9 and me["peak_tps"] == 45.9      # 11.2 to 18.2 s, not only the shortest stretch
+
+
+def test_threat_names_a_hidden_enemy_from_the_combat_log(client):
+    # inside a dungeon the game hides the target: threat figures, no name or GUID
+    from app.combat import COLUMNS
+    snapshot(client)
+    start = int(T0.timestamp())
+    seed(client, payload={"started": start, "duration": 10, "units": UNITS, "samples": SAMPLES}, n=0)
+    seed(client, payload={"started": start + 600, "duration": 10, "units": UNITS, "samples": SAMPLES}, minute=10, n=1)
+    seed(client, payload={"started": start + 1200, "duration": 10, "units": UNITS, "samples": SAMPLES}, minute=20, n=2)
+
+    def row(pos, at, way, who, enemy, guid, pet=0):
+        r = dict.fromkeys(COLUMNS)
+        r.update(pos=pos, ts=at * 1000, way=way, who=who, pet=pet, unit="x", enemy=enemy, kind="swing", amount=10, guid=guid)
+        return [r[c] for c in COLUMNS]
+    crab, turtle = "Creature-0-1-1-1-3812-0000000001", "Creature-0-1-1-1-4825-0000000002"
+    rows = [row(i, start + 1 + i, "out", "", "巨鉗蟹", crab) for i in range(5)]                  # the character's own hits
+    rows += [row(10 + i, start + 1 + i, "out", "波波", "鉗嘴龜", turtle) for i in range(8)]       # a member's, on another
+    rows += [row(30, start + 3, "out", "", "波波", "Player-1-0000B0B0")]                          # never a player
+    rows += [row(40 + i, start + 601 + i, "in", "", "鉗嘴龜", turtle) for i in range(3)]          # only hit by it
+    rows += [row(50 + i, start + 601 + i, "out", "波波", "巨鉗蟹", crab) for i in range(2)]
+    assert client.post("/api/v1/combat/hits", headers=AUTH, json={"character_id": "c1", "source": "l", "rows": rows}).status_code == 200
+    third, second, first = client.get("/api/v1/characters/c1/threat", headers=READ).json()["fights"]
+    assert (first["mob_name"], first["mob_guid"], first["mob_guessed"], first["mob_unsure"]) == ("巨鉗蟹", crab, True, False)
+    assert (second["mob_name"], second["mob_unsure"]) == ("鉗嘴龜", True)     # 3 against 2: nearly as often
+    assert third["mob_name"] is None and "mob_guessed" not in third        # nothing in the log then
+    seed(client, n=3, minute=30)                                            # a name from the game is never replaced
+    assert "mob_guessed" not in client.get("/api/v1/characters/c1/threat?limit=1", headers=READ).json()["fights"][0]

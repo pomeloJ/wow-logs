@@ -1086,7 +1086,7 @@ function aggroCard(A, P, d) {
   const who = u => u.name || d.owner.name;
   const colorOf = u => u.pet ? { color: P(who(u)).color === "var(--muted)" ? "var(--muted)" : P(who(u)).color, dash: true } : P(who(u));
   const pick = el("select", { "aria-label": "戰鬥" }, ...fights.map((f, i) => el("option", { value: i,
-    text: `${hm(f.timestamp)}　${f.mob_name || "看不到名字的目標"}　看到 ${f.seen_seconds} 秒` + (f.units.length > 1 ? `　${f.units.length} 人` : "") })));
+    text: `${hm(f.timestamp)}　${!f.mob_name ? "看不到名字的目標" : f.mob_guessed ? "可能是 " + f.mob_name + (f.mob_unsure ? "？" : "") : f.mob_name}　看到 ${f.seen_seconds} 秒` + (f.units.length > 1 ? `　${f.units.length} 人` : "") })));
   const busy = fights.findIndex(f => f.units.length > 1);
   pick.value = String(busy >= 0 ? busy : 0);
   const box = el("div", { class: "chartbox" }), keys = el("div"), body = el("div"), moves = el("div", { class: "small" });
@@ -1112,7 +1112,7 @@ function aggroCard(A, P, d) {
   };
   pick.addEventListener("change", show);
   const card = el("section", { class: "card c-full" }, el("h2", { text: "仇恨" }), el("div", { class: "pick" }, pick), keys, box, moves, body,
-    el("div", { class: "small", text: `數字是遊戲自己算的仇恨，由 ${N(d.owner.name)} 的插件在戰鬥中讀取。遊戲只讓插件讀「目前選取的目標」，所以每隻怪只有被選取那段時間的資料（「看到 N 秒」），沒選過的怪沒有仇恨紀錄。平均每秒是看到的這段時間內增加的仇恨；最高每秒是任何 3 秒以上區間裡最快的。最高仇恨比例到 100% 代表拉到或快拉到仇恨。` }));
+    el("div", { class: "small", text: `數字是遊戲自己算的仇恨，由 ${N(d.owner.name)} 的插件在戰鬥中讀取。遊戲只讓插件讀「目前選取的目標」，所以每隻怪只有被選取那段時間的資料（「看到 N 秒」），沒選過的怪沒有仇恨紀錄。副本裡遊戲會把目標名字藏起來，這時用同一段時間的戰鬥紀錄推測（「可能是」，後面有「？」代表另一隻怪也被打得差不多多）。平均每秒是看到的這段時間內增加的仇恨；最高每秒是任何 3 秒以上區間裡最快的。最高仇恨比例到 100% 代表拉到或快拉到仇恨。` }));
   setTimeout(show);
   return card;
 }

@@ -146,7 +146,9 @@ def register(app, db, can_read) -> None:
         those for the character. `series=true` adds every reading as [t, threat, percent, status].
 
         Only the target can be read in this game, so an enemy that was never targeted has no
-        entry. Empty until the addon 0.3.4 or later has been played with."""
+        entry. Inside dungeons the game hides the target's name and GUID; the enemy is then taken
+        from the combat log of the same moments, with `mob_guessed` true (and `mob_unsure` when
+        another enemy was hit nearly as often). Empty until the addon 0.3.4 or later has been played with."""
         if scope is not None and character_id != scope:
             raise HTTPException(403, "this link only covers one character")
         start = end = None
@@ -183,5 +185,38 @@ def fights(conn, character_id: str, start: Optional[str], end: Optional[str], me
         except ValueError:
             continue
         if isinstance(payload, dict):
-            out.append({"event_id": r["event_id"], "timestamp": r["timestamp"], **analyse(payload, me, series)})
+            fight = {"event_id": r["event_id"], "timestamp": r["timestamp"], **analyse(payload, me, series)}
+            if not fight["mob_name"] and not fight["mob_guid"]:
+                fight.update(guess(conn, character_id, payload.get("started"), fight["seen_from"], fight["seen_seconds"]))
+            out.append(fight)
     return out
+
+
+MARGIN = 1.0          # seconds: the addon's clock and the combat log's are not read at the same moment
+
+
+def guess(conn, character_id: str, started: Any, seen_from: float, seen_seconds: float) -> Dict[str, Any]:
+    """Inside dungeons the game hides the target from addons (its GUID and name come back secret),
+    so a fight can have threat figures and no enemy. The combat log of the same moments still
+    names everything: the enemy is taken to be the one the character itself hit most while the
+    enemy was seen, else the one hit or hitting most. `mob_guessed` says the name came this way;
+    `mob_unsure` that another enemy was hit nearly as often."""
+    if not isinstance(started, (int, float)) or isinstance(started, bool):
+        return {}
+    a = int((started + seen_from - MARGIN) * 1000)
+    b = int((started + seen_from + seen_seconds + MARGIN) * 1000)
+    try:
+        rows = conn.execute(
+            "SELECT guid, MAX(enemy) AS enemy, COUNT(*) AS n, "
+            "SUM(CASE WHEN way='out' AND COALESCE(who,'')='' AND COALESCE(pet,0)=0 THEN 1 ELSE 0 END) AS mine "
+            "FROM combat_hits WHERE character_id=? AND ts>=? AND ts<=? AND way IN ('out','in') "
+            "AND guid IS NOT NULL AND guid NOT LIKE 'Player-%' AND enemy IS NOT NULL "
+            "GROUP BY guid ORDER BY mine DESC, n DESC LIMIT 2", (character_id, a, b)).fetchall()
+    except Exception:          # no combat log table on this server
+        return {}
+    if not rows:
+        return {}
+    top = rows[0]
+    by = (lambda r: r["mine"]) if top["mine"] else (lambda r: r["n"])
+    unsure = len(rows) > 1 and by(rows[1]) * 2 > by(top)
+    return {"mob_name": top["enemy"], "mob_guid": top["guid"], "mob_guessed": True, "mob_unsure": unsure}
