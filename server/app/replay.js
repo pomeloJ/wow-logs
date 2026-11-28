@@ -12,6 +12,7 @@
 // anywhere; attacks, bursts and floating numbers are fired only while playing forward.
 import * as THREE from "./three.module.min.js";
 import * as S from "./scenery.js";
+import { FORMS, VEILS } from "./scenery.js";
 
 const GAP = 3 * 60 * 1000;                 // ms between position samples that is a break, not a walk
 const MELEE = new Set(["WARRIOR", "ROGUE", "PALADIN", "DRUID", "SHAMAN"]);
@@ -37,7 +38,8 @@ function parseHits(json, me) {
   const out = [];
   for (const r of json.rows) {
     const way = r[ix.way];
-    if (way !== "out" && way !== "in" && way !== "heal" && way !== "death") continue;
+    if (way === "aura") { if (!FORMS[r[ix.spell]] && !VEILS[r[ix.spell]]) continue; }      // shape-shifts and stealth only
+    else if (way !== "out" && way !== "in" && way !== "heal" && way !== "death") continue;
     out.push({ t: r[ix.ts], way, who: r[ix.who] || me, pet: !!r[ix.pet], unit: r[ix.unit], enemy: r[ix.enemy], guid: r[ix.guid],
       spell: r[ix.spell], school: r[ix.school], kind: r[ix.kind], amount: +r[ix.amount] || 0, over: r[ix.overkill], crit: !!r[ix.crit], miss: r[ix.miss] });
   }
@@ -64,6 +66,15 @@ function model(d, ctx, hitsJson) {
 
   const hits = parseHits(hitsJson, me).filter(h => h.t >= S - 60000 && h.t <= E + 60000);
   const hasHits = hits.some(h => h.way === "out" || h.way === "in");
+  // who was shape-shifted (or hidden) when: {name: [[from, to, form], ...]}
+  const forms = {}, open = {};
+  for (const h of hits) {
+    if (h.way !== "aura") continue;
+    const key = FORMS[h.spell] || VEILS[h.spell], id = h.who + "|" + key;
+    if (h.kind === "APPLIED") { if (open[id] == null) open[id] = h.t; }
+    else if (h.kind === "REMOVED") { (forms[h.who] = forms[h.who] || []).push([open[id] ?? S - 60000, h.t, key]); delete open[id]; }
+  }
+  for (const [id, a] of Object.entries(open)) { const [who, key] = id.split("|"); (forms[who] = forms[who] || []).push([a, E + 60000, key]); }
 
   // ---- kills recorded by the addon, with the name and the place where it happened
   const queue = list => { const m = new Map(); for (const x of list) { const k = Math.round(x.t / 1000); if (!m.has(k)) m.set(k, []); m.get(k).push(x); }
@@ -231,7 +242,7 @@ function model(d, ctx, hitsJson) {
     m.spawnR = Math.min(m.endR - 0.6, toReplay(m.scene, Math.max(m.spawn, m.scene.t0)));
     m.peak = m.kill != null ? Math.max(1, m.total) : Math.max(1, m.total * 1.3);
   }
-  const H = hits.filter(h => h.way !== "death").map(h => { h.r = replayOf(h.t); return h; }).filter(h => h.r != null);
+  const H = hits.filter(h => h.way !== "death" && h.way !== "aura").map(h => { h.r = replayOf(h.t); return h; }).filter(h => h.r != null);
   for (const p of roster) {
     p.down = events.filter(e => e.kind === "death" && e.who === p.name && e.r != null).map(e => [e.r, Math.max(e.r + 2.5, replayOf(e.t + 30000) || 0)]);
     p.pet = hits.some(h => h.pet && h.who === p.name);
@@ -246,7 +257,7 @@ function model(d, ctx, hitsJson) {
     if (i < 0 || t - minutes[i][0] > 90000) return 0;
     return (minutes[i][1][name] || 0) / peak;
   };
-  return { roster, scenes, events: events.filter(e => e.r != null), monsters: monsters.filter(m => m.scene), hits: H, hasHits,
+  return { roster, scenes, events: events.filter(e => e.r != null), monsters: monsters.filter(m => m.scene), hits: H, hasHits, forms,
     total: off, fury, hasMeter: minutes.length > 0, realOf, catOf, fightRate,
     mates: Object.fromEntries(d.maps.map(m => [m.map_id, m.members || {}])),
     mapInfo: Object.fromEntries(d.maps.map(m => [m.map_id, m])) };
@@ -445,8 +456,8 @@ export async function openReplay(d, ctx) {
 
   const heroes = M.roster.map((p, i) => {
     const col = new THREE.Color(p.color), hs = hash(p.name);
-    const rig = S.humanoid({ armor: col.clone(), trim: col.clone().multiplyScalar(0.5), skin: SKIN[hs % SKIN.length], hair: HAIR[(hs >> 4) % HAIR.length],
-      weapon: WEAPON[p.cls] || "sword", orb: ORB[p.cls], shield: p.cls === "WARRIOR" || p.cls === "PALADIN", cape: col.clone().multiplyScalar(0.38) });
+    const rig = S.humanoid({ ...S.heroLook(p.cls), armor: col.clone(), trim: col.clone().multiplyScalar(0.5), skin: SKIN[hs % SKIN.length], hair: HAIR[(hs >> 4) % HAIR.length],
+      cape: col.clone().multiplyScalar(0.38) });
     const g = new THREE.Group();
     const shadow = new THREE.Mesh(G.disc, shadowMat); shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.03;
     const ring = new THREE.Mesh(G.ring, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: p.owner ? 0.95 : 0.6, side: THREE.DoubleSide, depthWrite: false }));
@@ -462,7 +473,7 @@ export async function openReplay(d, ctx) {
       pet.add(ps, pm, ph); scene.add(pet);
     }
     scene.add(g);
-    return { ...p, i, g, rig, base: col.clone(), ring, label, pet, last: new THREE.Vector3(), charge: Math.random(), act: null,
+    return { ...p, i, g, rig, cur: rig, rigs: { human: rig }, formKey: "human", base: col.clone(), ring, label, pet, last: new THREE.Vector3(), charge: Math.random(), act: null,
       cool: 0, pend: null, foe: null, ui: null, shown: 0, walk: 0, phase: 0, face: 0 };
   });
   const heroOf = new Map(heroes.map(x => [x.name, x]));
@@ -703,16 +714,17 @@ export async function openReplay(d, ctx) {
     flatLight(0x0b0807, 14, 60, 0.35, 0.25, 60, 0xffc27a);
   }
 
-  // ---- monsters: jointed figures by kind (people, beasts, oozes), kept in pools
-  const pools = { humanoid: [], beast: [], blob: [] };
-  const HEIGHT = { humanoid: 2.05, beast: 1.15, blob: 1.35 };
+  // ---- monsters: jointed figures by kind (people dressed by name, beasts shaped by name, oozes), kept in pools
+  const pools = {};
   function takeMob(m) {
-    const arch = S.archetype(m.name), kind = m.boss && arch !== "beast" ? "humanoid" : arch;
-    let o = pools[kind].pop();
-    const hs = hash(m.name || "");
+    const arch = S.archetype(m.name), kind = m.boss && arch !== "beast" ? "humanoid" : arch, hs = hash(m.name || "");
+    const look = kind === "humanoid" ? S.foeLook(m.name, hs) : null, shape = kind === "beast" ? S.beastShape(m.name) : null;
+    const key = kind === "humanoid" ? `h:${look.head}:${look.gear}:${look.weapon}:${look.robe ? 1 : 0}:${look.shield ? 1 : 0}` : kind === "beast" ? "b:" + shape : "o";
+    const list = pools[key] || (pools[key] = []);
+    let o = list.pop();
     if (!o) {
-      const rig = kind === "beast" ? S.beast({ color: 0x6b5034 }) : kind === "blob" ? S.blob({ color: 0x3fb8a0 })
-        : S.humanoid({ armor: 0x6a2a24, trim: 0x3a1a14, skin: 0xc79a74, hair: 0x1a1410, weapon: ["sword", "axe", "mace", "dagger"][pools.humanoid.length % 4] });
+      const rig = kind === "beast" ? S.beast({ color: 0x6b5034, shape }) : kind === "blob" ? S.blob({ color: 0x3fb8a0 })
+        : S.humanoid({ armor: 0x6a2a24, trim: 0x3a1a14, skin: 0xc79a74, hair: 0x1a1410, ...look, scale: 1 });
       const g = new THREE.Group();
       const shadow = new THREE.Mesh(G.disc, shadowMat); shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.03;
       const ring = new THREE.Mesh(G.ring, new THREE.MeshBasicMaterial({ color: 0xff3b2f, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
@@ -723,23 +735,27 @@ export async function openReplay(d, ctx) {
       barRim.center.set(0, 0.5); barBg.center.set(0, 0.5); barFg.center.set(0, 0.5);
       barRim.renderOrder = 7; barBg.renderOrder = 8; barFg.renderOrder = 9;        // drawn in this order: rim, backing, bar
       let crown = null;
-      if (kind === "humanoid") { crown = new THREE.Group(); for (let k = 0; k < 5; k++) { const c = new THREE.Mesh(G.crown, rig.mats[5]); const a = k / 5 * Math.PI * 2; c.position.set(Math.cos(a) * 0.17, 2.08, Math.sin(a) * 0.17); crown.add(c); } rig.body.add(crown); }
+      if (kind === "humanoid") {                                   // worn by a boss
+        crown = new THREE.Group(); const gold = rig.mats[6];
+        for (let k = 0; k < 6; k++) { const c = new THREE.Mesh(G.crown, gold); const a = k / 6 * Math.PI * 2; c.position.set(Math.cos(a) * 0.17, 0.24, Math.sin(a) * 0.17); crown.add(c); }
+        rig.head.add(crown);
+      }
       g.add(rig.root, shadow, ring, barRim, barBg, barFg);
-      o = { kind, g, rig, crown, ring, barRim, barBg, barFg, label: null, act: null, flinch: 0, lungeDir: new THREE.Vector3(), phase: 0 };
+      o = { key, kind, g, rig, crown, ring, barRim, barBg, barFg, label: null, act: null, flinch: 0, lungeDir: new THREE.Vector3(), phase: 0, h0: rig.height };
     }
-    const boss = !!m.boss, sc = boss ? 2.2 : 1.0 + (hs % 30) / 100;
-    o.rig.root.scale.setScalar(sc * (kind === "beast" ? 1.2 : 1));
+    const boss = !!m.boss, sc = (boss ? 2.2 : 1.0 + (hs % 30) / 100) * (look && look.scale || 1) * (kind === "beast" ? 1.15 : 1);
+    o.rig.root.scale.setScalar(sc);
     const mats = o.rig.mats;
     if (kind === "humanoid") {
       const armor = boss ? 0x4a2266 : FOE_ARMOR[hs % FOE_ARMOR.length];
-      mats[0].color.set(armor); mats[1].color.set(armor).multiplyScalar(0.5); mats[2].color.set(FOE_SKIN[(hs >> 3) % FOE_SKIN.length]); mats[3].color.set(0x1a1410);
-      mats[4].color.set(boss ? 0xff3030 : 0x1a1410);
+      mats[0].color.set(armor); mats[1].color.set(armor).multiplyScalar(0.55); mats[2].color.set(look.skin || FOE_SKIN[(hs >> 3) % FOE_SKIN.length]); mats[3].color.set(HAIR[(hs >> 5) % HAIR.length]);
+      mats[4].color.set(boss ? 0xff3030 : look.head === "skull" ? 0x6ad8ff : 0x1a1410);
       o.crown.visible = boss;
-    } else if (kind === "beast") { const c = new THREE.Color(BEAST_FUR[hs % BEAST_FUR.length]); mats[0].color.copy(c); mats[1].color.copy(c).multiplyScalar(0.55); }
+    } else if (kind === "beast") { const c = new THREE.Color(shape === "spider" ? [0x2a2420, 0x3a3a2a, 0x4a2a1a][hs % 3] : BEAST_FUR[hs % BEAST_FUR.length]); mats[0].color.copy(c); mats[1].color.copy(c).multiplyScalar(0.5); }
     else { const c = new THREE.Color(BLOB_COLOR[hs % BLOB_COLOR.length]); mats[0].color.copy(c); mats[0].emissive.copy(c).multiplyScalar(0.25); }
     o.rig.base = mats.map(x => x.color.clone());
-    o.H = HEIGHT[kind] * sc * (kind === "beast" ? 1.2 : 1);
-    o.ring.scale.setScalar(boss ? 2.4 : kind === "beast" ? 1.3 : 1);
+    o.H = o.h0 * sc;
+    o.ring.scale.setScalar(boss ? 2.4 : kind === "beast" ? 1.4 : 1);
     o.ring.material.color.set(boss ? 0xc040ff : 0xff3b2f);
     const bw = boss ? 2.2 : 1.3, by = o.H + 0.3;
     o.barBg.scale.set(bw, 0.15, 1); o.barBg.position.set(-bw / 2, by, 0);
@@ -753,7 +769,7 @@ export async function openReplay(d, ctx) {
   function releaseMob(o) {
     scene.remove(o.g);
     if (o.label) { o.g.remove(o.label); o.label.material.map.dispose(); o.label.material.dispose(); o.label = null; }
-    pools[o.kind].push(o);
+    pools[o.key].push(o);
   }
 
   // ---- effects that live on the wall clock
@@ -941,7 +957,13 @@ export async function openReplay(d, ctx) {
   const isDown = hr => hr.down.some(([a, b]) => g >= a && g < b);
   const hpOf = (m, t) => { if (m.kill != null && t >= m.kill) return 0; if (!m.dmg.length) return m.kill != null ? clamp(1 - (t - m.spawn) / (m.kill - m.spawn), 0.05, 1) : 1;
     const i = lowerBound(m.dmg, t, x => x[0]) - 1; return clamp(1 - (i >= 0 ? m.dmg[i][1] : 0) / m.peak, 0.02, 1); };
-  const tint = (rig, grey, opacity) => rig.mats.forEach((m, k) => { m.color.copy(rig.base[k]).lerp(GREY, grey); m.opacity = opacity; });
+  const SHADOW = new THREE.Color(0x3a1a5a);
+  const tint = (rig, grey, opacity, veil) => rig.mats.forEach((m, k) => { m.color.copy(rig.base[k]); if (veil === "shadow") m.color.lerp(SHADOW, 0.55); m.color.lerp(GREY, grey);
+    m.opacity = opacity * (rig.ghost ? 0.55 : 1) * (veil === "stealth" ? 0.32 : 1); });
+  // the shape and veil someone has at a moment, from the combat log's auras
+  const formAt = (hr, t) => { let shape = null, veil = null; for (const [a, b, k] of M.forms[hr.name] || []) if (t >= a && t <= b) { if (k === "stealth" || k === "shadow") veil = k; else shape = k; } return { shape, veil }; };
+  const meleeStand = hr => hr.formKey === "moonkin" ? false : hr.cur.kind !== "humanoid" ? true : MELEE.has(hr.cls) && hr.cls !== "DRUID";
+  const meleeSpell = hr => hr.cur.kind === "beast" || ["WARRIOR", "ROGUE", "PALADIN"].includes(hr.cls);
 
   function update(dt) {
     const sc = sceneAt(g);
@@ -1038,6 +1060,14 @@ export async function openReplay(d, ctx) {
       hr.shown = lerp(hr.shown, here ? 1 : 0, first ? 1 : Math.min(1, dt * 4));
       hr.g.visible = hr.shown > 0.02; if (hr.pet) hr.pet.visible = hr.g.visible;
       if (!here && hr.shown < 0.02) continue;
+      const fm = formAt(hr, t), wantForm = fm.shape || "human";
+      if (wantForm !== hr.formKey) {                               // shape-shift: swap the body
+        let r2 = hr.rigs[wantForm];
+        if (!r2) { r2 = hr.rigs[wantForm] = S.formRig(wantForm); hr.g.add(r2.root); }
+        hr.cur.root.visible = false; r2.root.visible = true; hr.cur = r2; hr.formKey = wantForm;
+        hr.label.position.y = r2.height + 0.45;
+        if (playing && !first) { burst(lift(hr.g.position, 1), hr.cls === "DRUID" ? 0x7dff6a : hr.cls === "SHAMAN" ? 0x6ab8ff : 0xb0b0b0, 40, 3, 0.9); spark(lift(hr.g.position, 1), 0xffffff, 3); }
+      }
       let x, z, real = false;
       if (sc.kind === "field" && hr.owner) { x = lead.x; z = lead.z; real = true; }
       else if (sc.kind === "field" && world.mates[hr.name]) { const pts = world.mates[hr.name]; if (t >= pts[0].t - 30000 && t <= pts[pts.length - 1].t + 30000) { [x, z] = at(pts, t); real = true; } }
@@ -1047,9 +1077,9 @@ export async function openReplay(d, ctx) {
         const k = sc.kind === "field" ? ++order : order++;
         const [sx, sf] = slot(k); x = lead.x + right.x * sx + dir.x * sf; z = lead.z + right.z * sx + dir.z * sf;
         if (fight && !down) {
-          const [mx, mz] = fight.p, a = Math.atan2(x - mx, z - mz), reach = MELEE.has(hr.cls) ? 1.5 + (fight.m.boss ? 1.6 : 0) : 6.5;
+          const [mx, mz] = fight.p, a = Math.atan2(x - mx, z - mz), reach = meleeStand(hr) ? 1.5 + (fight.m.boss ? 1.6 : 0) : 6.5;
           const dd = Math.hypot(x - mx, z - mz);
-          if (MELEE.has(hr.cls) || dd > reach) { x = lerp(x, mx + Math.sin(a) * reach, 0.85); z = lerp(z, mz + Math.cos(a) * reach, 0.85); }
+          if (meleeStand(hr) || dd > reach) { x = lerp(x, mx + Math.sin(a) * reach, 0.85); z = lerp(z, mz + Math.cos(a) * reach, 0.85); }
         }
       }
       const moved = Math.hypot(x - hr.g.position.x, z - hr.g.position.z);
@@ -1065,11 +1095,11 @@ export async function openReplay(d, ctx) {
       let act = null, f = 0;
       if (hr.act) { hr.act.age += dt; f = hr.act.age / hr.act.dur; if (f >= 1) hr.act = null; else act = hr.act.kind; }
       const lunge = act === "swing" ? Math.sin(Math.min(1, f * 1.4) * Math.PI) * 0.5 : 0;
-      hr.rig.root.rotation.y = hr.face;
-      hr.rig.root.position.set(Math.sin(hr.face) * lunge, 0, Math.cos(hr.face) * lunge);
-      hr.rig.pose({ walk: hr.walk, phase: hr.phase, act, f, down, t: now / 1000 + hr.i });
-      if (hr.rig.glow) hr.rig.glow.scale.setScalar(0.6 + (act === "cast" ? Math.sin(f * Math.PI) * 2.2 : 0));
-      tint(hr.rig, down ? 0.7 : 0, hr.shown);
+      hr.cur.root.rotation.y = hr.face;
+      hr.cur.root.position.set(Math.sin(hr.face) * lunge, 0, Math.cos(hr.face) * lunge);
+      hr.cur.pose({ walk: hr.walk, phase: hr.phase, act, f, down, t: now / 1000 + hr.i });
+      if (hr.cur.glow) hr.cur.glow.scale.setScalar(0.6 + (act === "cast" ? Math.sin(f * Math.PI) * 2.2 : 0));
+      tint(hr.cur, down ? 0.7 : 0, hr.shown, fm.veil);
       hr.ring.material.opacity = (down ? 0.15 : hr.owner ? 0.95 : 0.6) * hr.shown * (chase ? 0.6 : 1);
       hr.label.material.opacity = (down ? 0.5 : 1) * hr.shown;
       if (hr.pet) {
@@ -1080,7 +1110,7 @@ export async function openReplay(d, ctx) {
       }
       if (playing && fight && !fight.m.logged && !down && here && !hr.act) {
         hr.charge += dt * (0.6 + (M.hasMeter ? M.fury(hr.name, t) : 0.5) * 2.2) * Math.min(2, +speed.value);
-        if (hr.charge >= 1) { hr.charge = 0; attack(hr, fight.m, { kind: MELEE.has(hr.cls) ? "swing" : WEAPON[hr.cls] === "bow" ? "range" : "spell", amount: 0, school: hr.cls === "MAGE" ? 16 : hr.cls === "WARLOCK" ? 32 : hr.cls === "PRIEST" ? 2 : hr.cls === "DRUID" ? 8 : 1 }); }
+        if (hr.charge >= 1) { hr.charge = 0; attack(hr, fight.m, { kind: meleeStand(hr) ? "swing" : WEAPON[hr.cls] === "bow" ? "range" : "spell", amount: 0, school: hr.cls === "MAGE" ? 16 : hr.cls === "WARLOCK" ? 32 : hr.cls === "PRIEST" ? 2 : hr.cls === "DRUID" ? 8 : 1 }); }
       }
     }
     if (playing && g > lastG && g - lastG < 3) {
@@ -1198,8 +1228,8 @@ export async function openReplay(d, ctx) {
     if (a.kind === "swing") { hr.act = { kind: "swing", age: 0, dur: 0.36 }; setTimeout(() => { if (!alive_) return; slash(tp, lift(from, 1.1), a.crit ? 0xffd84a : 0xffffff); land(); }, 130); }
     else if (a.kind === "range") { hr.act = { kind: "shoot", age: 0, dur: 0.34 }; projectile(lift(from, 1.4), tp, c3, "range", land); }
     else if (a.kind === "dot" || a.kind === "shield") { burst(tp, c3, 8, 1.5, 0.45); land(); }
-    else { hr.act = { kind: MELEE.has(hr.cls) ? "swing" : "cast", age: 0, dur: 0.4 }; ring(from, c3);
-      if (MELEE.has(hr.cls)) setTimeout(() => { if (!alive_) return; slash(tp, lift(from, 1.1), color); spark(tp, c3, 1.5); land(); }, 130);
+    else { hr.act = { kind: meleeSpell(hr) ? "swing" : "cast", age: 0, dur: 0.4 }; ring(from, c3);
+      if (meleeSpell(hr)) setTimeout(() => { if (!alive_) return; slash(tp, lift(from, 1.1), color); spark(tp, c3, 1.5); land(); }, 130);
       else projectile(lift(from, 1.6), tp, c3, "spell", () => { spark(tp, c3, 1.8); land(); }); }
   }
   function flushMob(m) {

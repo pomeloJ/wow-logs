@@ -192,6 +192,7 @@ details.boss[open] .name::after { content: "▾"; }
   .events li { grid-template-columns: 42px 1fr; }
   .skill { grid-template-columns: 1fr; } .donut svg { width: 140px; height: 140px; } .who-btn { padding: 7px 12px; }
 }
+.beta { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 99px; font-size: 10px; font-weight: 700; letter-spacing: .06em; line-height: 16px; vertical-align: 1px; color: #fff; background: var(--accent); }
 </style>
 </head>
 <body>
@@ -318,14 +319,15 @@ function openReplayHere(d, b) {
         } catch (e) { /* fine */ }
         replayPushed = false;
       } }))
-    .then(ok => { if (b) b.textContent = ok ? "🎬 3D 回放" : "沒有可以回放的內容"; return ok; })
+    .then(ok => { if (b) { if (ok) b.replaceChildren(...replayLabel()); else b.textContent = "沒有可以回放的內容"; } return ok; })
     .catch(() => { if (b) b.textContent = "載入失敗，再試一次"; })
     .finally(() => { replayOpening = false; if (b) b.disabled = false; });
 }
+const replayLabel = () => [document.createTextNode("🎬 3D 回放"), el("span", { class: "beta", text: "BETA" })];
 function canReplay(d) { return !!(d.maps.length || (d.kill_times || []).length || (d.encounters || []).length); }
 function replayButton(d) {
   if (!canReplay(d)) return null;
-  const b = el("button", { class: "more", type: "button", text: "🎬 3D 回放" });
+  const b = el("button", { class: "more", type: "button" }, ...replayLabel());
   b.style.cssText = "margin:0 0 0 auto";
   b.addEventListener("click", () => openReplayHere(d, b));
   return b;
