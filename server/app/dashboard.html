@@ -17,7 +17,7 @@
 body { margin: 0; background: var(--bg); color: var(--ink);
   font: 15px/1.5 -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
 main { max-width: 1080px; margin: 0 auto; padding: 20px 16px 48px; }
-header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+header { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; margin-bottom: 16px; }
 h1 { font-size: 20px; margin: 0; letter-spacing: .02em; }
 h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 600; letter-spacing: .08em; }
 .sync { margin-left: auto; font-size: 13px; color: var(--muted); }
@@ -389,6 +389,13 @@ a.btn2 { display: inline-block; text-decoration: none; }
 .btn2.bad { color: var(--warn); background: none; }
 .btn2.bad:hover { border-color: var(--warn); }
 .btn2.mini { padding: 1px 9px; font-size: 12px; }
+.btn2.quiet { background: none; border-color: transparent; color: var(--muted); }
+.btn2.quiet:hover { border-color: var(--line); color: var(--ink); }
+.btn2.icon { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0;
+  background: none; border-color: transparent; color: var(--muted); font-size: 15px; line-height: 1; }
+.btn2.icon:hover { border-color: var(--line); color: var(--ink); background: var(--bg); }
+header .btn2 { padding: 4px 12px; font-size: 13px; }
+.sheet-tools .btn2.mini { padding: 3px 10px; }
 .btn2:disabled { opacity: .45; cursor: default; }
 .tk-new { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
 .tk-empty { border: 1px dashed var(--line); border-radius: 10px; padding: 14px; text-align: center; color: var(--muted); font-size: 13px; margin: 10px 0; }
@@ -410,9 +417,9 @@ a.btn2 { display: inline-block; text-decoration: none; }
   <header>
     <h1>Adventure Hub</h1>
     <span class="sync" id="sync"></span>
-    <button class="link" id="friends" hidden>好友</button>
-    <button class="link" id="tokens" hidden>管理權杖</button>
-    <button class="link" id="logout" hidden>登出</button>
+    <button type="button" class="btn2 nav" id="friends" hidden>好友</button>
+    <button type="button" class="btn2 nav" id="tokens" hidden>管理權杖</button>
+    <button type="button" class="btn2 quiet" id="logout" hidden>登出</button>
   </header>
   <div id="busy" role="progressbar" aria-label="載入中"></div>
   <div id="app"><div class="loading" role="status"><i></i>載入冒險紀錄中…<small id="slow" hidden>伺服器回應比較慢，請再等一下。</small></div></div>
@@ -598,7 +605,7 @@ async function googleBox(form, me) {
   if (!me || !me.google || !form.isConnected) return;
   const box = el("div", { class: "detail google" });
   if (me.account) {
-    const out = el("button", { type: "button", class: "link", text: "登出 Google" });
+    const out = el("button", { type: "button", class: "btn2 mini", text: "登出 Google" });
     out.addEventListener("click", async () => {
       try { await fetch("/auth/logout", { method: "POST" }); } catch (e) { /* the cookie lapses by itself */ }
       showLogin(false, await whoAmI());
@@ -620,7 +627,7 @@ function sheet(label) {
   shade.addEventListener("click", e => { if (e.target === shade) close(); });
   document.addEventListener("keydown", esc);
   document.body.append(shade);
-  const shut = el("button", { type: "button", class: "link", text: "關閉" });
+  const shut = el("button", { type: "button", class: "btn2 icon", text: "✕", title: "關閉（Esc）", "aria-label": "關閉" });
   shut.addEventListener("click", close);
   return { box, close, head: el("div", { class: "sheet-head" }, el("h2", { text: label }), shut) };
 }
@@ -831,14 +838,14 @@ async function tokensPanel() {
     if (made) made.scrollIntoView({ block: "nearest" });
   };
   // read again in place (to see when a token was last used) without closing the panel; the tab stays
-  const refresh = button2("重新整理", async () => {
+  const refresh = button2("↻ 重新整理", async () => {
     refresh.disabled = true; refresh.textContent = "更新中…";
     try {
       draw(await call("GET", "tokens"));
       refresh.textContent = "已更新 " + new Date().toLocaleTimeString("zh-TW", { hour12: false });
     } catch (e) { refresh.textContent = "更新失敗，再試一次"; }
     refresh.disabled = false;
-    setTimeout(() => { if (!refresh.disabled) refresh.textContent = "重新整理"; }, 2500);
+    setTimeout(() => { if (!refresh.disabled) refresh.textContent = "↻ 重新整理"; }, 2500);
   }, "mini");
   s.head.append(el("div", { class: "sheet-tools" }, refresh, s.head.lastChild));
   s.box.replaceChildren(s.head, el("div", { class: "loading", role: "status" }, el("i"), "讀取中…"));
