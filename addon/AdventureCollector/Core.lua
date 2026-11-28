@@ -4,7 +4,7 @@ local ADDON_NAME, ns = ...
 ADDON_NAME = ADDON_NAME or "AdventureCollector"
 ns = ns or {}
 
-local VERSION = "0.3.7"
+local VERSION = "0.3.8"
 local DEFAULTS = {
     enabled = true,
     locationEnabled = true,
@@ -626,6 +626,7 @@ function handlers.PLAYER_LOGIN()
     end
     startTicker()
     pcall(ns.createButton) -- UI problems must never stop data collection
+    if ns.initThreatPanel then pcall(ns.initThreatPanel) end
 end
 
 function handlers.ZONE_CHANGED_NEW_AREA()
@@ -2345,7 +2346,7 @@ SlashCmdList.ADVENTURECOLLECTOR = function(msg)
     elseif msg == "help" then
         say("/adventure [status] - 狀態;  /adventure save - 立即存檔;  /adventure mapshot - 截目前地圖當底圖;  /adventure aishot [test|reset] - AI 增強截圖 (預設 F12);  /adventure chat - 聊天紀錄設定;  "
             .. "/adventure combatlog - 確認戰鬥紀錄 (on: 開啟並每次登入自動開, auto: 切換自動開 (預設開), quiet: 不提醒);  "
-            .. "/adventure threat - 仇恨讀取狀態;  /adventure button - 顯示/隱藏存檔按鈕;  "
+            .. "/adventure threat - 仇恨讀取狀態;  /athreat - 即時仇恨面板設定;  /adventure button - 顯示/隱藏存檔按鈕;  "
             .. "/adventure on|off - 啟用/暫停")
     else
         status()

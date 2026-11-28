@@ -80,6 +80,28 @@ cd agent && ../.venv/bin/python AdventureSync.pyw      # Windows：..\.venv\Scri
 | `/adventure combatlog` | 戰鬥紀錄有沒有開；加 `auto` 每次登入自動開，加 `quiet` 不再提醒 |
 | `/adventure mapshot` | 把目前的世界地圖截下來當網頁底圖 |
 
+## 遊戲內即時仇恨面板（插件 0.3.8）
+
+將 `addon/AdventureCollector` 整個資料夾複製到遊戲的 `Interface/AddOns/`，
+取代舊版同名插件，然後重新登入或 `/reload`。請一併更新 `.toc`、`Core.lua` 與新增的 `ThreatPanel.lua`。
+
+面板預設在戰鬥中顯示，每 0.2 秒直接讀取目前目標的仇恨，不需要同步程式、網路或 `/combatlog`。
+顯示自己、寵物與隊友的仇恨排行、目前坦怪者，以及自己的拉怪門檻比例。
+超過 85% 時顯示黃色警示；正在坦怪時顯示紅色狀態（坦克本來就應該坦怪，這不表示操作錯誤）。
+數值是遊戲 API 的讀數；讀取失敗或無自身仇恨時顯示無資料。排行最多顯示 8 列，團隊中會保留自己的排名列。
+
+| 指令 | 用途 |
+| --- | --- |
+| `/athreat show` | 常駐顯示，方便查看及移動面板 |
+| `/athreat auto` | 只在戰鬥中顯示（預設） |
+| `/athreat off` / `/athreat on` | 關閉／啟用面板 |
+| `/athreat lock` / `/athreat unlock` | 鎖定／允許左鍵拖曳 |
+| `/athreat scale 0.8` | 調整大小，範圍 0.6–1.6 |
+| `/athreat warn 85` | 調整自己的比例警示門檻，範圍 1–100 |
+| `/athreat reset` | 重設位置與大小 |
+
+位置與設定會隨遊戲存檔保留。這是目前目標的即時監控，不提供整群怪物的仇恨或即時 TPS 推算。
+
 ## 給其他人用
 
 **發權杖**：在區域網路內開 `http://<伺服器區網位址>:8080/admin`，替每個人產生一個**個人權杖**。
