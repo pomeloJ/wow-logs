@@ -55,6 +55,9 @@ def test_group_list_and_share_page(client):
     assert d["kills_by"] == [{"name": "小德", "kills": 1, "monsters": [{"name": "迪菲亞盜賊", "count": 1}]},
                              {"name": "波波", "kills": 1, "monsters": [{"name": "迪菲亞盜賊", "count": 1}]}]
     assert d["deaths"] == 1 and d["instances"] == ["死亡礦坑"] and d["zones"] == ["西部荒野"]
+    # when each member was in the group, for the replay: 艾莉 from the start until she left
+    assert {m["name"]: m["spans"] for m in d["members"]} == {"艾莉": [["2026-11-22T12:00:00Z", "2026-11-22T12:12:00Z"]],
+                                                             "波波": [["2026-11-22T12:02:00Z", None]]}
     assert d["maps"] == [{"map_id": 1436, "name": "西部荒野", "has_image": False, "members": {},
                           "points": [["2026-11-22T12:01:00Z", 40.0, 50.0], ["2026-11-22T12:10:00Z", 42.0, 50.0]]}]
     text = str(d)

@@ -303,7 +303,8 @@ function replayButton(d) {
   b.addEventListener("click", () => {
     b.disabled = true; b.textContent = "載入中…";
     import("/assets/replay.js")
-      .then(m => { if (!m.openReplay(d, { api: API, name: N, color: COLOR })) b.title = "這次沒有可以回放的內容"; b.textContent = "🎬 3D 回放"; })
+      .then(m => m.openReplay(d, { api: API, name: N, color: COLOR }))
+      .then(ok => { b.textContent = ok ? "🎬 3D 回放" : "沒有可以回放的內容"; })
       .catch(() => { b.textContent = "載入失敗，再試一次"; })
       .finally(() => { b.disabled = false; });
   });

@@ -75,7 +75,8 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
                 for m in p.get("members") or []:
                     if isinstance(m, dict) and m.get("name"):
                         s["members"][m["name"]] = {"name": m["name"], "class": m.get("class"),
-                                                   "level": m.get("level"), "left": False}
+                                                   "level": m.get("level"), "left": False,
+                                                   "spans": [[r["timestamp"], None]]}
                 by_id[gid] = s
                 out.append(s)
                 continue
@@ -83,11 +84,22 @@ def register(app, db, can_read, activity: Callable, maps_dir: str, world=None, s
             if not s:
                 continue
             if r["event_type"] == "GROUP_MEMBER_JOINED" and p.get("name"):
-                # also sent again when a far-away member's level becomes known
-                s["members"][p["name"]] = {"name": p["name"], "class": p.get("class"),
-                                           "level": p.get("level"), "left": False}
+                # `spans`: when each member was in the group, [joined, left or None], one per stay
+                m = s["members"].get(p["name"])
+                if m and p.get("update"):           # sent again when a far-away member's level becomes known
+                    m["level"] = p.get("level") or m["level"]
+                    continue
+                if m is None:
+                    m = s["members"][p["name"]] = {"name": p["name"], "spans": []}
+                m.update({"class": p.get("class") or m.get("class"), "level": p.get("level") or m.get("level"),
+                          "left": False})
+                if not m["spans"] or m["spans"][-1][1] is not None:
+                    m["spans"].append([r["timestamp"], None])
             elif r["event_type"] == "GROUP_MEMBER_LEFT" and p.get("name") in s["members"]:
-                s["members"][p["name"]]["left"] = True
+                m = s["members"][p["name"]]
+                m["left"] = True
+                if m["spans"] and m["spans"][-1][1] is None:
+                    m["spans"][-1][1] = r["timestamp"]
             elif r["event_type"] == "GROUP_MEMBER_LEVEL_UP" and p.get("name") in s["members"]:
                 s["members"][p["name"]]["level"] = p.get("level")      # show the level they ended on
             elif r["event_type"] == "GROUP_LEFT":
