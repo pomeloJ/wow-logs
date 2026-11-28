@@ -290,3 +290,19 @@ def test_tokens_from_the_one_character_days_are_carried_over(tmp_path):
     web = TestClient(create_app(db_path=str(tmp_path / "s.db"), write_token="w", read_token="r"), client=("192.168.1.5", 1))
     tok, = web.get("/api/v1/admin/overview").json()["tokens"]
     assert tok["label"] == "阿強" and [c["id"] for c in tok["characters"]] == ["A"]
+
+
+def test_the_chatgpt_guide_and_its_mcp_address(tmp_path, make_client):
+    from fastapi.testclient import TestClient
+    from app.main import create_app
+    bare = make_client()
+    assert bare.get("/api/v1/voice/mcp").json() == {"url": None, "guide": "/guide/chatgpt"}   # not set: said so
+    web = TestClient(create_app(str(tmp_path / "g.db"), "w", "r", mcp_url="https://mcp.example.test/mcp"))
+    assert web.get("/api/v1/voice/mcp").json()["url"] == "https://mcp.example.test/mcp"
+    page = web.get("/guide/chatgpt")
+    assert page.status_code == 200 and "無需身分驗證" in page.text and "chatgpt-8.webp" in page.text
+    for n in range(1, 9):
+        r = web.get(f"/guide/img/chatgpt-{n}.webp")
+        assert r.status_code == 200 and r.headers["content-type"] == "image/webp" and r.content[:4] == b"RIFF"
+    assert web.get("/guide/img/..%2Fmain.py").status_code == 404
+    assert web.get("/guide/img/nothing.webp").status_code == 404

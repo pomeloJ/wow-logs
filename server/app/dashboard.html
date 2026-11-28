@@ -309,6 +309,8 @@ button.link { background: none; color: var(--muted); padding: 0; font-size: 13px
 .tk-value .tk-secret code { flex: 1 1 180px; }
 .tk-value .parts { margin: 0; }
 .tk-how { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.9; }
+a.btn2 { display: inline-block; text-decoration: none; }
+.tk-guide { font-size: 13px; color: var(--muted); margin: 0 0 10px; }
 .tk-how code { font-size: 12px; padding: 1px 6px; }
 .tk-card > footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 12px 16px;
   border-top: 1px solid var(--line); background: var(--panel); }
@@ -751,7 +753,8 @@ async function tokensPanel() {
     // ---- tokens for a voice assistant: the /voice page and the API, for the characters ticked
     const voiceList = d.voice || [];
     const voice = el("section", { class: "tk tk-pane", role: "tabpanel" },
-      intro(["給 AI 語音助理用：一個權杖就能查勾選的所有角色，也可以當 API 的權杖。", "只能看、不能上傳，聊天內容一律看不到。"]));
+      intro(["給 AI 語音助理用：一個權杖就能查勾選的所有角色，也可以當 API 的權杖。", "只能看、不能上傳，聊天內容一律看不到。"]),
+      el("p", { class: "tk-guide" }, "要接到 ChatGPT（在對話裡用 @wow-plugin 查資料）：在權杖卡片上按「ChatGPT 串接教學」，一步一步照圖做，連線網址會自動填好。"));
     if (!voiceList.length) voice.append(empty("還沒有語音 API 權杖。"));
     for (const v of voiceList) {
       const name = v.label || "（沒有名稱）";
@@ -764,7 +767,9 @@ async function tokensPanel() {
            el("li", null, "切換角色：網址加 ", el("code", { text: "&c=角色名" })),
            el("li", null, "列出可查的角色：網址加 ", el("code", { text: "&show=characters" })),
            el("li", null, "當 API 權杖：", el("code", { text: "Authorization: Bearer 權杖" }))))],
-        [copyButton(url, "複製語音網址", true), copyButton(v.token, "複製權杖")],
+        [copyButton(url, "複製語音網址", true), copyButton(v.token, "複製權杖"),
+         // the token after "#": it opens the guide with this token's address filled in
+         el("a", { class: "btn2", href: "/guide/chatgpt#t=" + encodeURIComponent(v.token), target: "_blank", rel: "noopener noreferrer", text: "ChatGPT 串接教學" })],
         [button2("重新產生", ask({ title: `重新產生「${name}」？`, text: "舊的權杖和網址會立刻失效，語音助理要改填新的。名稱和角色不變。", ok: "重新產生" },
            "POST", "tokens/regenerate", { id: v.id })),
          button2("刪除", ask({ title: `刪除「${name}」？`, text: "用這個權杖的語音助理會立刻查不到資料。這個動作不能復原。", ok: "刪除", danger: true },

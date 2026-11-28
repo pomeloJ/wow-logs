@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>串接 ChatGPT</title>
+<style>
+:root {
+  --bg: #f4f1ea; --panel: #fffdf8; --ink: #2a2520; --muted: #7a7065; --line: #e2dbcd;
+  --accent: #b5651d; --accent-soft: #f0dcc4; --ok: #3d7a4a; --warn: #b3541e; --warn-soft: #f8e3d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #17140f; --panel: #211d17; --ink: #ece5d8; --muted: #9c9182; --line: #3a332a;
+          --accent: #e0964a; --accent-soft: #4a3520; --ok: #7fc08a; --warn: #e89a6a; --warn-soft: #3d261a; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.6 -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
+main { max-width: 860px; margin: 0 auto; padding: 24px 16px 64px; }
+a { color: var(--accent); }
+h1 { font-size: 24px; margin: 0 0 6px; }
+.lead { color: var(--muted); margin: 0 0 20px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
+.card h2 { font-size: 13px; color: var(--muted); letter-spacing: .08em; margin: 0 0 10px; font-weight: 600; }
+.must { border-color: var(--warn); background: var(--warn-soft); }
+.must b { color: var(--warn); }
+.addr { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; }
+.addr code { flex: 1 1 320px; min-width: 0; display: block; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; user-select: all; }
+button { font: inherit; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; }
+button:disabled { opacity: .5; cursor: default; }
+.note { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+.note.bad { color: var(--warn); }
+ol.steps { list-style: none; counter-reset: step; padding: 0; margin: 0; }
+ol.steps > li { counter-increment: step; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
+ol.steps > li h3 { margin: 0 0 6px; font-size: 17px; display: flex; gap: 10px; align-items: center; }
+ol.steps > li h3::before { content: counter(step); flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 14px; }
+ol.steps p, ol.steps ul { margin: 6px 0; }
+ol.steps ul { padding-left: 20px; }
+figure { margin: 12px 0 0; }
+figure img { display: block; width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line); background: #fff; cursor: zoom-in; }
+figcaption { font-size: 12px; color: var(--muted); margin-top: 6px; }
+kbd, .k { font: 13px ui-monospace, Menlo, monospace; padding: 1px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); }
+.ex { display: grid; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+.ex li { padding: 8px 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); font-size: 14px; }
+.big { position: fixed; inset: 0; background: rgba(0,0,0,.82); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 9; cursor: zoom-out; }
+.big img { max-width: 100%; max-height: 100%; border-radius: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>串接 ChatGPT</h1>
+  <p class="lead">把冒險紀錄接到 ChatGPT：之後在對話裡輸入 <span class="k">@wow-plugin</span>，就能直接問角色現在在哪、最近打了什麼、背包有什麼、仇恨和交易紀錄。</p>
+
+  <section class="card">
+    <h2>你的連線網址</h2>
+    <div class="addr"><code id="addr">讀取中…</code><button type="button" id="copy" disabled>複製</button></div>
+    <p class="note" id="addr-note"></p>
+    <p class="note">網址裡含有你的語音 API 權杖，等同密碼：只貼在 ChatGPT 裡，不要分享給別人。外洩的話，到「管理權杖 → 語音 API」按「重新產生」，ChatGPT 裡的網址也要換成新的。</p>
+  </section>
+
+  <section class="card must">
+    <b>一定要用電腦瀏覽器打開網頁版 ChatGPT（chatgpt.com）來設定，不要用 App。</b>以下每一步都是網頁版的畫面。
+  </section>
+
+  <ol class="steps">
+    <li>
+      <h3>打開設定</h3>
+      <p>用瀏覽器登入 <a href="https://chatgpt.com" target="_blank" rel="noopener">chatgpt.com</a>，按<b>左下角的帳號</b>，在選單裡按<b>「設定」</b>。</p>
+      <figure><img src="/guide/img/chatgpt-1.webp" alt="ChatGPT 左下角帳號選單，框出帳號與設定" loading="lazy"></figure>
+    </li>
+    <li>
+      <h3>找到「外掛程式」</h3>
+      <p>設定的左邊往下捲，在<b>「整合」</b>底下按<b>「外掛程式」</b>。</p>
+      <figure><img src="/guide/img/chatgpt-2.webp" alt="設定左側選單，框出整合底下的外掛程式" loading="lazy"></figure>
+    </li>
+    <li>
+      <h3>瀏覽目錄</h3>
+      <p>按右上角的<b>「瀏覽目錄」</b>。</p>
+      <figure><img src="/guide/img/chatgpt-3.webp" alt="外掛程式設定頁，框出右上角的瀏覽目錄" loading="lazy"></figure>
+    </li>
+    <li>
+      <h3>新增自訂 MCP 伺服器</h3>
+      <p>按右上角的<b>「新增」</b>，再選<b>「新增自訂 MCP 伺服器」</b>。</p>
+      <figure><img src="/guide/img/chatgpt-4.webp" alt="外掛程式頁右上角的新增選單，框出新增自訂 MCP 伺服器" loading="lazy"></figure>
+    </li>
+    <li>
+      <h3>填寫名稱、網址與身分驗證</h3>
+      <ul>
+        <li><b>名稱</b>：隨意，例如 <span class="k">wow-plugin</span>（之後在對話裡就是用這個名字呼叫）。</li>
+        <li><b>連線</b>：選「伺服器 URL」，貼上本頁最上面的<b>你的連線網址</b>。</li>
+        <li><b>身分驗證</b>：一定要選<b>「無需身分驗證」</b>（權杖已經在網址裡）。</li>
+      </ul>
+      <figure><img src="/guide/img/chatgpt-5.webp" alt="新增自訂 MCP 伺服器表單，框出名稱、網址與無需身分驗證" loading="lazy">
+        <figcaption>圖中的網址與權杖是範例，請用你自己的。</figcaption></figure>
+    </li>
+    <li>
+      <h3>確認並建立</h3>
+      <p>勾選<b>「我已瞭解並希望繼續」</b>，再按<b>「建立為外掛程式」</b>。</p>
+      <figure><img src="/guide/img/chatgpt-6.webp" alt="表單填好後，框出勾選框與建立為外掛程式按鈕" loading="lazy"></figure>
+    </li>
+    <li>
+      <h3>連接</h3>
+      <p>建立好會跳出視窗，按<b>「連接 wow-plugin」</b>就完成了。</p>
+      <figure><img src="/guide/img/chatgpt-7.webp" alt="建立完成的視窗，框出連接 wow-plugin 按鈕" loading="lazy"></figure>
+    </li>
+    <li>
+      <h3>開始使用</h3>
+      <p>開一個<b>新對話</b>，輸入 <span class="k">@wow</span> 選 <b>wow-plugin</b>，接著直接問。例如：</p>
+      <ul class="ex">
+        <li>@wow-plugin 我的角色現在在哪裡？附近有什麼任務？</li>
+        <li>@wow-plugin 今天打了多少怪、拿到多少經驗？</li>
+        <li>@wow-plugin 上一場組隊誰的仇恨最高？有沒有人 OT？</li>
+        <li>@wow-plugin 背包裡哪些裝備比我身上的好？</li>
+      </ul>
+      <figure><img src="/guide/img/chatgpt-8.webp" alt="新對話輸入 @wow，框出 wow-plugin" loading="lazy"></figure>
+      <p class="note">資料要在遊戲裡按「存檔」（或登出）、同步程式上傳後才是最新的。一個語音權杖可以查它勾選的所有角色；要換角色，直接在問題裡說角色名。</p>
+    </li>
+  </ol>
+</main>
+<script>
+(() => {
+  // The voice token comes after "#" (t=...), so it never reaches a server log or another site.
+  const m = location.hash.match(/(?:^#|&)t=([A-Za-z0-9_-]{4,64})/);
+  const token = m ? m[1] : null;
+  const addr = document.getElementById("addr"), note = document.getElementById("addr-note"), copy = document.getElementById("copy");
+  fetch("/api/v1/voice/mcp").then(r => r.ok ? r.json() : { url: null }).catch(() => ({ url: null })).then(({ url }) => {
+    if (!url) {
+      addr.textContent = "（這個伺服器還沒設定 MCP 位址）";
+      note.textContent = "請伺服器管理者設定 AH_MCP_URL 後再回來。";
+      note.className = "note bad";
+      return;
+    }
+    const full = url + (url.includes("?") ? "&" : "?") + "token=" + (token || "你的語音權杖");
+    addr.textContent = full;
+    if (token) {
+      copy.disabled = false;
+      note.textContent = "已經填好你的權杖，按「複製」再到第 5 步貼上。";
+    } else {
+      note.textContent = "從總覽的「管理權杖 → 語音 API」，在權杖卡片上按「ChatGPT 串接教學」打開本頁，這裡就會自動填好你的權杖。";
+      note.className = "note bad";
+    }
+    copy.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(full); copy.textContent = "已複製"; }
+      catch (e) { const r = document.createRange(); r.selectNodeContents(addr); getSelection().removeAllRanges(); getSelection().addRange(r); copy.textContent = "已選取，請按 ⌘C / Ctrl+C"; }
+      setTimeout(() => { copy.textContent = "複製"; }, 2500);
+    });
+  });
+  // pictures open full size
+  for (const img of document.querySelectorAll("figure img")) img.addEventListener("click", () => {
+    const big = document.createElement("div"); big.className = "big";
+    const pic = document.createElement("img"); pic.src = img.src; pic.alt = img.alt; big.append(pic);
+    big.addEventListener("click", () => big.remove());
+    document.addEventListener("keydown", function esc(e) { if (e.key === "Escape") { big.remove(); document.removeEventListener("keydown", esc); } });
+    document.body.append(big);
+  });
+})();
+</script>
+</body>
+</html>

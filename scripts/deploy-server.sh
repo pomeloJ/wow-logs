@@ -31,8 +31,11 @@ if [ -s worlddata/world.db ]; then
   rsync -az worlddata/world.db "$HOST:$DEST/data/world.db.new"
   ssh -o BatchMode=yes "$HOST" "mv $DEST/data/world.db.new $DEST/data/world.db"
 fi
+# The MCP server ChatGPT connects through (shown on /guide/chatgpt): from AH_MCP_URL or a
+# one-line file named .mcp-url (not committed), like the host, so no address is in the repository.
+MCP_URL="${AH_MCP_URL:-$(cat .mcp-url 2>/dev/null || true)}"
 # The token travels over stdin so it never appears in a process list.
-printf 'AH_API_TOKEN=%s\nAH_READ_TOKEN=%s\nAH_DB_PATH=%s/data/adventure.db\nAH_PORT=%s\n' "$TOKEN" "$READ_TOKEN" "$DEST" "$PORT" |
+printf 'AH_API_TOKEN=%s\nAH_READ_TOKEN=%s\nAH_DB_PATH=%s/data/adventure.db\nAH_PORT=%s\nAH_MCP_URL=%s\n' "$TOKEN" "$READ_TOKEN" "$DEST" "$PORT" "$MCP_URL" |
   ssh -o BatchMode=yes "$HOST" "umask 077; cat > $DEST/.env"
 ssh -o BatchMode=yes "$HOST" bash -s <<REMOTE
 set -euo pipefail

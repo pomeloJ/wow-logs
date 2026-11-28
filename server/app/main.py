@@ -222,6 +222,7 @@ def create_app(
     world_db: Optional[str] = None,
     google: Optional[Dict[str, str]] = None,
     google_exchange=None,
+    mcp_url: Optional[str] = None,
 ) -> FastAPI:
     db_path = db_path or os.environ.get("AH_DB_PATH", "data/adventure.db")
     write_token = write_token or os.environ.get("AH_API_TOKEN", "")
@@ -984,4 +985,6 @@ def create_app(
     items.register(app, db, can_read, world)
     from . import threat
     threat.register(app, db, can_read)
+    from . import guide
+    guide.register(app, mcp_url)
     return app
