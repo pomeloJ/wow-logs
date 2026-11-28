@@ -519,6 +519,9 @@ def test_replay_assets(client):
         assert r.status_code == 200 and r.headers["content-type"].startswith("text/javascript")
     assert 'from "./three.module.min.js"' in client.get("/assets/replay.js").text
     assert 'from "./scenery.js"' in client.get("/assets/replay.js").text
+    # its own address: the party page ending in #replay, which Back leaves and a link opens
+    js = client.get("/assets/replay.js").text
+    assert "ctx.link" in js and "ctx.onOpen(shut)" in js
     assert "max-age" in client.get("/assets/three.module.min.js").headers["cache-control"]
     for name in ("party.html", "..%2Fmain.py", "vendor%2Fthree.module.min.js", "nope.js"):
         assert client.get(f"/assets/{name}").status_code == 404

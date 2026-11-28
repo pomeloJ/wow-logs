@@ -295,20 +295,48 @@ function albumCard(d) {
     })));
 }
 
-// The 3D replay: a script of its own, fetched only when asked for.
+// The 3D replay: a script of its own, fetched only when asked for. It has an address of its own,
+// this page's ending in #replay, so it can be passed on, and Back closes it onto this page.
+let replayShut = null, replayPushed = false, replayOpening = false;
+function openReplayHere(d, b) {
+  if (replayShut || replayOpening) return;
+  replayOpening = true;
+  if (b) { b.disabled = true; b.textContent = "載入中…"; }
+  const link = location.origin + location.pathname + "#replay";
+  return import("/assets/replay.js")
+    .then(m => m.openReplay(d, { api: API, name: N, color: COLOR, link,
+      onOpen: shut => {
+        replayShut = shut;
+        if (location.hash !== "#replay") { try { history.pushState({ replay: 1 }, "", "#replay"); replayPushed = true; } catch (e) { /* fine */ } }
+      },
+      onClose: () => {
+        replayShut = null;
+        if (location.hash !== "#replay") return;          // Back already left it
+        try {
+          if (replayPushed) history.back();                // opened from this page: back to where it was
+          else history.replaceState(null, "", location.pathname + location.search);   // came by the link
+        } catch (e) { /* fine */ }
+        replayPushed = false;
+      } }))
+    .then(ok => { if (b) b.textContent = ok ? "🎬 3D 回放" : "沒有可以回放的內容"; return ok; })
+    .catch(() => { if (b) b.textContent = "載入失敗，再試一次"; })
+    .finally(() => { replayOpening = false; if (b) b.disabled = false; });
+}
+function canReplay(d) { return !!(d.maps.length || (d.kill_times || []).length || (d.encounters || []).length); }
 function replayButton(d) {
-  if (!d.maps.length && !(d.kill_times || []).length && !(d.encounters || []).length) return null;
+  if (!canReplay(d)) return null;
   const b = el("button", { class: "more", type: "button", text: "🎬 3D 回放" });
   b.style.cssText = "margin:0 0 0 auto";
-  b.addEventListener("click", () => {
-    b.disabled = true; b.textContent = "載入中…";
-    import("/assets/replay.js")
-      .then(m => m.openReplay(d, { api: API, name: N, color: COLOR }))
-      .then(ok => { b.textContent = ok ? "🎬 3D 回放" : "沒有可以回放的內容"; })
-      .catch(() => { b.textContent = "載入失敗，再試一次"; })
-      .finally(() => { b.disabled = false; });
-  });
+  b.addEventListener("click", () => openReplayHere(d, b));
   return b;
+}
+function replayFromAddress(d) {
+  const check = () => {
+    if (location.hash === "#replay" && !replayShut && canReplay(d)) { replayPushed = false; openReplayHere(d, null); }
+    else if (location.hash !== "#replay" && replayShut) { replayPushed = false; replayShut(); }
+  };
+  window.addEventListener("popstate", check);
+  check();
 }
 
 function mapCard(d) {
@@ -1370,6 +1398,7 @@ function render(d) {
     const after = ["首領", "統計", "傷害", "成果"].map(l => parts.findIndex(p => p[0] === l && p[2] === "o")).find(i => i >= 0);
     parts.splice(after == null ? parts.length : after + 1, 0, ["仇恨", card, "o"]); place(); }).catch(() => {});
   // after the research cards, so the timeline sits with them rather than first
+  replayFromAddress(d);
   early.research.catch(() => {}).then(() => early.auras).then(U => { const card = auraCard(U, P, d); if (card) { parts.push(["效果", card, "r"]); place(); } }).catch(() => {});
   if ((d.skills || []).length) app.append(el("div", { class: "small" }, el("a", { href: API + "/hits.csv", text: "下載這場的逐筆戰鬥紀錄（CSV，可用試算表開啟）" }), "　", el("a", { href: API + "/hits.json", text: "JSON" })));
 }

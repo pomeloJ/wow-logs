@@ -295,8 +295,9 @@ function style() {
 .rp-top h3{margin:0;font-size:19px;line-height:1.3}.rp-top small{display:block;color:#cbbfa8;font-size:13px}
 .rp-x,.rp-view{pointer-events:auto;height:38px;border-radius:99px;border:1px solid #ffffff33;background:#00000080;color:#fff;font:inherit;cursor:pointer}
 .rp-x{margin-left:auto;width:38px;font-size:18px}.rp-view{padding:0 14px;font-size:13px;font-weight:600;margin-left:auto}
-.rp-view+.rp-x{margin-left:0}
+.rp-view+.rp-x,.rp-view+.rp-link{margin-left:0}
 .rp-x:hover,.rp-view:hover{background:#000000b0}
+.rp-link{margin-left:0;padding:0 12px;font-size:13px}
 .rp-slow{position:absolute;left:50%;top:14px;transform:translateX(-50%);padding:4px 14px;border-radius:99px;background:#00000090;border:1px solid #ffffff30;font-size:13px;font-weight:600;letter-spacing:.04em;opacity:0;transition:opacity .4s;pointer-events:none;white-space:nowrap}
 .rp-slow.on{opacity:1}.rp-slow.boss{background:#5a2a7acc;border-color:#c040ff}
 .rp-boss{position:absolute;left:50%;top:46px;transform:translateX(-50%);width:min(420px,calc(100% - 140px));opacity:0;transition:opacity .4s;pointer-events:none;text-shadow:0 1px 3px #000}
@@ -340,7 +341,7 @@ function style() {
 .rp-end .best{font-size:13px;color:#e8d9bd;margin-bottom:14px}
 .rp-end .acts{display:flex;gap:8px;justify-content:flex-end}
 .rp-end .ghost{background:transparent;border:1px solid #ffffff40}
-@media (max-width:640px){.rp-side{top:auto;bottom:124px;right:16px;width:130px}.rp-tick{max-width:calc(100% - 170px)}.rp-help{display:none}.rp-view{padding:0 10px}}
+@media (max-width:640px){.rp-side{top:auto;bottom:124px;right:16px;width:130px}.rp-tick{max-width:calc(100% - 170px)}.rp-help{display:none}.rp-view{padding:0 10px}.rp-link{font-size:0;width:38px;padding:0}.rp-link::before{content:"🔗";font-size:15px}}
 @media (prefers-reduced-motion:reduce){.rp-tick div{animation:none}}`;
   document.head.append(s);
 }
@@ -376,7 +377,18 @@ export async function openReplay(d, ctx) {
   const top = h("div", "rp-top"), titleBox = h("div"), title = h("h3"), sub = h("small"), close = h("button", "rp-x", "✕");
   const viewBtn = h("button", "rp-view"); viewBtn.type = "button";
   close.type = "button"; close.setAttribute("aria-label", "關閉回放");
-  titleBox.append(title, sub); top.append(titleBox, viewBtn, close);
+  titleBox.append(title, sub); top.append(titleBox, viewBtn);
+  // the replay has an address of its own (the party page's, ending in #replay): one press copies it
+  if (ctx.link) {
+    const link = h("button", "rp-view rp-link", "🔗 複製連結"); link.type = "button"; link.title = "複製這個回放的網址，傳給別人可以直接打開";
+    link.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(ctx.link); link.textContent = "✓ 已複製"; }
+      catch (e) { window.prompt("複製這個網址：", ctx.link); }
+      setTimeout(() => { link.textContent = "🔗 複製連結"; }, 2000);
+    });
+    top.append(link);
+  }
+  top.append(close);
   const slow = h("div", "rp-slow");
   const bossBox = h("div", "rp-boss"), bossName = h("b"), bossPct = h("span"), bossTrack = h("div", "rp-boss-bar"), bossFill = h("i");
   bossTrack.append(bossFill); const bossHead = h("div"); bossHead.append(bossName, bossPct); bossBox.append(bossHead, bossTrack);
@@ -1256,7 +1268,10 @@ export async function openReplay(d, ctx) {
   close.focus();
   setTimeout(() => { if (alive_) setPlaying(true); }, 600);
 
+  let shutDone = false;
   function shut() {
+    if (shutDone) return;              // Esc, ✕ and Back can all ask for it
+    shutDone = true;
     alive_ = false; cancelAnimationFrame(raf); ro.disconnect();
     document.removeEventListener("keydown", onKey);
     dropFx(); disposeWorld(world);
@@ -1270,5 +1285,6 @@ export async function openReplay(d, ctx) {
     root.remove(); document.body.style.overflow = prevOverflow;
     if (ctx.onClose) ctx.onClose();
   }
+  if (ctx.onOpen) ctx.onOpen(shut);       // the page closes it too, when Back leaves #replay
   return true;
 }
