@@ -203,7 +203,7 @@ def register(app, db, settings: Optional[Dict[str, str]] = None,
         # shows every part; NULL: a sharing token (every token made before this column)
         if "kind" not in {r[1] for r in conn.execute("PRAGMA table_info(view_tokens)")}:
             conn.execute("ALTER TABLE view_tokens ADD COLUMN kind TEXT")
-        parts.split_trades(conn, "view_tokens")      # trades became a part of their own
+        parts.split_items(conn, "view_tokens")       # trades and the bank became parts of their own
 
     def account_of(request: Request) -> Optional[Dict[str, Any]]:
         sid = request.cookies.get(SESSION_COOKIE)

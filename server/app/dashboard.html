@@ -972,11 +972,19 @@ async function friendsPanel() {
       : d.my_characters.filter(c => v.characters.includes(c.id)).map(charText);
     for (const v of d.invites) {
       const link = location.origin + "/#friend=" + v.code;
+      // what this invite shows can be changed until someone accepts it
+      const change = shareChooser(d, { sections: v.sections, characters: v.characters });
+      const editor = change.node;
+      editor.append(el("div", { class: "parts-acts" }, button2("取消", () => { editor.hidden = true; }),
+        button2("儲存", () => act("POST", "/invite/edit", { code: v.code, ...change.value() }), "go")));
+      editor.hidden = true;
       inv.append(el("div", { class: "tk-item" + (v.code === fresh ? " fresh" : "") },
         el("div", { class: "tk-secret" }, el("code", { text: link })),
-        el("div", { class: "owned" }, el("span", { text: "你分享" }), chipsOf(sharedChars(v), "沒有分享角色")),
+        el("div", { class: "owned" }, el("span", { text: "你分享" }), chipsOf(sharedChars(v), "沒有分享角色"),
+          button2("編輯", () => { editor.hidden = !editor.hidden; }, "mini")),
         el("div", { class: "owned" }, el("span", { text: "對方可看" }),
           chipsOf(v.sections.length === d.parts.length ? ["全部區塊"] : v.sections.map(k => partName[k]), "只有名字、職業、等級與經驗")),
+        editor,
         el("div", { class: "tk-acts" }, copyButton(link, "複製連結", true), el("span", { class: "tk-meta inline", text: `有效到 ${full(v.expires_at)}` }),
           el("span", { class: "grow" }),
           button2("取消邀請", ask({ title: "取消這個邀請連結？", text: "還沒用過的人打開它會看到「邀請已失效」。", ok: "取消邀請", danger: true },
@@ -2267,7 +2275,7 @@ async function load(quiet) {
     const only = (part, ...nodes) => has(part) ? nodes : [];
     const layout = { home: [...only("activity", summaryCard, evCard), ...only("location", nearCard), ...only("activity", monsterCard), ...(has("items") ? only("activity", itemCard) : []),
       ...only("groups", groupCard, soloCard)], map: only("location", mapCard, fpCard), quests: only("quests", questCard, zonesCard, zoneCard),
-      items: [...only("items", equipCard, bagCard, bankCard), ...only("trades", tradeCard)], char: [charCard, ...only("character", attrCard, profCard, repCard)],
+      items: [...only("items", equipCard, bagCard), ...only("bank", bankCard), ...only("trades", tradeCard)], char: [charCard, ...only("character", attrCard, profCard, repCard)],
       album: only("screenshots", albumCard), data: [W.ok ? searchCard() : null, ...only("activity", statCard), foot] };
     const cards = [];
     for (const [name, nodes] of Object.entries(layout)) for (const n of nodes) if (n) { n.dataset.tab = name; cards.push(n); }

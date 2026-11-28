@@ -47,7 +47,7 @@ def test_an_invite_makes_two_accounts_friends_who_see_each_others_characters(tmp
     assert r.status_code == 200
     f, = r.json()["friends"]
     assert f["name"] == "小明" and [c["id"] for c in f["shown"]["characters"]] == ["m1", "m2"]
-    assert f["shown"]["sections"] == ["location", "activity", "items", "trades", "quests", "character", "groups"]   # all but screenshots
+    assert f["shown"]["sections"] == ["location", "activity", "items", "quests", "character", "groups"]   # not the bank, trades or screenshots
     # 小華 reads 小明's characters through the friend header, with the sign-in cookie only
     fid = f["id"]
     assert seen(hua, **{"X-Friend": fid}) == ["m1", "m2"]
@@ -142,6 +142,14 @@ def test_what_each_side_shows_is_chosen_before_becoming_friends(tmp_path):
     look = hua.get(f"/api/v1/me/friends/invite/{code}").json()
     assert look["shows_you"]["sections"] == ["location"] and [c["id"] for c in look["shows_you"]["characters"]] == ["m1"]
     assert [c["id"] for c in look["my_characters"]] == ["h1", "h2"] and "screenshots" not in look["default"]
+    assert not {"bank", "trades"} & set(look["default"])
+    # until someone accepts, its maker can change what it shows; nobody else can
+    assert hua.post("/api/v1/me/friends/invite/edit", json={"code": code, "sections": ["quests"]}).status_code == 404
+    assert ming.post("/api/v1/me/friends/invite/edit", json={"code": code, "sections": ["nonsense"]}).status_code == 400
+    edited = ming.post("/api/v1/me/friends/invite/edit", json={"code": code, "sections": ["location", "bank"], "characters": ["m1"]}).json()
+    assert (edited["invites"][0]["sections"], edited["invites"][0]["characters"]) == (["location", "bank"], ["m1"])
+    assert hua.get(f"/api/v1/me/friends/invite/{code}").json()["shows_you"]["sections"] == ["location", "bank"]
+    ming.post("/api/v1/me/friends/invite/edit", json={"code": code, "sections": ["location"], "characters": ["m1"]})
     # accepting carries what they show back
     f, = hua.post("/api/v1/me/friends/accept", json={"code": code, "sections": ["items", "quests"], "characters": None}).json()["friends"]
     assert f["shown"]["sections"] == ["location"] and [c["id"] for c in f["shown"]["characters"]] == ["m1"]

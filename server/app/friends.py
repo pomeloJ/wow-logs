@@ -31,7 +31,8 @@ from . import sections as parts
 INVITE_DAYS = 7
 MAX_INVITES = 5                # links not used yet, per account
 MAX_FRIENDS = 100
-DEFAULT = [k for k, _ in parts.PARTS if k != "screenshots"]
+# what a friend is shown unless chosen otherwise: not the bank, trades or screenshots
+DEFAULT = [k for k, _ in parts.PARTS if k not in ("bank", "trades", "screenshots")]
 NO_STORE = {"Cache-Control": "no-store"}
 
 SCHEMA = """
@@ -89,7 +90,7 @@ def register(app, db, account_of: Callable[[Request], Optional[Dict[str, Any]]])
     friend shows the signed-in account, or None when they are not friends."""
     with db() as conn:
         conn.executescript(SCHEMA)
-        parts.split_trades(conn, "friend_shares")    # trades became a part of their own
+        parts.split_items(conn, "friend_shares")     # trades and the bank became parts of their own
         # what the invite's maker will show whoever accepts: JSON {"sections", "characters"};
         # NULL for an invite made before this column (DEFAULT, every character)
         if "shares" not in {r[1] for r in conn.execute("PRAGMA table_info(friend_invites)")}:
@@ -229,6 +230,18 @@ def register(app, db, account_of: Callable[[Request], Optional[Dict[str, Any]]])
                          (code, sub, _now_iso(), time.time() + INVITE_DAYS * 86400, json.dumps(pick)))
         return listing(sub, code)
 
+    @app.post("/api/v1/me/friends/invite/edit", include_in_schema=False)
+    def edit_invite(body: AcceptIn, request: Request):
+        """Change what an invite not used yet will show whoever accepts it."""
+        sub = signed(request)["sub"]
+        with db() as conn:
+            pick = choice(conn, sub, body)
+            done = conn.execute("UPDATE friend_invites SET shares=? WHERE code=? AND sub=? AND expires>?",
+                                (json.dumps(pick), body.code, sub, time.time())).rowcount
+        if not done:
+            raise HTTPException(404, "this invite has been used or has expired")
+        return listing(sub)
+
     @app.post("/api/v1/me/friends/invite/delete", include_in_schema=False)
     def drop_invite(body: CodeIn, request: Request):
         sub = signed(request)["sub"]
@@ -263,8 +276,7 @@ def register(app, db, account_of: Callable[[Request], Optional[Dict[str, Any]]])
     @app.post("/api/v1/me/friends/accept", include_in_schema=False)
     def accept(body: AcceptIn, request: Request):
         """Become friends with the invite's maker. The maker shows what the invite says; the one
-        accepting shows what they chose on accepting (left out: every part but screenshots, every
-        character). The link is used up."""
+        accepting shows what they chose on accepting (left out: DEFAULT, every character). The link is used up."""
         sub = signed(request)["sub"]
         with db() as conn:
             mine = choice(conn, sub, body)

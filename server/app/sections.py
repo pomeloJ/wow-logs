@@ -17,7 +17,8 @@ from typing import Any, Dict, FrozenSet, Iterable, Optional
 PARTS = [
     ("location", "位置與移動路線"),
     ("activity", "最近動態與統計"),
-    ("items", "裝備、背包、銀行與金錢"),
+    ("items", "裝備、背包與金錢"),
+    ("bank", "銀行"),
     ("trades", "交易紀錄"),
     ("quests", "任務"),
     ("character", "屬性、專業與聲望"),
@@ -25,9 +26,9 @@ PARTS = [
     ("screenshots", "遊戲截圖"),
 ]
 KEYS = frozenset(k for k, _ in PARTS)
-# what a new sharing token shows until its maker changes it: not trades (they name other
-# players), group sessions or screenshots
-SHARE_DEFAULT = [k for k, _ in PARTS if k not in ("trades", "groups", "screenshots")]
+# what a new sharing token shows until its maker changes it: not the bank, trades (they name
+# other players), group sessions or screenshots
+SHARE_DEFAULT = [k for k, _ in PARTS if k not in ("bank", "trades", "groups", "screenshots")]
 
 P = "/api/v1"
 ALWAYS = {
@@ -40,7 +41,7 @@ ALWAYS = {
 ROUTES = {
     f"{P}/locations": "location", f"{P}/world/route": "location", f"{P}/world/route/image": "location",
     f"{P}/events": "activity", f"{P}/stats/activity": "activity", f"{P}/stats/summary": "activity",
-    f"{P}/characters/{{character_id}}/items": "items", f"{P}/characters/{{character_id}}/bank": "items",
+    f"{P}/characters/{{character_id}}/items": "items", f"{P}/characters/{{character_id}}/bank": "bank",
     f"{P}/characters/{{character_id}}/trades": "trades",
     f"{P}/characters/{{character_id}}/quests": "quests", f"{P}/world/quest-pins": "quests",
     f"{P}/world/quest-zones": "quests", f"{P}/world/zone-quests": "quests",
@@ -58,7 +59,8 @@ ROUTES = {
 # the character snapshot's fields that belong to a part; the rest (name, class, level, ...) always show
 FIELDS = {
     "location": {"map_id", "x", "y", "zone_name", "sub_zone", "bind_location", "resting", "mounted", "flight_points"},
-    "items": {"equipment", "bags", "bank", "money"},
+    "items": {"equipment", "bags", "money"},
+    "bank": {"bank"},
     "quests": {"quests", "quests_done"},
     "character": {"stats", "professions", "reputations"},
     "activity": {"played_total", "played_level", "played_at"},
@@ -77,18 +79,19 @@ EVENTS = {
 PLACE = ("map_id", "x", "y", "zone_name", "sub_zone")      # taken out of event payloads when location is hidden
 
 
-def split_trades(conn, table: str) -> None:
-    """Trades used to come with "items"; now they are a part of their own. A choice stored before
-    keeps showing them wherever it showed items, done once per table (a marker remembers it),
-    so taking trades off afterwards stays off."""
+def split_items(conn, table: str) -> None:
+    """Trades and then the bank used to come with "items"; now each is a part of its own. A
+    choice stored before keeps showing them wherever it showed items, done once per part and
+    table (a marker remembers it), so taking one off afterwards stays off."""
     conn.execute("CREATE TABLE IF NOT EXISTS section_upgrades (name TEXT PRIMARY KEY)")
-    name = "trades:" + table
-    if conn.execute("SELECT 1 FROM section_upgrades WHERE name=?", (name,)).fetchone():
-        return
-    conn.execute(f"UPDATE {table} SET sections = sections || ',trades' "
-                 "WHERE sections IS NOT NULL AND (',' || sections || ',') LIKE '%,items,%' "
-                 "AND (',' || sections || ',') NOT LIKE '%,trades,%'")
-    conn.execute("INSERT INTO section_upgrades (name) VALUES (?)", (name,))
+    for part in ("trades", "bank"):
+        name = part + ":" + table
+        if conn.execute("SELECT 1 FROM section_upgrades WHERE name=?", (name,)).fetchone():
+            continue
+        conn.execute(f"UPDATE {table} SET sections = sections || ',{part}' "
+                     "WHERE sections IS NOT NULL AND (',' || sections || ',') LIKE '%,items,%' "
+                     f"AND (',' || sections || ',') NOT LIKE '%,{part},%'")
+        conn.execute("INSERT INTO section_upgrades (name) VALUES (?)", (name,))
 
 
 def parse(text: Optional[str]) -> Optional[FrozenSet[str]]:

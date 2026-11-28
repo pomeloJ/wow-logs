@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, HTTPException, Query
 
+from . import sections as parts
+
 SLOT_NAMES = {1: "頭部", 2: "頸部", 3: "肩部", 4: "襯衣", 5: "胸部", 6: "腰部", 7: "腿部", 8: "腳部", 9: "手腕",
               10: "手部", 11: "戒指一", 12: "戒指二", 13: "飾品一", 14: "飾品二", 15: "背部", 16: "主手",
               17: "副手", 18: "遠程", 19: "外袍"}
@@ -228,4 +230,7 @@ def register(app, db, can_read, world=None) -> None:
         ids: List[int] = [e["item_id"] for e in d.get("equipment") or []
                           if not e.get("name") and isinstance(e.get("item_id"), int)]
         names = world.item_names(ids) if world and ids else {}
-        return {"character_id": character_id, "captured_at": captured, **build(d, names)}
+        out = {"character_id": character_id, "captured_at": captured, **build(d, names)}
+        if not parts.shows(getattr(scope, "sections", None), "bank"):
+            out["bank"] = None      # a sharing token or friend that does not show the bank
+        return out

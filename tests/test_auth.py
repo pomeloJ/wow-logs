@@ -399,7 +399,7 @@ def test_a_sharing_token_shows_only_the_parts_chosen(tmp_path):
     full_record(web, mine)
     web.post("/api/v1/me/link", json={"token": mine})
     made = web.post("/api/v1/me/tokens", json={"label": "只看動態", "sections": ["activity"]}).json()
-    assert [p["key"] for p in made["parts"]] == ["location", "activity", "items", "trades", "quests", "character", "groups", "screenshots"]
+    assert [p["key"] for p in made["parts"]] == ["location", "activity", "items", "bank", "trades", "quests", "character", "groups", "screenshots"]
     assert made["view"][0]["sections"] == ["activity"]
     h = {"Authorization": f"Bearer {made['made']}"}
     get = lambda path: web.get(path, headers=h)     # noqa: E731
@@ -438,7 +438,7 @@ def test_a_sharing_token_with_every_part_or_none_chosen_shows_everything(tmp_pat
     mine = web.post("/api/v1/admin/tokens", json={"label": "小明"}).json()["token"]
     full_record(web, mine)
     web.post("/api/v1/me/link", json={"token": mine})
-    made = web.post("/api/v1/me/tokens", json={"label": "全部", "sections": ["location", "activity", "items", "trades", "quests", "character",
+    made = web.post("/api/v1/me/tokens", json={"label": "全部", "sections": ["location", "activity", "items", "bank", "trades", "quests", "character",
                                                                          "groups", "screenshots"]}).json()
     every = [p["key"] for p in made["parts"]]
     assert made["view"][0]["sections"] == every
@@ -482,11 +482,35 @@ def test_trades_are_a_part_of_their_own(tmp_path):
     db.execute("DELETE FROM section_upgrades")
     db.commit()
     signed_in(tmp_path)
-    assert db.execute("SELECT sections FROM view_tokens").fetchone()[0] == "activity,items,trades"
+    assert db.execute("SELECT sections FROM view_tokens").fetchone()[0] == "activity,items,trades,bank"
     db.execute("UPDATE view_tokens SET sections='activity,items'")
     db.commit()
     signed_in(tmp_path)
     assert db.execute("SELECT sections FROM view_tokens").fetchone()[0] == "activity,items"
+
+
+def test_the_bank_is_a_part_of_its_own(tmp_path):
+    web = signed_in(tmp_path)
+    mine = web.post("/api/v1/admin/tokens", json={"label": "小明"}).json()["token"]
+    assert web.put("/api/v1/characters/char-mine/snapshot", headers={"Authorization": f"Bearer {mine}"}, json={
+        "captured_at": "2026-11-26T10:00:00+08:00", "device_id": "pc", "data": {
+            "name": "小明", "level": 20, "money": 100, "equipment": [], "bags": {"slots": 16, "free": 16, "items": []},
+            "bank": {"slots": 24, "free": 23, "seen_at": 1764122400, "items": [{"item_id": 7, "name": "秘銀", "count": 3}]}}}).status_code == 200
+    web.post("/api/v1/me/link", json={"token": mine})
+    # a new sharing token leaves the bank out: gear, bags and money still show
+    made = web.post("/api/v1/me/tokens", json={"label": "朋友"}).json()
+    assert "bank" not in made["view"][0]["sections"] and "items" in made["view"][0]["sections"]
+    h = {"Authorization": f"Bearer {made['made']}"}
+    r = web.get("/api/v1/characters/char-mine/bank", headers=h)
+    assert r.status_code == 403 and r.json()["detail"]["hidden"] == "bank"
+    items = web.get("/api/v1/characters/char-mine/items", headers=h).json()
+    assert items["bank"] is None and items["money"] == 100
+    data = web.get("/api/v1/characters/char-mine/snapshot", headers=h).json()["data"]
+    assert "bank" not in data and data["money"] == 100
+    # ticked: shown
+    web.post("/api/v1/me/tokens/sections", json={"id": made["view"][0]["id"], "sections": ["items", "bank"]})
+    assert web.get("/api/v1/characters/char-mine/bank", headers=h).json()["bank"]["items"][0]["name"] == "秘銀"
+    assert web.get("/api/v1/characters/char-mine/items", headers=h).json()["bank"]["free"] == 23
 
 
 def test_every_read_route_belongs_to_a_part_or_is_always_open(tmp_path):
