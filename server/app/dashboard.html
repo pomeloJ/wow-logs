@@ -395,6 +395,14 @@ a.btn2 { display: inline-block; text-decoration: none; }
   background: none; border-color: transparent; color: var(--muted); font-size: 15px; line-height: 1; }
 .btn2.icon:hover { border-color: var(--line); color: var(--ink); background: var(--bg); }
 header .btn2 { padding: 4px 12px; font-size: 13px; }
+.me { display: inline-flex; align-items: center; gap: 7px; max-width: 240px; padding-left: 10px; margin-left: 2px;
+  border-left: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+.me[hidden] { display: none; }
+.me img, .me i { width: 22px; height: 22px; border-radius: 50%; flex: none; }
+.me i { display: inline-flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent);
+  font-style: normal; font-size: 12px; font-weight: 700; }
+.me-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 520px) { .me-text { display: none; } }
 .sheet-tools .btn2.mini { padding: 3px 10px; }
 .btn2:disabled { opacity: .45; cursor: default; }
 .tk-new { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
@@ -419,6 +427,7 @@ header .btn2 { padding: 4px 12px; font-size: 13px; }
     <span class="sync" id="sync"></span>
     <button type="button" class="btn2 nav" id="friends" hidden>好友</button>
     <button type="button" class="btn2 nav" id="tokens" hidden>管理權杖</button>
+    <span class="me" id="me" hidden></span>
     <button type="button" class="btn2 quiet" id="logout" hidden>登出</button>
   </header>
   <div id="busy" role="progressbar" aria-label="載入中"></div>
@@ -512,6 +521,19 @@ function el(tag, attrs, ...kids) {
 
 // Looking at a friend's characters: the sign-in cookie and the friend's id, never the token.
 const auth = () => state.friend ? { "X-Friend": state.friend.id } : token ? { Authorization: "Bearer " + token } : {};
+// who is signed in, beside 登出: the Google account (picture and email), else how this page was opened
+let shownAccount;                                   // undefined: not asked yet
+function showMe(account) {
+  shownAccount = account || null;
+  const box = document.getElementById("me");
+  const face = account && account.picture ? el("img", { src: account.picture, alt: "", referrerpolicy: "no-referrer" })
+    : el("i", { text: account ? (account.name || account.email || "?").trim().charAt(0).toUpperCase() : "🔑" });
+  const label = account ? account.email || account.name || "Google 帳號" : SHARED ? "分享連結" : "Token 登入";
+  box.replaceChildren(face, el("span", { class: "me-text", text: label }));
+  box.title = account ? [account.name, account.email].filter(Boolean).join("\n") : SHARED ? "用分享連結看的" : "用 Token 進入，沒有登入 Google";
+  box.hidden = false;
+}
+
 async function whoAmI() {
   try { const r = await fetch(API + "/me"); return r.ok ? await r.json() : null; } catch (e) { return null; }
 }
@@ -547,6 +569,8 @@ const pos = d => (typeof d.x === "number" && typeof d.y === "number") ? `${d.x.t
 // form binds the account instead: the token is pasted once, and Google sign-in is enough after.
 function showLogin(failed, me) {
   session = false;
+  shownAccount = undefined;
+  document.getElementById("me").hidden = true;
   document.getElementById("logout").hidden = true;
   document.getElementById("tokens").hidden = true;
   document.getElementById("friends").hidden = true;
@@ -1819,6 +1843,11 @@ async function load(quiet) {
     const me = await whoAmI();
     if (!(me && me.link)) return showLogin(false, me);
     session = true;
+    showMe(me.account);
+  }
+  if (shownAccount === undefined) {
+    if (session) whoAmI().then(me => showMe(me && me.account));
+    else showMe(null);
   }
   document.getElementById("tokens").hidden = !session;   // only a Google account bound to a token manages tokens
   document.getElementById("friends").hidden = !session;
